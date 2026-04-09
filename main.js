@@ -15,20 +15,28 @@ else {
   app.on('second-instance', () => { if (win) { win.show(); win.focus() } })
 }
 
-// ── Disable native Windows Widgets (requires admin for HKLM write) ───────────
+// ── Disable native Windows Widgets / left-align taskbar ──────────────────────
+// Uses PowerShell Set-ItemProperty which handles integrity-level mismatches
+// better than reg.exe. All writes are best-effort; failures are silent.
 function disableNativeWidgets() {
-  // HKCU write works without admin and is per-user
-  const cmds = [
-    // Hide native Widgets button (HKCU — no admin needed)
-    'reg add "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced" /v TaskbarDa /t REG_DWORD /d 0 /f',
-    // Left-align taskbar icons (0 = left, 1 = center default)
-    'reg add "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced" /v TaskbarAl /t REG_DWORD /d 0 /f',
-    // Policy-level Widgets disable (requires admin, silently fails without)
-    'reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Dsh" /v AllowNewsAndInterests /t REG_DWORD /d 0 /f',
+  const hkcuKeys = [
+    ['TaskbarDa', 0],   // hide native Widgets button
+    ['TaskbarAl', 0],   // left-align taskbar icons (0=left, 1=center)
   ]
-  cmds.forEach(cmd => exec(cmd, err => {
-    if (err) console.log('registry:', err.message)
-  }))
+  const psStatements = hkcuKeys.map(([name, val]) =>
+    `Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced' -Name '${name}' -Value ${val} -Type DWord -Force`
+  ).join('; ')
+
+  exec(
+    `powershell -NoProfile -NonInteractive -Command "try { ${psStatements} } catch {}"`,
+    () => {} // silent — best-effort only
+  )
+
+  // HKLM policy key — only succeeds when already elevated; ignore otherwise
+  exec(
+    'reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Dsh" /v AllowNewsAndInterests /t REG_DWORD /d 0 /f',
+    () => {}
+  )
 }
 
 // ── Create window ────────────────────────────────────
