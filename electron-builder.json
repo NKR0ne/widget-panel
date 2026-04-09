@@ -1,0 +1,23 @@
+{
+  "appId": "com.zeus.widgetpanel",
+  "productName": "Widget Panel",
+  "directories": {
+    "output": "dist-electron"
+  },
+  "files": [
+    "main.js",
+    "preload.js",
+    "store.js",
+    "assets/**/*",
+    "renderer/dist/**/*"
+  ],
+  "win": {
+    "target": "nsis"
+  },
+  "nsis": {
+    "oneClick": true,
+    "perMachine": false,
+    "installerIcon": "assets/icon.ico",
+    "uninstallerIcon": "assets/icon.ico"
+  }
+}

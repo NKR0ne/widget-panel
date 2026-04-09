@@ -1,0 +1,24 @@
+{
+  "name": "widget-panel",
+  "version": "0.1.0",
+  "description": "Windows 11 sidebar widget panel — Feedly OPML, weather, traffic, stocks",
+  "main": "main.js",
+  "scripts": {
+    "dev": "concurrently \"vite --config vite.config.js\" \"wait-on http://localhost:5173 && electron .\"",
+    "build": "vite build && electron-builder",
+    "preview": "electron ."
+  },
+  "devDependencies": {
+    "electron": "latest",
+    "electron-builder": "latest",
+    "vite": "latest",
+    "@vitejs/plugin-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "concurrently": "latest",
+    "wait-on": "latest"
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0"
+  }
+}
