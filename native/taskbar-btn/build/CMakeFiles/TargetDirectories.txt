@@ -1,3 +1,0 @@
-C:/Users/nicol/source/repos/widget-panel/native/taskbar-btn/build/CMakeFiles/taskbar-btn.dir
-C:/Users/nicol/source/repos/widget-panel/native/taskbar-btn/build/CMakeFiles/edit_cache.dir
-C:/Users/nicol/source/repos/widget-panel/native/taskbar-btn/build/CMakeFiles/rebuild_cache.dir
