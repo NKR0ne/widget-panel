@@ -631,10 +631,11 @@ export default function App() {
   useEffect(()=>{ const t=setInterval(()=>setTime(new Date()),1000); return ()=>clearInterval(t); },[]);
 
   // Build canonical column map: news → left, system → right
+  // LEFT = system widgets, RIGHT = news
   function defaultColumns(cats) {
     const cols = {};
-    (cats||[]).forEach(c=>{ cols["cat:"+c.label]="left"; });
-    cols.weather="right"; cols.stocks="right"; cols.traffic="right";
+    (cats||[]).forEach(c=>{ cols["cat:"+c.label]="right"; });
+    cols.weather="left"; cols.stocks="left"; cols.traffic="left";
     return cols;
   }
 
@@ -644,11 +645,10 @@ export default function App() {
       if (saved?.categories?.length) {
         setCategories(saved.categories);
         setActiveIds(saved.activeIds||[]);
-        // Migrate stale column layout: if any news category is on the right,
-        // the old default was inverted — reset to current canonical layout.
-        const savedCols = saved.columns||{};
-        const newsOnRight = saved.categories.some(c=>savedCols["cat:"+c.label]==="right");
-        setColumns(newsOnRight ? defaultColumns(saved.categories) : savedCols);
+        // v2: reset columns if saved with old layout (system on right = stale)
+        const cols = saved.columns||{};
+        const stale = cols.weather==="right" || cols.stocks==="right" || cols.traffic==="right";
+        setColumns(stale ? defaultColumns(saved.categories) : cols);
         setApiKeys(saved.apiKeys||{});
       }
       setStorageReady(true);
