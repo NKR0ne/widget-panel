@@ -13,6 +13,8 @@
  * Build:  cmake -B build -A x64  &&  cmake --build build --config Release
  */
 
+#define UNICODE
+#define _UNICODE
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
