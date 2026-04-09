@@ -19,13 +19,12 @@ else {
 // Uses PowerShell Set-ItemProperty which handles integrity-level mismatches
 // better than reg.exe. All writes are best-effort; failures are silent.
 function disableNativeWidgets() {
-  const hkcuKeys = [
-    ['TaskbarDa', 0],   // hide native Widgets button
-    ['TaskbarAl', 0],   // left-align taskbar icons (0=left, 1=center)
-  ]
-  const psStatements = hkcuKeys.map(([name, val]) =>
-    `Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced' -Name '${name}' -Value ${val} -Type DWord -Force`
-  ).join('; ')
+  const psStatements = [
+    // Hide native Widgets button
+    `Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced' -Name 'TaskbarDa' -Value 0 -Type DWord -Force`,
+    // Restore centred taskbar (undo any previous TaskbarAl=0 we may have set)
+    `Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced' -Name 'TaskbarAl' -Value 1 -Type DWord -Force`,
+  ].join('; ')
 
   exec(
     `powershell -NoProfile -NonInteractive -Command "try { ${psStatements} } catch {}"`,

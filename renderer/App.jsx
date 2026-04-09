@@ -630,13 +630,25 @@ export default function App() {
 
   useEffect(()=>{ const t=setInterval(()=>setTime(new Date()),1000); return ()=>clearInterval(t); },[]);
 
+  // Build canonical column map: news → left, system → right
+  function defaultColumns(cats) {
+    const cols = {};
+    (cats||[]).forEach(c=>{ cols["cat:"+c.label]="left"; });
+    cols.weather="right"; cols.stocks="right"; cols.traffic="right";
+    return cols;
+  }
+
   // Load persisted config
   useEffect(()=>{
     storageLoad().then(saved=>{
       if (saved?.categories?.length) {
         setCategories(saved.categories);
         setActiveIds(saved.activeIds||[]);
-        setColumns(saved.columns||{});
+        // Migrate stale column layout: if any news category is on the right,
+        // the old default was inverted — reset to current canonical layout.
+        const savedCols = saved.columns||{};
+        const newsOnRight = saved.categories.some(c=>savedCols["cat:"+c.label]==="right");
+        setColumns(newsOnRight ? defaultColumns(saved.categories) : savedCols);
         setApiKeys(saved.apiKeys||{});
       }
       setStorageReady(true);
@@ -669,11 +681,11 @@ export default function App() {
 
   function handleOPML(cats) {
     const defaults=[...cats.slice(0,2).map(c=>"cat:"+c.label),"weather","stocks","traffic"];
-    const cols={};
-    // Left column: news; Right column: system widgets
-    cats.forEach(c=>{ cols["cat:"+c.label]="left"; });
-    cols.weather="right"; cols.stocks="right"; cols.traffic="right";
-    setCategories(cats); setActiveIds(defaults); setColumns(cols);
+    setCategories(cats); setActiveIds(defaults); setColumns(defaultColumns(cats));
+  }
+
+  function resetColumns() {
+    setColumns(defaultColumns(categories));
   }
 
   function saveKey(service, key) {
@@ -752,6 +764,8 @@ export default function App() {
             </button>
             {loaded&&<button onClick={()=>setShowMgr(true)} title="Manage widgets"
               style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#2a2a30",fontSize:15,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⚙</button>}
+            {loaded&&<button onClick={resetColumns} title="Reset column layout"
+              style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#1c1c22",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⇄</button>}
             <button onClick={()=>setShowSettings(true)} title="Settings"
               style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#1c1c22",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>≡</button>
             {loaded&&<button onClick={reset} title="Reset / new OPML"
