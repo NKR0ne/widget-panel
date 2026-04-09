@@ -19,7 +19,11 @@ else {
 function disableNativeWidgets() {
   // HKCU write works without admin and is per-user
   const cmds = [
+    // Hide native Widgets button (HKCU — no admin needed)
     'reg add "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced" /v TaskbarDa /t REG_DWORD /d 0 /f',
+    // Left-align taskbar icons (0 = left, 1 = center default)
+    'reg add "HKCU\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced" /v TaskbarAl /t REG_DWORD /d 0 /f',
+    // Policy-level Widgets disable (requires admin, silently fails without)
     'reg add "HKLM\\SOFTWARE\\Policies\\Microsoft\\Dsh" /v AllowNewsAndInterests /t REG_DWORD /d 0 /f',
   ]
   cmds.forEach(cmd => exec(cmd, err => {
@@ -38,7 +42,7 @@ function createWindow() {
     y:               0,
     frame:           false,
     alwaysOnTop:     true,
-    skipTaskbar:     true,
+    skipTaskbar:     false,  // show in taskbar so overlay badge works
     resizable:       false,
     backgroundColor: '#111114',
     webPreferences: {

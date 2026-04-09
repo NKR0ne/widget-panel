@@ -670,9 +670,9 @@ export default function App() {
   function handleOPML(cats) {
     const defaults=[...cats.slice(0,2).map(c=>"cat:"+c.label),"weather","stocks","traffic"];
     const cols={};
-    // Left column: system widgets; Right column: news — ergonomic for left-edge panel
-    cols.weather="left"; cols.stocks="left"; cols.traffic="left";
-    cats.forEach(c=>{ cols["cat:"+c.label]="right"; });
+    // Left column: news; Right column: system widgets
+    cats.forEach(c=>{ cols["cat:"+c.label]="left"; });
+    cols.weather="right"; cols.stocks="right"; cols.traffic="right";
     setCategories(cats); setActiveIds(defaults); setColumns(cols);
   }
 
