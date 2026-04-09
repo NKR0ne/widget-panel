@@ -1,14 +1,16 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 
 // ── API endpoints ────────────────────────────────────────────────────────────
-const PROXY1  = "https://api.allorigins.win/raw?url=";
-const PROXY2  = "https://api.rss2json.com/v1/api.json?rss_url=";
-const METEO   = "https://api.open-meteo.com/v1/forecast";
-const FINNHUB = "https://finnhub.io/api/v1";
-const TOMTOM  = "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json";
+const PROXY1   = "https://api.allorigins.win/raw?url=";
+const PROXY2   = "https://api.rss2json.com/v1/api.json?rss_url=";
+const METEO    = "https://api.open-meteo.com/v1/forecast";
+const FINNHUB  = "https://finnhub.io/api/v1";
+const TOMTOM   = "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json";
+// Yahoo Finance unofficial — zero key, used as Finnhub fallback
+const YF_QUOTE = (sym) => PROXY1 + encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1d`);
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
-const SK_CONFIG = "wp-config";   // { categories, activeIds, columns, apiKeys }
+const SK_CONFIG = "wp-config";
 
 // ── Palette & system widget defs ─────────────────────────────────────────────
 const PALETTE = ["#4f8ef7","#5cc8a8","#b07ef7","#f7a64f","#f74f7e","#4ff7c8","#f7f74f","#c8f74f"];
@@ -110,12 +112,25 @@ async function fetchRSS(url) {
   return null;
 }
 
-// ── Persistent storage — wired to Electron IPC via preload.js ────────────────
+// ── Yahoo Finance fallback for stock quotes ──────────────────────────────────
+async function fetchYahooQuote(sym) {
+  try {
+    const r = await fetch(YF_QUOTE(sym));
+    if (!r.ok) return null;
+    const d = await r.json();
+    const meta = d?.chart?.result?.[0]?.meta;
+    if (!meta?.regularMarketPrice) return null;
+    return { c: meta.regularMarketPrice, pc: meta.chartPreviousClose || meta.previousClose, h: meta.regularMarketDayHigh };
+  } catch { return null; }
+}
+
+// ── Persistent storage ───────────────────────────────────────────────────────
+const api = window.electronAPI;
 async function storageSave(data) {
-  try { await window.electronAPI.store.set(SK_CONFIG, JSON.stringify(data)); } catch {}
+  try { await api.store.set(SK_CONFIG, JSON.stringify(data)); } catch {}
 }
 async function storageLoad() {
-  try { const r = await window.electronAPI.store.get(SK_CONFIG); return r ? JSON.parse(r) : null; } catch { return null; }
+  try { const r = await api.store.get(SK_CONFIG); return r ? JSON.parse(r) : null; } catch { return null; }
 }
 
 // ── Styles ───────────────────────────────────────────────────────────────────
@@ -175,7 +190,7 @@ function Skel({ n=3 }) {
 }
 
 // ── News widget ──────────────────────────────────────────────────────────────
-function NewsWidget({ category, colorIdx }) {
+function NewsWidget({ category, colorIdx, onUnreadChange }) {
   const color=catColor(category.label,colorIdx);
   const [items,setItems]=useState([]);
   const [demo,setDemo]=useState(false);
@@ -183,6 +198,8 @@ function NewsWidget({ category, colorIdx }) {
   const [readIds,setReadIds]=useState(new Set());
   const [expanded,setExpanded]=useState(true);
   const unread=items.filter(i=>!readIds.has(i.id)).length;
+
+  useEffect(()=>{ onUnreadChange?.(unread); },[unread]);
 
   useEffect(()=>{
     if (!category.feeds?.length){setItems(mockForCategory(category.label));setDemo(true);setStatus("ok");return;}
@@ -297,34 +314,51 @@ function WeatherWidget() {
   };
 }
 
-// ── Stocks widget ────────────────────────────────────────────────────────────
+// ── Stocks widget — Finnhub primary, Yahoo Finance fallback ──────────────────
 const TICKERS=["AAPL","MSFT","NVDA","SPY"];
 function StocksWidget({ apiKey, onSaveKey }) {
   const [quotes,setQuotes]=useState({});
   const [demo,setDemo]=useState(false);
-  const [status,setStatus]=useState(apiKey?"loading":"nokey");
+  const [source,setSource]=useState("");   // "finnhub" | "yahoo" | "demo"
+  const [status,setStatus]=useState(apiKey?"loading":"yahoo");
   const [expanded,setExpanded]=useState(true);
   const [draft,setDraft]=useState("");
 
   useEffect(()=>{
-    if(!apiKey){setStatus("nokey");return;}
-    setStatus("loading");
-    Promise.all(TICKERS.map(sym=>fetch(FINNHUB+"/quote?symbol="+sym+"&token="+apiKey).then(r=>r.json()).then(d=>[sym,d]).catch(()=>[sym,null])))
-      .then(res=>{const m={};res.forEach(([sym,d])=>{if(d?.c)m[sym]=d;});if(Object.keys(m).length){setQuotes(m);setDemo(false);setStatus("ok");}else{setQuotes(MOCK_STOCKS);setDemo(true);setStatus("ok");}})
-      .catch(()=>{setQuotes(MOCK_STOCKS);setDemo(true);setStatus("ok");});
+    if (apiKey) {
+      setStatus("loading");
+      Promise.all(TICKERS.map(sym=>fetch(FINNHUB+"/quote?symbol="+sym+"&token="+apiKey).then(r=>r.json()).then(d=>[sym,d]).catch(()=>[sym,null])))
+        .then(res=>{
+          const m={};res.forEach(([sym,d])=>{if(d?.c)m[sym]=d;});
+          if(Object.keys(m).length){setQuotes(m);setSource("finnhub");setStatus("ok");return;}
+          return fetchYahoo();
+        }).catch(fetchYahoo);
+    } else {
+      fetchYahoo();
+    }
   },[apiKey]);
 
-  return { color:"#5cc8a8", title:"Stocks", sub:"Finnhub", expanded, onToggle:()=>setExpanded(e=>!e),
+  function fetchYahoo() {
+    setStatus("loading");
+    Promise.all(TICKERS.map(sym=>fetchYahooQuote(sym).then(d=>[sym,d])))
+      .then(res=>{
+        const m={};res.forEach(([sym,d])=>{if(d?.c)m[sym]=d;});
+        if(Object.keys(m).length){setQuotes(m);setSource("yahoo");setStatus("ok");}
+        else{setQuotes(MOCK_STOCKS);setSource("demo");setDemo(true);setStatus("ok");}
+      }).catch(()=>{setQuotes(MOCK_STOCKS);setSource("demo");setDemo(true);setStatus("ok");});
+  }
+
+  const subLabel = source==="finnhub"?"Finnhub":source==="yahoo"?"Yahoo Finance · no key":"demo";
+
+  return { color:"#5cc8a8", title:"Stocks", sub:subLabel, expanded, onToggle:()=>setExpanded(e=>!e),
     content:(
       <div>
-        {status==="nokey"&&(
-          <div style={{paddingTop:8}}>
-            <div style={{fontSize:11,color:"#3a3a44",lineHeight:1.6,marginBottom:8}}>Free key at <a href="https://finnhub.io" target="_blank" rel="noreferrer">finnhub.io</a></div>
+        {!apiKey&&status==="ok"&&source!=="demo"&&(
+          <div style={{paddingBottom:8}}>
             <div style={{display:"flex",gap:6}}>
-              <input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Paste API key…" style={{...C.inp,flex:1,fontSize:11,fontFamily:"DM Mono,monospace"}}/>
+              <input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Finnhub key for real-time data…" style={{...C.inp,flex:1,fontSize:11,fontFamily:"DM Mono,monospace"}}/>
               {draft&&<button onClick={()=>onSaveKey("finnhub",draft)} style={C.btn}>✓</button>}
             </div>
-            <button onClick={()=>{setQuotes(MOCK_STOCKS);setDemo(true);setStatus("ok");}} style={{marginTop:8,background:"none",border:"none",fontSize:11,color:"#333",cursor:"pointer",padding:0}}>Preview with demo data →</button>
           </div>
         )}
         {status==="loading"&&<Skel n={4}/>}
@@ -333,7 +367,7 @@ function StocksWidget({ apiKey, onSaveKey }) {
             {demo&&<DemoBadge/>}
             {TICKERS.map((sym,i)=>{
               const q=quotes[sym];if(!q)return null;
-              const chg=q.c-q.pc,pct=((chg/q.pc)*100).toFixed(2),up=chg>=0;
+              const chg=q.c-(q.pc||q.c),pct=q.pc?((chg/q.pc)*100).toFixed(2):"0.00",up=chg>=0;
               return(
                 <div key={sym} style={{display:"flex",alignItems:"center",padding:"7px 0",borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none"}}>
                   <span style={{fontSize:12,fontWeight:500,color:"#999",width:46,fontFamily:"DM Mono,monospace"}}>{sym}</span>
@@ -376,7 +410,7 @@ function TrafficWidget({ apiKey, onSaveKey }) {
   const tColor=ratio>0.8?"#5cc8a8":ratio>0.5?"#f7c94f":"#f77f4f";
   const tLabel=ratio>0.8?"Free flow":ratio>0.5?"Moderate":"Heavy";
 
-  return { color:"#f77f4f", title:"Traffic", sub:"TomTom", expanded, onToggle:()=>setExpanded(e=>!e),
+  return { color:"#f77f4f", title:"Traffic", sub:"TomTom · A-20 Lévis", expanded, onToggle:()=>setExpanded(e=>!e),
     content:(
       <div>
         {status==="nokey"&&(
@@ -394,7 +428,6 @@ function TrafficWidget({ apiKey, onSaveKey }) {
           <div>
             {demo&&<DemoBadge/>}
             <div style={{background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"10px 12px"}}>
-              <div style={{fontSize:10,color:"#333",marginBottom:6}}>A-20 · Lévis</div>
               <div style={{display:"flex",alignItems:"baseline",gap:10}}>
                 <span style={{fontSize:26,fontWeight:300,color:tColor,letterSpacing:-1}}>{Math.round(flow.currentSpeed)}<span style={{fontSize:11,color:"#444",marginLeft:2}}>km/h</span></span>
                 <span style={{fontSize:11,color:"#333"}}>free flow {Math.round(flow.freeFlowSpeed)} km/h</span>
@@ -412,9 +445,9 @@ function TrafficWidget({ apiKey, onSaveKey }) {
   };
 }
 
-// ── Widget renderer (connects data hook → Shell) ──────────────────────────────
-function WidgetCard({ id, categories, apiKeys, onSaveKey, col, onMoveLeft, onMoveRight, colorIdx }) {
-  const newsData    = id.startsWith("cat:") ? NewsWidget({ category: categories.find(c=>c.label===id.slice(4)), colorIdx }) : null;
+// ── Widget renderer ──────────────────────────────────────────────────────────
+function WidgetCard({ id, categories, apiKeys, onSaveKey, col, onMoveLeft, onMoveRight, colorIdx, onUnreadChange }) {
+  const newsData    = id.startsWith("cat:") ? NewsWidget({ category: categories.find(c=>c.label===id.slice(4)), colorIdx, onUnreadChange }) : null;
   const weatherData = id==="weather" ? WeatherWidget() : null;
   const stocksData  = id==="stocks"  ? StocksWidget({ apiKey:apiKeys.finnhub, onSaveKey }) : null;
   const trafficData = id==="traffic" ? TrafficWidget({ apiKey:apiKeys.tomtom, onSaveKey }) : null;
@@ -518,19 +551,86 @@ function CategoryManager({ categories, activeIds, setActiveIds, onClose, onReset
   );
 }
 
+// ── Settings modal ────────────────────────────────────────────────────────────
+function SettingsModal({ onClose }) {
+  const [autostart, setAutostart] = useState(false);
+  useEffect(()=>{ api.autostart?.get().then(v=>setAutostart(!!v)); },[]);
+  function toggleAutostart() {
+    const next=!autostart;
+    setAutostart(next);
+    api.autostart?.set(next);
+    api.store.set('wp-autostart', next ? '1' : '');
+  }
+  return (
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}>
+      <div style={{background:"#18181c",border:"1px solid rgba(255,255,255,0.08)",borderRadius:16,padding:20,width:280}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <span style={{fontSize:14,fontWeight:500,color:"#e0e0e0"}}>Settings</span>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#444",fontSize:13,cursor:"pointer",padding:4}}>✕</button>
+        </div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
+          <div>
+            <div style={{fontSize:13,color:"#ccc"}}>Start with Windows</div>
+            <div style={{fontSize:10,color:"#333",marginTop:2}}>Launch panel on login</div>
+          </div>
+          <button onClick={toggleAutostart} style={{
+            width:36,height:20,borderRadius:10,border:"none",cursor:"pointer",transition:"background 0.2s",position:"relative",
+            background:autostart?"#4f8ef7":"rgba(255,255,255,0.1)"
+          }}>
+            <span style={{position:"absolute",top:2,left:autostart?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:"left 0.2s",display:"block"}}/>
+          </button>
+        </div>
+        <div style={{fontSize:10,color:"#282830",marginTop:16,lineHeight:1.5}}>
+          Panel position: left edge · Win+W to toggle
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Taskbar notification rotator ──────────────────────────────────────────────
+// Cycles through a digest of live data snippets every 8s in a tooltip-style strip
+// and sends badge counts to main via IPC.
+function useNotificationRotator(snippets, totalUnread) {
+  const [idx, setIdx] = useState(0);
+  const [visible, setVisible] = useState(false);
+
+  // Rotate displayed snippet every 8 seconds if there are any
+  useEffect(()=>{
+    if (!snippets.length) { setVisible(false); return; }
+    setVisible(true);
+    const t = setInterval(()=>setIdx(i=>(i+1)%snippets.length), 8000);
+    return ()=>clearInterval(t);
+  },[snippets.length]);
+
+  // Push badge to taskbar button
+  useEffect(()=>{ api.badge?.set(totalUnread); },[totalUnread]);
+
+  return { snippet: snippets[idx] || null, visible };
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [categories, setCategories] = useState(null);
-  const [activeIds,  setActiveIds]  = useState([]);
-  const [columns,    setColumns]    = useState({});   // { widgetId: "left"|"right" }
-  const [apiKeys,    setApiKeys]    = useState({});
-  const [showMgr,    setShowMgr]    = useState(false);
+  const [categories,   setCategories]   = useState(null);
+  const [activeIds,    setActiveIds]    = useState([]);
+  const [columns,      setColumns]      = useState({});
+  const [apiKeys,      setApiKeys]      = useState({});
+  const [showMgr,      setShowMgr]      = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [storageReady, setStorageReady] = useState(false);
-  const [time, setTime] = useState(new Date());
+  const [pinned,       setPinned]       = useState(false);
+  const [time,         setTime]         = useState(new Date());
+
+  // Unread counts per widget id
+  const [unreadMap, setUnreadMap] = useState({});
+  const totalUnread = Object.values(unreadMap).reduce((a,b)=>a+b, 0);
+
+  // Notification snippets — short strings rotated in the header ticker
+  const [snippets, setSnippets] = useState([]);
 
   useEffect(()=>{ const t=setInterval(()=>setTime(new Date()),1000); return ()=>clearInterval(t); },[]);
 
-  // Load persisted config on mount
+  // Load persisted config
   useEffect(()=>{
     storageLoad().then(saved=>{
       if (saved?.categories?.length) {
@@ -541,19 +641,38 @@ export default function App() {
       }
       setStorageReady(true);
     });
+    // Restore pin state
+    api.pin?.get().then(p=>setPinned(!!p));
+    // Listen for pin changes from tray menu
+    api.pin?.onChange(p=>setPinned(!!p));
   },[]);
 
-  // Persist whenever config changes
+  // Persist on change
   useEffect(()=>{
     if (!storageReady || !categories) return;
     storageSave({ categories, activeIds, columns, apiKeys });
   },[categories, activeIds, columns, apiKeys, storageReady]);
 
+  // Build notification snippets when unread changes
+  useEffect(()=>{
+    const items=[];
+    Object.entries(unreadMap).forEach(([id,count])=>{
+      if (count>0) {
+        const label=id.startsWith("cat:")?id.slice(4):id;
+        items.push(`${count} unread · ${label}`);
+      }
+    });
+    setSnippets(items);
+  },[unreadMap]);
+
+  const { snippet, visible: tickerVisible } = useNotificationRotator(snippets, totalUnread);
+
   function handleOPML(cats) {
-    const defaults=[...cats.slice(0,2).map(c=>"cat:"+c.label),"weather","traffic","stocks"];
+    const defaults=[...cats.slice(0,2).map(c=>"cat:"+c.label),"weather","stocks","traffic"];
     const cols={};
-    cats.slice(0,2).forEach(c=>{ cols["cat:"+c.label]="left"; });
-    cols.weather="right"; cols.traffic="right"; cols.stocks="right";
+    // Left column: system widgets; Right column: news — ergonomic for left-edge panel
+    cols.weather="left"; cols.stocks="left"; cols.traffic="left";
+    cats.forEach(c=>{ cols["cat:"+c.label]="right"; });
     setCategories(cats); setActiveIds(defaults); setColumns(cols);
   }
 
@@ -562,18 +681,27 @@ export default function App() {
     setActiveIds(p=>p.includes(service)?p:[...p,service]);
   }
 
-  function moveWidget(id, col) {
-    setColumns(p=>({...p,[id]:col}));
+  function moveWidget(id, dir) { setColumns(p=>({...p,[id]:dir})); }
+
+  function reset() {
+    setCategories(null); setActiveIds([]); setColumns({}); setApiKeys({});
+    setShowMgr(false); storageSave({});
   }
 
-  function reset() { setCategories(null); setActiveIds([]); setColumns({}); setApiKeys({}); setShowMgr(false); storageSave({}); }
+  async function togglePin() {
+    const next = await api.pin?.toggle();
+    setPinned(!!next);
+    api.store.set('wp-pinned', next ? '1' : '');
+  }
 
   const loaded = !!categories;
+  const leftIds  = activeIds.filter(id=>(columns[id]||"left")==="left");
+  const rightIds = activeIds.filter(id=>(columns[id]||"right")==="right");
+  const newsIds  = activeIds.filter(id=>id.startsWith("cat:"));
 
-  const leftIds  = activeIds.filter(id => (columns[id]||"left")==="left");
-  const rightIds = activeIds.filter(id => (columns[id]||"right")==="right");
-
-  const newsIds = activeIds.filter(id=>id.startsWith("cat:"));
+  const onUnread = useCallback((id, count)=>{
+    setUnreadMap(p=>({...p,[id]:count}));
+  },[]);
 
   if (!storageReady) return (
     <div style={{display:"flex",height:"100vh",alignItems:"center",justifyContent:"center",background:"#0a0a0c",fontFamily:"'DM Sans',sans-serif"}}>
@@ -590,24 +718,17 @@ export default function App() {
         ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:2px}
         @keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
         @keyframes pulse{0%,100%{opacity:.18}50%{opacity:.44}}
+        @keyframes ticker{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
         .wi{animation:fadeIn 0.2s ease both}
         input{color-scheme:dark}
         a{color:#4f8ef7}
       `}</style>
 
-      {/* Fake desktop */}
-      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",opacity:0.1}}>
-        <div style={{textAlign:"center"}}>
-          <div style={{fontSize:10,color:"#666",letterSpacing:2,textTransform:"uppercase"}}>Desktop</div>
-          <div style={{fontSize:9,color:"#444",marginTop:3}}>Windows 11 · 25H2</div>
-        </div>
-      </div>
-
-      {/* ── Two-column panel ── */}
-      <div style={{width:680,display:"flex",flexDirection:"column",background:"#111114",borderLeft:"1px solid rgba(255,255,255,0.06)",overflow:"hidden"}}>
+      {/* ── Two-column panel — fills full width on left edge ── */}
+      <div style={{width:680,display:"flex",flexDirection:"column",background:"#111114",borderRight:"1px solid rgba(255,255,255,0.06)",overflow:"hidden"}}>
 
         {/* Header */}
-        <div style={{padding:"18px 20px 12px",borderBottom:"1px solid rgba(255,255,255,0.05)",display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexShrink:0}}>
+        <div style={{padding:"18px 20px 10px",borderBottom:"1px solid rgba(255,255,255,0.05)",display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexShrink:0}}>
           <div>
             <div style={{fontSize:28,fontWeight:300,color:"#f0f0f0",letterSpacing:-1,lineHeight:1,fontFamily:"'DM Mono',monospace"}}>
               {String(time.getHours()).padStart(2,"0")}:{String(time.getMinutes()).padStart(2,"0")}
@@ -615,16 +736,27 @@ export default function App() {
             <div style={{fontSize:10,color:"#222",marginTop:4,textTransform:"capitalize"}}>
               {time.toLocaleDateString("fr-CA",{weekday:"long",month:"long",day:"numeric"})}
             </div>
+            {/* Notification ticker */}
+            {tickerVisible && snippet && (
+              <div key={snippet} style={{fontSize:10,color:"#3a3a50",marginTop:6,fontFamily:"DM Mono,monospace",animation:"ticker 0.3s ease both"}}>
+                {totalUnread > 0 && <span style={{color:"#4f8ef7",marginRight:6}}>●</span>}{snippet}
+              </div>
+            )}
           </div>
-          {loaded&&(
-            <div style={{display:"flex",gap:4,alignItems:"center"}}>
-              <span style={{fontSize:9,color:"#1c1c24",fontFamily:"DM Mono,monospace",marginRight:4}}>
-                {categories.length} categories · OPML
-              </span>
-              <button onClick={()=>setShowMgr(true)} title="Manage widgets" style={{background:"none",border:"none",color:"#2a2a30",fontSize:16,cursor:"pointer",padding:4}}>⚙</button>
-              <button onClick={reset} title="Reset" style={{background:"none",border:"none",color:"#1c1c22",fontSize:12,cursor:"pointer",padding:4}}>↺</button>
-            </div>
-          )}
+          <div style={{display:"flex",gap:4,alignItems:"center",marginTop:2}}>
+            {/* Pin button */}
+            <button onClick={togglePin} title={pinned?"Unpin — float above apps":"Pin to desktop layer"}
+              style={{background:pinned?"rgba(79,142,247,0.15)":"none",border:pinned?"1px solid rgba(79,142,247,0.25)":"1px solid transparent",
+                borderRadius:6,color:pinned?"#4f8ef7":"#2a2a30",fontSize:14,cursor:"pointer",padding:"3px 6px",lineHeight:1,transition:"all 0.15s"}}>
+              📌
+            </button>
+            {loaded&&<button onClick={()=>setShowMgr(true)} title="Manage widgets"
+              style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#2a2a30",fontSize:15,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⚙</button>}
+            <button onClick={()=>setShowSettings(true)} title="Settings"
+              style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#1c1c22",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>≡</button>
+            {loaded&&<button onClick={reset} title="Reset / new OPML"
+              style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#1c1c22",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>↺</button>}
+          </div>
         </div>
 
         {/* Body */}
@@ -632,43 +764,37 @@ export default function App() {
 
         {loaded && (
           <div style={{flex:1,overflow:"hidden",display:"flex",gap:0}}>
-            {/* Left column */}
+            {/* Left column — system widgets by default */}
             <div style={{flex:1,overflowY:"auto",padding:"12px 8px 12px 12px",display:"flex",flexDirection:"column",gap:8,borderRight:"1px solid rgba(255,255,255,0.04)"}}>
               <div style={{fontSize:9,color:"#1e1e28",textTransform:"uppercase",letterSpacing:1.5,fontFamily:"DM Mono,monospace",marginBottom:2,paddingLeft:2}}>Left</div>
               {leftIds.map((id,i)=>(
                 <div key={id} className="wi" style={{animationDelay:(i*25)+"ms"}}>
                   <WidgetCard id={id} categories={categories||[]} apiKeys={apiKeys} onSaveKey={saveKey}
-                    col="left"
-                    onMoveLeft={()=>moveWidget(id,"left")}
-                    onMoveRight={()=>moveWidget(id,"right")}
+                    col="left" onMoveLeft={()=>moveWidget(id,"left")} onMoveRight={()=>moveWidget(id,"right")}
                     colorIdx={newsIds.indexOf(id)}
+                    onUnreadChange={count=>onUnread(id,count)}
                   />
                 </div>
               ))}
               {leftIds.length===0&&(
-                <div style={{textAlign:"center",color:"#1e1e28",fontSize:11,marginTop:40}}>
-                  ⬅ Move widgets here<br/>using the column buttons
-                </div>
+                <div style={{textAlign:"center",color:"#1e1e28",fontSize:11,marginTop:40}}>⬅ Move widgets here</div>
               )}
             </div>
 
-            {/* Right column */}
+            {/* Right column — news by default */}
             <div style={{flex:1,overflowY:"auto",padding:"12px 12px 12px 8px",display:"flex",flexDirection:"column",gap:8}}>
               <div style={{fontSize:9,color:"#1e1e28",textTransform:"uppercase",letterSpacing:1.5,fontFamily:"DM Mono,monospace",marginBottom:2,paddingLeft:2}}>Right</div>
               {rightIds.map((id,i)=>(
                 <div key={id} className="wi" style={{animationDelay:(i*25)+"ms"}}>
                   <WidgetCard id={id} categories={categories||[]} apiKeys={apiKeys} onSaveKey={saveKey}
-                    col="right"
-                    onMoveLeft={()=>moveWidget(id,"left")}
-                    onMoveRight={()=>moveWidget(id,"right")}
+                    col="right" onMoveLeft={()=>moveWidget(id,"left")} onMoveRight={()=>moveWidget(id,"right")}
                     colorIdx={newsIds.indexOf(id)}
+                    onUnreadChange={count=>onUnread(id,count)}
                   />
                 </div>
               ))}
               {rightIds.length===0&&(
-                <div style={{textAlign:"center",color:"#1e1e28",fontSize:11,marginTop:40}}>
-                  ➡ Move widgets here<br/>using the column buttons
-                </div>
+                <div style={{textAlign:"center",color:"#1e1e28",fontSize:11,marginTop:40}}>➡ Move widgets here</div>
               )}
             </div>
           </div>
@@ -676,20 +802,23 @@ export default function App() {
 
         {/* Footer */}
         {loaded&&(
-          <div style={{padding:"8px 16px",borderTop:"1px solid rgba(255,255,255,0.04)",display:"flex",justifyContent:"flex-end",alignItems:"center",flexShrink:0}}>
+          <div style={{padding:"8px 16px",borderTop:"1px solid rgba(255,255,255,0.04)",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+            <span style={{fontSize:9,color:"#1a1a22",fontFamily:"DM Mono,monospace"}}>{categories.length} categories · OPML</span>
             <button onClick={()=>setShowMgr(true)} style={{background:"none",border:"1px solid rgba(255,255,255,0.06)",color:"#282832",fontSize:10,padding:"3px 8px",borderRadius:5,cursor:"pointer"}}>+ Add widget</button>
           </div>
         )}
       </div>
 
-      {/* Taskbar strip */}
-      <div style={{width:32,background:"#0a0a0c",borderLeft:"1px solid rgba(255,255,255,0.03)",display:"flex",flexDirection:"column",alignItems:"center",paddingTop:8,gap:4}}>
-        {["⊞","🔍","✉"].map((ic,i)=>(
-          <div key={i} style={{fontSize:i===0?14:10,color:i===0?"#4f8ef7":"#181818",padding:"4px 0"}}>{ic}</div>
-        ))}
+      {/* Fake desktop — visible to the right of the panel */}
+      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",opacity:0.07}}>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontSize:10,color:"#666",letterSpacing:2,textTransform:"uppercase"}}>Desktop</div>
+          <div style={{fontSize:9,color:"#444",marginTop:3}}>Windows 11 · 25H2</div>
+        </div>
       </div>
 
       {showMgr&&loaded&&<CategoryManager categories={categories} activeIds={activeIds} setActiveIds={setActiveIds} onClose={()=>setShowMgr(false)} onReset={reset}/>}
+      {showSettings&&<SettingsModal onClose={()=>setShowSettings(false)}/>}
     </div>
   );
 }
