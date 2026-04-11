@@ -107,8 +107,12 @@ function parseXML(xml) {
   }).filter(it=>it.title&&it.link);
 }
 async function fetchRSS(url) {
+  // Proxy 1 — allorigins
   try { const r=await fetch(PROXY1+encodeURIComponent(url)); if(r.ok){const items=parseXML(await r.text()).slice(0,7);if(items.length)return items;} } catch {}
+  // Proxy 2 — rss2json
   try { const r=await fetch(PROXY2+encodeURIComponent(url)+"&count=6"); const d=await r.json(); if(d.status==="ok") return d.items.map(it=>({id:it.guid||it.link,title:it.title,link:it.link,source:(()=>{try{return new URL(it.link).hostname.replace("www.","");}catch{return "";}})(),time:relTime(it.pubDate)})); } catch {}
+  // Proxy 3 — corsproxy.io
+  try { const r=await fetch("https://corsproxy.io/?"+encodeURIComponent(url)); if(r.ok){const items=parseXML(await r.text()).slice(0,7);if(items.length)return items;} } catch {}
   return null;
 }
 
@@ -190,7 +194,7 @@ function Skel({ n=3 }) {
 }
 
 // ── News widget ──────────────────────────────────────────────────────────────
-function NewsWidget({ category, colorIdx, onUnreadChange }) {
+function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
   const color=catColor(category.label,colorIdx);
   const [items,setItems]=useState([]);
   const [demo,setDemo]=useState(false);
@@ -222,7 +226,10 @@ function NewsWidget({ category, colorIdx, onUnreadChange }) {
         {status==="loading"&&<Skel/>}
         {status==="ok"&&<div>{demo&&<DemoBadge/>}{items.map((item,i)=>(
           <div key={item.id} style={{padding:"8px 0",cursor:"pointer",opacity:readIds.has(item.id)?0.35:1,borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none"}}
-            onClick={()=>{setReadIds(p=>new Set([...p,item.id]));if(item.link!=="#")window.open(item.link,"_blank");}}>
+            onClick={()=>{
+              setReadIds(p=>new Set([...p,item.id]));
+              if(item.link&&item.link!=="#") onOpenUrl?.(item.link);
+            }}>
             <div style={{fontSize:12,color:"#a0a0a8",lineHeight:1.45,marginBottom:4}}>{item.title}</div>
             <div style={{display:"flex",justifyContent:"space-between"}}>
               <span style={{fontSize:10,color:"#2e2e38"}}>{item.source}</span>
@@ -446,8 +453,8 @@ function TrafficWidget({ apiKey, onSaveKey }) {
 }
 
 // ── Widget renderer ──────────────────────────────────────────────────────────
-function WidgetCard({ id, categories, apiKeys, onSaveKey, col, onMoveLeft, onMoveRight, colorIdx, onUnreadChange }) {
-  const newsData    = id.startsWith("cat:") ? NewsWidget({ category: categories.find(c=>c.label===id.slice(4)), colorIdx, onUnreadChange }) : null;
+function WidgetCard({ id, categories, apiKeys, onSaveKey, col, onMoveLeft, onMoveRight, colorIdx, onUnreadChange, onOpenUrl }) {
+  const newsData    = id.startsWith("cat:") ? NewsWidget({ category: categories.find(c=>c.label===id.slice(4)), colorIdx, onUnreadChange, onOpenUrl }) : null;
   const weatherData = id==="weather" ? WeatherWidget() : null;
   const stocksData  = id==="stocks"  ? StocksWidget({ apiKey:apiKeys.finnhub, onSaveKey }) : null;
   const trafficData = id==="traffic" ? TrafficWidget({ apiKey:apiKeys.tomtom, onSaveKey }) : null;
@@ -552,7 +559,7 @@ function CategoryManager({ categories, activeIds, setActiveIds, onClose, onReset
 }
 
 // ── Settings modal ────────────────────────────────────────────────────────────
-function SettingsModal({ onClose }) {
+function SettingsModal({ onClose, opacity, onOpacityChange }) {
   const [autostart, setAutostart] = useState(false);
   useEffect(()=>{ api.autostart?.get().then(v=>setAutostart(!!v)); },[]);
   function toggleAutostart() {
@@ -579,6 +586,15 @@ function SettingsModal({ onClose }) {
           }}>
             <span style={{position:"absolute",top:2,left:autostart?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:"left 0.2s",display:"block"}}/>
           </button>
+        </div>
+        <div style={{padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{fontSize:13,color:"#ccc"}}>Transparency</div>
+            <div style={{fontSize:11,color:"#555",fontFamily:"DM Mono,monospace"}}>{Math.round((1-opacity)*100)}%</div>
+          </div>
+          <input type="range" min="0.2" max="1" step="0.01" value={opacity}
+            onChange={e=>onOpacityChange(parseFloat(e.target.value))}
+            style={{width:"100%",accentColor:"#4f8ef7",cursor:"pointer"}}/>
         </div>
         <div style={{fontSize:10,color:"#282830",marginTop:16,lineHeight:1.5}}>
           Panel position: left edge · Win+W to toggle
@@ -620,6 +636,16 @@ export default function App() {
   const [storageReady, setStorageReady] = useState(false);
   const [pinned,       setPinned]       = useState(false);
   const [time,         setTime]         = useState(new Date());
+  const [visible,      setVisible]      = useState(false);  // slide-in state
+  const [opacity,      setOpacity]      = useState(1);
+  const [accentColor,  setAccentColor]  = useState('#202020');
+  function openBrowser(url) {
+    window.electronAPI?.browser?.open(url);
+  }
+
+  const resizingRef  = useRef(false);
+  const startXRef    = useRef(0);
+  const startWRef    = useRef(0);
 
   // Unread counts per widget id
   const [unreadMap, setUnreadMap] = useState({});
@@ -629,6 +655,38 @@ export default function App() {
   const [snippets, setSnippets] = useState([]);
 
   useEffect(()=>{ const t=setInterval(()=>setTime(new Date()),1000); return ()=>clearInterval(t); },[]);
+
+  // ── Slide animation ────────────────────────────────────────────────────────
+  useEffect(() => {
+    const api = window.electronAPI?.panel;
+    if (!api) return;
+
+    // Slide-in: main sends panel-show after win.show()
+    api.onShow(() => setVisible(true));
+
+    // Slide-out: main sends panel-hide → animate → tell main to call win.hide()
+    api.onHide(() => {
+      setVisible(false);
+      setTimeout(() => api.hideDone(), 270);
+    });
+
+    // Tell main we're ready — main will send panel-show if window is already visible
+    api.ready();
+  }, []);
+
+  // ── Resize drag handle ─────────────────────────────────────────────────────
+  const onResizeMouseDown = useCallback((e) => {
+    e.preventDefault();
+    // Hand off to main process — it polls getCursorScreenPoint() so dragging
+    // past the window's right edge still works correctly.
+    window.electronAPI?.panel?.resizeStart(e.screenX, window.innerWidth);
+
+    const onUp = () => {
+      window.electronAPI?.panel?.resizeEnd();
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mouseup', onUp);
+  }, []);
 
   // Build canonical column map: news → left, system → right
   // LEFT = system widgets, RIGHT = news
@@ -657,6 +715,10 @@ export default function App() {
     api.pin?.get().then(p=>setPinned(!!p));
     // Listen for pin changes from tray menu
     api.pin?.onChange(p=>setPinned(!!p));
+    // Restore opacity
+    api.store.get('wp-opacity').then(v=>{ if (v) setOpacity(parseFloat(v)); });
+    // Fetch Windows accent color
+    window.electronAPI?.system?.accentColor().then(c=>{ if (c) setAccentColor(c); });
   },[]);
 
   // Persist on change
@@ -722,7 +784,7 @@ export default function App() {
   );
 
   return (
-    <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans',sans-serif",background:"#0a0a0c"}}>
+    <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans',sans-serif",background:"transparent",overflow:"hidden"}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@300;400&display=swap');
         *{box-sizing:border-box;margin:0;padding:0}
@@ -734,105 +796,115 @@ export default function App() {
         .wi{animation:fadeIn 0.2s ease both}
         input{color-scheme:dark}
         a{color:#4f8ef7}
+        .panel-wrap{
+          transform: translateX(-100%);
+          transition: transform 260ms cubic-bezier(0.32,0,0.16,1);
+          will-change: transform;
+        }
+        .panel-wrap.open{
+          transform: translateX(0);
+        }
+        .resize-handle{
+          width:5px;flex-shrink:0;cursor:ew-resize;
+          background:transparent;
+          transition:background 0.15s;
+          position:relative;z-index:10;
+        }
+        .resize-handle:hover,.resize-handle:active{
+          background:rgba(79,142,247,0.25);
+        }
       `}</style>
 
-      {/* ── Two-column panel — fills full width on left edge ── */}
-      <div style={{width:680,display:"flex",flexDirection:"column",background:"#111114",borderRight:"1px solid rgba(255,255,255,0.06)",overflow:"hidden"}}>
+      {/* ── Sliding wrapper ── */}
+      <div className={`panel-wrap${visible?" open":""}`}
+           style={{display:"flex",flexDirection:"row",height:"100vh",width:"100vw"}}>
 
-        {/* Header */}
-        <div style={{padding:"18px 20px 10px",borderBottom:"1px solid rgba(255,255,255,0.05)",display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexShrink:0}}>
-          <div>
-            <div style={{fontSize:28,fontWeight:300,color:"#f0f0f0",letterSpacing:-1,lineHeight:1,fontFamily:"'DM Mono',monospace"}}>
-              {String(time.getHours()).padStart(2,"0")}:{String(time.getMinutes()).padStart(2,"0")}
+        {/* ── Panel content ── */}
+        <div style={{flex:"0 0 auto",width:"100vw",display:"flex",flexDirection:"row",
+          background:`color-mix(in srgb, ${accentColor} 8%, rgba(20,20,24,${opacity}))`,
+          backdropFilter:opacity<1?`blur(${Math.round((1-opacity)*40)}px)`:"none",
+          WebkitBackdropFilter:opacity<1?`blur(${Math.round((1-opacity)*40)}px)`:"none",
+          transition:"width 280ms cubic-bezier(0.32,0,0.16,1)"}}>
+
+          <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            {/* Header */}
+            <div style={{padding:"18px 20px 10px",borderBottom:"1px solid rgba(255,255,255,0.05)",display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexShrink:0}}>
+              <div>
+                <div style={{fontSize:28,fontWeight:300,color:"#f0f0f0",letterSpacing:-1,lineHeight:1,fontFamily:"'DM Mono',monospace"}}>
+                  {String(time.getHours()).padStart(2,"0")}:{String(time.getMinutes()).padStart(2,"0")}
+                </div>
+                <div style={{fontSize:10,color:"#222",marginTop:4,textTransform:"capitalize"}}>
+                  {time.toLocaleDateString("fr-CA",{weekday:"long",month:"long",day:"numeric"})}
+                </div>
+                {tickerVisible && snippet && (
+                  <div key={snippet} style={{fontSize:10,color:"#3a3a50",marginTop:6,fontFamily:"DM Mono,monospace",animation:"ticker 0.3s ease both"}}>
+                    {totalUnread > 0 && <span style={{color:"#4f8ef7",marginRight:6}}>●</span>}{snippet}
+                  </div>
+                )}
+              </div>
+              <div style={{display:"flex",gap:4,alignItems:"center",marginTop:2}}>
+                <button onClick={togglePin} title={pinned?"Unpin":"Pin to desktop"}
+                  style={{background:pinned?"rgba(79,142,247,0.15)":"none",border:pinned?"1px solid rgba(79,142,247,0.25)":"1px solid transparent",
+                    borderRadius:6,color:pinned?"#4f8ef7":"#2a2a30",fontSize:14,cursor:"pointer",padding:"3px 6px",lineHeight:1,transition:"all 0.15s"}}>
+                  📌
+                </button>
+                {loaded&&<button onClick={()=>setShowMgr(true)} title="Manage widgets"
+                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#2a2a30",fontSize:15,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⚙</button>}
+                {loaded&&<button onClick={resetColumns} title="Reset column layout"
+                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#1c1c22",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⇄</button>}
+                <button onClick={()=>setShowSettings(true)} title="Settings"
+                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#1c1c22",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>≡</button>
+                {loaded&&<button onClick={reset} title="Reset / new OPML"
+                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#1c1c22",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>↺</button>}
+              </div>
             </div>
-            <div style={{fontSize:10,color:"#222",marginTop:4,textTransform:"capitalize"}}>
-              {time.toLocaleDateString("fr-CA",{weekday:"long",month:"long",day:"numeric"})}
-            </div>
-            {/* Notification ticker */}
-            {tickerVisible && snippet && (
-              <div key={snippet} style={{fontSize:10,color:"#3a3a50",marginTop:6,fontFamily:"DM Mono,monospace",animation:"ticker 0.3s ease both"}}>
-                {totalUnread > 0 && <span style={{color:"#4f8ef7",marginRight:6}}>●</span>}{snippet}
+
+            {/* Body */}
+            {!loaded && <OPMLDrop onLoaded={handleOPML} />}
+            {loaded && (
+              <div style={{flex:1,overflow:"hidden",display:"flex",gap:0}}>
+                <div style={{flex:"0 0 auto",width:280,maxWidth:280,overflowY:"auto",padding:"12px 8px 12px 12px",display:"flex",flexDirection:"column",gap:8,borderRight:"1px solid rgba(255,255,255,0.04)"}}>
+                  <div style={{fontSize:9,color:"#1e1e28",textTransform:"uppercase",letterSpacing:1.5,fontFamily:"DM Mono,monospace",marginBottom:2,paddingLeft:2}}>Left</div>
+                  {leftIds.map((id,i)=>(
+                    <div key={id} className="wi" style={{animationDelay:(i*25)+"ms"}}>
+                      <WidgetCard id={id} categories={categories||[]} apiKeys={apiKeys} onSaveKey={saveKey}
+                        col="left" onMoveLeft={()=>moveWidget(id,"left")} onMoveRight={()=>moveWidget(id,"right")}
+                        colorIdx={newsIds.indexOf(id)} onUnreadChange={count=>onUnread(id,count)} onOpenUrl={openBrowser}/>
+                    </div>
+                  ))}
+                  {leftIds.length===0&&<div style={{textAlign:"center",color:"#1e1e28",fontSize:11,marginTop:40}}>⬅ Move widgets here</div>}
+                </div>
+                <div style={{flex:1,overflowY:"auto",padding:"12px 12px 12px 8px",display:"flex",flexDirection:"column",gap:8}}>
+                  <div style={{fontSize:9,color:"#1e1e28",textTransform:"uppercase",letterSpacing:1.5,fontFamily:"DM Mono,monospace",marginBottom:2,paddingLeft:2}}>Right</div>
+                  {rightIds.map((id,i)=>(
+                    <div key={id} className="wi" style={{animationDelay:(i*25)+"ms"}}>
+                      <WidgetCard id={id} categories={categories||[]} apiKeys={apiKeys} onSaveKey={saveKey}
+                        col="right" onMoveLeft={()=>moveWidget(id,"left")} onMoveRight={()=>moveWidget(id,"right")}
+                        colorIdx={newsIds.indexOf(id)} onUnreadChange={count=>onUnread(id,count)} onOpenUrl={openBrowser}/>
+                    </div>
+                  ))}
+                  {rightIds.length===0&&<div style={{textAlign:"center",color:"#1e1e28",fontSize:11,marginTop:40}}>➡ Move widgets here</div>}
+                </div>
+              </div>
+            )}
+
+            {/* Footer */}
+            {loaded&&(
+              <div style={{padding:"8px 16px",borderTop:"1px solid rgba(255,255,255,0.04)",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+                <span style={{fontSize:9,color:"#1a1a22",fontFamily:"DM Mono,monospace"}}>{categories.length} categories · OPML</span>
+                <button onClick={()=>setShowMgr(true)} style={{background:"none",border:"1px solid rgba(255,255,255,0.06)",color:"#282832",fontSize:10,padding:"3px 8px",borderRadius:5,cursor:"pointer"}}>+ Add widget</button>
               </div>
             )}
           </div>
-          <div style={{display:"flex",gap:4,alignItems:"center",marginTop:2}}>
-            {/* Pin button */}
-            <button onClick={togglePin} title={pinned?"Unpin — float above apps":"Pin to desktop layer"}
-              style={{background:pinned?"rgba(79,142,247,0.15)":"none",border:pinned?"1px solid rgba(79,142,247,0.25)":"1px solid transparent",
-                borderRadius:6,color:pinned?"#4f8ef7":"#2a2a30",fontSize:14,cursor:"pointer",padding:"3px 6px",lineHeight:1,transition:"all 0.15s"}}>
-              📌
-            </button>
-            {loaded&&<button onClick={()=>setShowMgr(true)} title="Manage widgets"
-              style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#2a2a30",fontSize:15,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⚙</button>}
-            {loaded&&<button onClick={resetColumns} title="Reset column layout"
-              style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#1c1c22",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⇄</button>}
-            <button onClick={()=>setShowSettings(true)} title="Settings"
-              style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#1c1c22",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>≡</button>
-            {loaded&&<button onClick={reset} title="Reset / new OPML"
-              style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#1c1c22",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>↺</button>}
-          </div>
-        </div>
 
-        {/* Body */}
-        {!loaded && <OPMLDrop onLoaded={handleOPML} />}
+          {/* Resize handle */}
+          <div className="resize-handle" onMouseDown={onResizeMouseDown} />
+        </div>{/* end panel content */}
 
-        {loaded && (
-          <div style={{flex:1,overflow:"hidden",display:"flex",gap:0}}>
-            {/* Left column — system widgets by default */}
-            <div style={{flex:1,overflowY:"auto",padding:"12px 8px 12px 12px",display:"flex",flexDirection:"column",gap:8,borderRight:"1px solid rgba(255,255,255,0.04)"}}>
-              <div style={{fontSize:9,color:"#1e1e28",textTransform:"uppercase",letterSpacing:1.5,fontFamily:"DM Mono,monospace",marginBottom:2,paddingLeft:2}}>Left</div>
-              {leftIds.map((id,i)=>(
-                <div key={id} className="wi" style={{animationDelay:(i*25)+"ms"}}>
-                  <WidgetCard id={id} categories={categories||[]} apiKeys={apiKeys} onSaveKey={saveKey}
-                    col="left" onMoveLeft={()=>moveWidget(id,"left")} onMoveRight={()=>moveWidget(id,"right")}
-                    colorIdx={newsIds.indexOf(id)}
-                    onUnreadChange={count=>onUnread(id,count)}
-                  />
-                </div>
-              ))}
-              {leftIds.length===0&&(
-                <div style={{textAlign:"center",color:"#1e1e28",fontSize:11,marginTop:40}}>⬅ Move widgets here</div>
-              )}
-            </div>
-
-            {/* Right column — news by default */}
-            <div style={{flex:1,overflowY:"auto",padding:"12px 12px 12px 8px",display:"flex",flexDirection:"column",gap:8}}>
-              <div style={{fontSize:9,color:"#1e1e28",textTransform:"uppercase",letterSpacing:1.5,fontFamily:"DM Mono,monospace",marginBottom:2,paddingLeft:2}}>Right</div>
-              {rightIds.map((id,i)=>(
-                <div key={id} className="wi" style={{animationDelay:(i*25)+"ms"}}>
-                  <WidgetCard id={id} categories={categories||[]} apiKeys={apiKeys} onSaveKey={saveKey}
-                    col="right" onMoveLeft={()=>moveWidget(id,"left")} onMoveRight={()=>moveWidget(id,"right")}
-                    colorIdx={newsIds.indexOf(id)}
-                    onUnreadChange={count=>onUnread(id,count)}
-                  />
-                </div>
-              ))}
-              {rightIds.length===0&&(
-                <div style={{textAlign:"center",color:"#1e1e28",fontSize:11,marginTop:40}}>➡ Move widgets here</div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Footer */}
-        {loaded&&(
-          <div style={{padding:"8px 16px",borderTop:"1px solid rgba(255,255,255,0.04)",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
-            <span style={{fontSize:9,color:"#1a1a22",fontFamily:"DM Mono,monospace"}}>{categories.length} categories · OPML</span>
-            <button onClick={()=>setShowMgr(true)} style={{background:"none",border:"1px solid rgba(255,255,255,0.06)",color:"#282832",fontSize:10,padding:"3px 8px",borderRadius:5,cursor:"pointer"}}>+ Add widget</button>
-          </div>
-        )}
-      </div>
-
-      {/* Fake desktop — visible to the right of the panel */}
-      <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",opacity:0.07}}>
-        <div style={{textAlign:"center"}}>
-          <div style={{fontSize:10,color:"#666",letterSpacing:2,textTransform:"uppercase"}}>Desktop</div>
-          <div style={{fontSize:9,color:"#444",marginTop:3}}>Windows 11 · 25H2</div>
-        </div>
-      </div>
+      </div>{/* end panel-wrap */}
 
       {showMgr&&loaded&&<CategoryManager categories={categories} activeIds={activeIds} setActiveIds={setActiveIds} onClose={()=>setShowMgr(false)} onReset={reset}/>}
-      {showSettings&&<SettingsModal onClose={()=>setShowSettings(false)}/>}
+      {showSettings&&<SettingsModal onClose={()=>setShowSettings(false)} opacity={opacity} onOpacityChange={v=>{ setOpacity(v); api.store.set('wp-opacity', String(v)); }}/>}
     </div>
   );
 }

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    display: flex; align-items: center; gap: 8px;
+    height: 41px; padding: 0 12px;
+    background: #18181c;
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+    font-family: 'DM Mono', 'Consolas', monospace;
+    font-size: 11px;
+    color: #555;
+    -webkit-app-region: drag;
+    user-select: none;
+    overflow: hidden;
+  }
+  #url {
+    flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: #444;
+  }
+  button {
+    -webkit-app-region: no-drag;
+    background: none;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    color: #555;
+    font-size: 13px;
+    cursor: pointer;
+    padding: 2px 8px;
+    line-height: 1;
+    flex-shrink: 0;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  button:hover { border-color: rgba(255,255,255,0.18); color: #aaa; }
+  #spinner {
+    width: 10px; height: 10px; border-radius: 50%;
+    border: 2px solid rgba(255,255,255,0.08);
+    border-top-color: #4f8ef7;
+    animation: spin 0.7s linear infinite;
+    flex-shrink: 0;
+    display: none;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <div id="spinner"></div>
+  <span id="url">Loading…</span>
+  <button id="ext" title="Open in Brave">⤢</button>
+  <button id="close" title="Close">✕</button>
+<script>
+  const api = window.electronAPI;
+  const urlEl = document.getElementById('url');
+  const spinner = document.getElementById('spinner');
+
+  api?.brave?.onUrl(u => { urlEl.textContent = u; });
+  api?.brave?.onLoading(v => { spinner.style.display = v ? 'block' : 'none'; });
+
+  document.getElementById('ext').onclick = () => api?.brave?.openExternal();
+  document.getElementById('close').onclick = () => api?.brave?.close();
+</script>
+</body>
+</html>

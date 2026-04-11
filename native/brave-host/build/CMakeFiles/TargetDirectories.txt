@@ -1,0 +1,3 @@
+C:/Users/nicol/source/repos/widget-panel/native/brave-host/build/CMakeFiles/brave-host.dir
+C:/Users/nicol/source/repos/widget-panel/native/brave-host/build/CMakeFiles/edit_cache.dir
+C:/Users/nicol/source/repos/widget-panel/native/brave-host/build/CMakeFiles/rebuild_cache.dir

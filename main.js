@@ -1,14 +1,26 @@
-const { app, BrowserWindow, globalShortcut, Tray, Menu, screen, ipcMain, nativeImage } = require('electron')
+const { app, BrowserWindow, globalShortcut, Tray, Menu, screen, ipcMain, nativeImage, systemPreferences, shell } = require('electron')
 const path   = require('path')
 const fs     = require('fs')
 const net    = require('net')
 const { exec, spawn } = require('child_process')
 const { getStore, setStore, deleteStore } = require('./store')
 
-const isDev  = !app.isPackaged
-let win      = null
-let tray     = null
-let isPinned = false
+const isDev  = !!process.env.VITE_DEV
+const LOG    = path.join(__dirname, 'native', 'bin', 'electron.log')
+function log(...args) {
+  const line = `[${new Date().toISOString()}] ${args.join(' ')}\n`
+  try { fs.appendFileSync(LOG, line) } catch {}
+  console.log(...args)
+}
+try { fs.writeFileSync(LOG, '') } catch {}  // clear on startup
+
+let win              = null
+let tray             = null
+let isPinned         = false
+let lastToggleTime   = 0
+let isHiding         = false  // prevents double-hide (blur + toggle arriving together)
+let coldStart        = true   // true until first successful IPC connection
+let rendererReady    = false  // true once renderer has registered its panel listeners
 
 // ── Single instance lock ──────────────────────────────────────────────────────
 const gotLock = app.requestSingleInstanceLock()
@@ -43,13 +55,13 @@ function broadcastToHelper(obj) {
 }
 
 function createPipeServer() {
-  const PIPE = '\\\\.\\pipe\\widget-panel'
+  // Use TCP on localhost — no integrity-level restrictions unlike named pipes.
+  // Port 47321 is our fixed IPC port (widget-panel).
+  const PORT = 47321
 
-  pipeServer = net.createServer(socket => {
-    console.log('[pipe] taskbar-btn connected')
+  function onSocket(socket) {
+    console.log('[ipc] taskbar-btn connected')
     pipeSocket = socket
-
-    // Send current state immediately
     broadcastToHelper({ type: 'state', visible: win ? win.isVisible() : true })
 
     socket.on('data', chunk => {
@@ -57,27 +69,57 @@ function createPipeServer() {
       for (const line of lines) {
         try {
           const msg = JSON.parse(line)
-          if (msg.type === 'toggle') {
-            win ? (win.isVisible() ? win.hide() : win.show()) : null
-            broadcastToHelper({ type: 'state', visible: win?.isVisible() ?? false })
+          if (msg.type === 'ready') {
+            log('[tcp] ready received, win=', !!win, 'coldStart=', coldStart)
+            if (!win) return
+            if (coldStart) {
+              // First ever connection after Electron was launched by the button
+              coldStart = false
+              lastToggleTime = Date.now()
+              log('[tcp] coldStart → win.show(), isVisible=', win.isVisible())
+              if (!win.isVisible()) { win.show(); setTimeout(() => win.focus(), 150) }
+            }
+            notifyHelperState(win.isVisible())
+          }
+          else if (msg.type === 'clickoutside') {
+            if (!isPinned) { log('[clickoutside] → hidePanel()'); hidePanel() }
+            else { log('[clickoutside] pinned — ignored') }
+          }
+          else if (msg.type === 'toggle') {
+            if (!win) return
+            lastToggleTime = Date.now()
+            log('[toggle] isVisible=', win.isVisible())
+            if (win.isVisible()) { hidePanel() }
+            else { win.show(); setTimeout(() => win.focus(), 150) }
+            broadcastToHelper({ type: 'state', visible: win.isVisible() })
           }
         } catch {}
       }
     })
-
     socket.on('end',   () => { pipeSocket = null })
     socket.on('error', () => { pipeSocket = null })
-  })
+  }
 
+  pipeServer = net.createServer(onSocket)
   pipeServer.on('error', err => {
-    // EADDRINUSE: stale pipe from a crashed previous session — delete and retry
+    console.error('[ipc] server error:', err.code, err.message)
     if (err.code === 'EADDRINUSE') {
-      try { fs.unlinkSync(PIPE) } catch {}
-      setTimeout(createPipeServer, 500)
+      setTimeout(createPipeServer, 1000)
     }
   })
+  pipeServer.listen(PORT, '127.0.0.1', () =>
+    console.log('[ipc] server listening on TCP 127.0.0.1:' + PORT))
+}
 
-  pipeServer.listen(PIPE, () => console.log('[pipe] server listening'))
+// Initiate slide-out: renderer animates then calls panel-hide-done → win.hide()
+function hidePanel() {
+  if (!win || !win.isVisible() || isHiding) return
+  isHiding = true
+  closeBraveWin()
+  win.webContents.send('panel-hide')
+  // Fallback: if renderer doesn't respond in 600ms, hide anyway
+  const t = setTimeout(() => { win.hide(); notifyHelperState(false); isHiding = false }, 600)
+  ipcMain.once('panel-hide-done', () => { clearTimeout(t); win.hide(); notifyHelperState(false); isHiding = false })
 }
 
 // Send badge count to C++ helper (and to Electron's own overlay icon)
@@ -86,9 +128,21 @@ function sendBadge(count) {
   setTaskbarOverlay(count)
 }
 
-// Send visibility state to C++ helper whenever panel show/hide changes
+// Send visibility state to the C++ helper button
 function notifyHelperState(visible) {
   broadcastToHelper({ type: 'state', visible })
+}
+
+// Send panel+brave HWNDs to the DLL so the mouse hook can call GetWindowRect directly.
+// Win32 GetWindowRect always returns physical coords — no DPI math needed.
+function notifyHelperHwnds() {
+  if (!win || win.isDestroyed()) return
+  const panelHwnd = Number(win.getNativeWindowHandle().readBigInt64LE(0))
+  const braveHwnd = (braveWin && !braveWin.isDestroyed())
+    ? Number(braveWin.getNativeWindowHandle().readBigInt64LE(0))
+    : 0
+  log('[notifyHelperHwnds] panel=', panelHwnd, 'brave=', braveHwnd)
+  broadcastToHelper({ type: 'hwnd', panel: panelHwnd, brave: braveHwnd })
 }
 
 // ── Spawn taskbar-btn.exe ─────────────────────────────────────────────────────
@@ -109,24 +163,29 @@ function spawnTaskbarBtn() {
 
 // ── Create window ─────────────────────────────────────────────────────────────
 function createWindow() {
-  const { height } = screen.getPrimaryDisplay().workAreaSize
+  const { workArea } = screen.getPrimaryDisplay()
+  const panelW = getStore('wp-width') || 720
 
   win = new BrowserWindow({
-    width:           720,
-    height:          height,
-    x:               0,
-    y:               0,
+    width:           panelW,
+    height:          workArea.height,
+    x:               -panelW,          // start off-screen; animation slides it in
+    y:               workArea.y,
     frame:           false,
+    transparent:     true,
     alwaysOnTop:     true,
-    skipTaskbar:     false,
-    resizable:       false,
-    backgroundColor: '#111114',
+    skipTaskbar:     true,
+    resizable:       false,            // we handle resize ourselves via drag handle
+    show:            false,
     webPreferences: {
       preload:          path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration:  false,
+      webviewTag:       true,
     },
   })
+
+  win.webContents.setBackgroundThrottling(false)
 
   if (isDev) {
     win.loadURL('http://localhost:5173')
@@ -134,6 +193,11 @@ function createWindow() {
   } else {
     win.loadFile(path.join(__dirname, 'renderer', 'dist', 'index.html'))
   }
+
+  // Reset flags on each new window
+  coldStart     = true
+  rendererReady = false
+  win.webContents.on('did-start-loading', () => { rendererReady = false })
 
   win.on('close', (e) => {
     if (process.platform === 'win32') {
@@ -143,16 +207,47 @@ function createWindow() {
     }
   })
 
-  win.on('show', () => notifyHelperState(true))
-  win.on('hide', () => notifyHelperState(false))
+  // Hide when user clicks outside the panel (unless pinned)
+  // Debounce: ignore blur within 300ms of a toggle to avoid the W button
+  // click briefly focusing Explorer and immediately hiding the panel.
+  win.on('blur', () => {
+    const dt = Date.now() - lastToggleTime
+    log('[blur] isPinned=', isPinned, 'isVisible=', win.isVisible(), 'dt=', dt)
+    if (!isPinned && win.isVisible()) {
+      if (dt < 200) { log('[blur] debounced'); return }
+      // Don't hide if focus moved to the adjacent Brave window
+      if (braveWin && !braveWin.isDestroyed() && braveWin.isFocused()) {
+        log('[blur] braveWin focused — skip hide'); return
+      }
+      log('[blur] → hidePanel()')
+      hidePanel()
+    }
+  })
+
+  win.on('show', () => {
+    lastToggleTime = Date.now()
+    const { workArea } = screen.getPrimaryDisplay()
+    win.setBounds({ x: 0, y: workArea.y, width: win.getSize()[0], height: workArea.height })
+    // Delay so the W-button WM_LBUTTONDOWN passes through the hook before g_panelOn=true.
+    setTimeout(() => { notifyHelperState(true); notifyHelperHwnds() }, 350)
+    log('[win] show — rendererReady=', rendererReady)
+    if (rendererReady) {
+      setTimeout(() => { log('[win] sending panel-show'); win.webContents.send('panel-show') }, 50)
+    }
+  })
+  win.on('hide', () => {
+    // Move off-screen so next show always starts the slide-in from translateX(-100%)
+    const w = win.getSize()[0]
+    win.setPosition(-w, win.getPosition()[1])
+    notifyHelperState(false)
+    isHiding = false
+  })
 }
 
 // ── Tray ──────────────────────────────────────────────────────────────────────
 function buildTrayMenu() {
   return Menu.buildFromTemplate([
-    { label: 'Show / Hide', click: () => {
-        const v = !win.isVisible(); v ? win.show() : win.hide(); notifyHelperState(v)
-    }},
+    { label: 'Show / Hide', click: () => { win.isVisible() ? hidePanel() : win.show() }},
     { label: isPinned ? 'Unpin (float)' : 'Pin to desktop', click: () => togglePin() },
     { type: 'separator' },
     { label: 'Start with Windows', type: 'checkbox',
@@ -168,7 +263,7 @@ function createTray() {
   tray = new Tray(iconPath)
   tray.setToolTip('Widget Panel')
   tray.setContextMenu(buildTrayMenu())
-  tray.on('double-click', () => { win.isVisible() ? win.hide() : win.show() })
+  tray.on('double-click', () => { win.isVisible() ? hidePanel() : win.show() })
 }
 
 function refreshTrayMenu() { if (tray) tray.setContextMenu(buildTrayMenu()) }
@@ -198,6 +293,12 @@ function setTaskbarOverlay(count) {
 }
 
 // ── IPC handlers ──────────────────────────────────────────────────────────────
+// Returns the Windows accent color as #rrggbb
+ipcMain.handle('system-accent-color', () => {
+  const raw = systemPreferences.getAccentColor() // 'rrggbbaa'
+  return '#' + raw.slice(0, 6)
+})
+
 ipcMain.handle('store-get',    (_e, key)       => getStore(key))
 ipcMain.handle('store-set',    (_e, key, value) => setStore(key, value))
 ipcMain.handle('store-delete', (_e, key)       => deleteStore(key))
@@ -214,13 +315,201 @@ ipcMain.handle('autostart-set', (_e, enabled) => {
   return enabled
 })
 
+// Panel resize — main process polls cursor so dragging past the window edge works
+let resizeInterval  = null
+let resizeStartX    = 0
+let resizeStartW    = 0
+
+ipcMain.on('panel-resize-start', (_e, startX, startW) => {
+  if (!win) return
+  resizeStartX = startX
+  resizeStartW = startW
+  if (resizeInterval) clearInterval(resizeInterval)
+
+  resizeInterval = setInterval(() => {
+    if (!win) { clearInterval(resizeInterval); resizeInterval = null; return }
+    const { x: curX } = screen.getCursorScreenPoint()
+    const { workArea } = screen.getPrimaryDisplay()
+    const newW = Math.max(320, Math.min(resizeStartW + (curX - resizeStartX), workArea.width - 40))
+    win.setBounds({ x: 0, y: workArea.y, width: newW, height: workArea.height })
+  }, 16)
+})
+
+ipcMain.on('panel-resize-end', () => {
+  if (resizeInterval) { clearInterval(resizeInterval); resizeInterval = null }
+  if (win) setStore('wp-width', win.getSize()[0])
+})
+
+// Renderer signals it has registered listeners — send panel-show if window is already visible
+ipcMain.on('panel-renderer-ready', () => {
+  rendererReady = true
+  log('[ipc] panel-renderer-ready — isVisible=', win && win.isVisible())
+  if (win && win.isVisible()) {
+    setTimeout(() => { log('[ipc] sending panel-show'); win.webContents.send('panel-show') }, 50)
+  }
+})
+
+// panel-hide-done is handled inline in hidePanel() via ipcMain.once
+
+// ── Brave host TCP server (port 47322) ────────────────────────────────────────
+let braveServer = null
+let braveSocket = null
+let braveWin    = null
+let currentUrl  = ''
+const BRAVE_W   = 900
+const TOOLBAR_H = 41
+
+function sendToBrave(obj) {
+  if (!braveSocket || braveSocket.destroyed) {
+    log('[brave-tcp] sendToBrave: no socket', JSON.stringify(obj))
+    return
+  }
+  log('[brave-tcp] sendToBrave:', JSON.stringify(obj))
+  try { braveSocket.write(JSON.stringify(obj) + '\n') } catch (e) { log('[brave-tcp] write error:', e.message) }
+}
+
+function createBraveServer() {
+  braveServer = net.createServer(socket => {
+    log('[brave-tcp] client connected')
+    // Close stale connection before adopting new one
+    if (braveSocket && !braveSocket.destroyed) {
+      log('[brave-tcp] closing previous socket')
+      braveSocket.destroy()
+    }
+    braveSocket = socket
+
+    socket.on('data', chunk => {
+      chunk.toString().split('\n').filter(l => l.trim()).forEach(line => {
+        try {
+          const msg = JSON.parse(line)
+          if (msg.type === 'ready' && braveWin) {
+            braveWin.webContents.send('brave-loading', false)
+            braveWin.webContents.send('brave-url', currentUrl)
+            // Brave may steal focus when reparented — restore focus to panel
+            if (win && win.isVisible()) setTimeout(() => win.focus(), 150)
+          }
+        } catch {}
+      })
+    })
+    // Guard: only clear braveSocket if this closure's socket is still the active one
+    socket.on('end',   () => { log('[brave-tcp] client disconnected (end)');   if (braveSocket === socket) braveSocket = null })
+    socket.on('error', (e) => { log('[brave-tcp] client error:', e.message);   if (braveSocket === socket) braveSocket = null })
+  })
+  braveServer.on('error', err => {
+    if (err.code === 'EADDRINUSE') setTimeout(createBraveServer, 1000)
+  })
+  braveServer.listen(47322, '127.0.0.1', () => log('[brave-tcp] listening on 47322'))
+}
+
+function spawnBraveHost() {
+  const helperPath = path.join(__dirname, 'native', 'bin', 'brave-host.exe')
+  if (!fs.existsSync(helperPath)) { log('[brave-host] not built yet'); return }
+  const child = spawn(helperPath, [], { detached: false, stdio: 'ignore' })
+  child.on('exit', code => log(`[brave-host] exited (${code})`))
+  app.on('before-quit', () => { try { child.kill() } catch {} })
+}
+
+function openBraveWin(url) {
+  const { workArea } = screen.getPrimaryDisplay()
+  const panelW = win ? win.getSize()[0] : 720
+  const x = panelW
+
+  if (!braveWin) {
+    braveWin = new BrowserWindow({
+      width:       BRAVE_W,
+      height:      workArea.height,
+      x,
+      y:           workArea.y,
+      frame:       false,
+      transparent: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      resizable:   false,
+      show:        false,
+      backgroundColor: '#18181c',
+      webPreferences: {
+        preload:          path.join(__dirname, 'preload-brave.js'),
+        contextIsolation: true,
+        nodeIntegration:  false,
+      },
+    })
+    braveWin.loadFile(path.join(__dirname, 'brave-toolbar.html'))
+    braveWin.on('closed', () => { braveWin = null })
+  } else {
+    braveWin.setBounds({ x, y: workArea.y, width: BRAVE_W, height: workArea.height })
+  }
+
+  currentUrl = url
+  braveWin.webContents.send('brave-loading', true)
+  braveWin.webContents.send('brave-url', url)
+  braveWin.showInactive()
+  if (win && win.isVisible()) notifyHelperHwnds()  // update exclusion zone to include brave
+
+  // Tell brave-host to open/navigate
+  const hwnd = braveWin.getNativeWindowHandle().readBigInt64LE(0)
+  sendToBrave({ type: 'open', hwnd: Number(hwnd), url, y: TOOLBAR_H, w: BRAVE_W, h: workArea.height })
+}
+
+function closeBraveWin() {
+  sendToBrave({ type: 'close' })
+  if (braveWin) { braveWin.hide(); braveWin.destroy(); braveWin = null }
+  currentUrl = ''
+  if (win && win.isVisible()) notifyHelperHwnds()  // shrink exclusion zone back to panel only
+}
+
+ipcMain.on('browser-open', (_e, url) => {
+  log('[browser-open] url=', url, 'braveWin=', !!(braveWin && !braveWin.isDestroyed()), 'socket=', !!braveSocket)
+  if (braveWin && !braveWin.isDestroyed()) {
+    // Reuse existing window — navigate Brave to new URL
+    currentUrl = url
+    braveWin.webContents.send('brave-loading', true)
+    braveWin.webContents.send('brave-url', url)
+    sendToBrave({ type: 'navigate', url })
+  } else {
+    openBraveWin(url)
+  }
+})
+
+ipcMain.on('browser-navigate', (_e, url) => {
+  if (!braveWin || braveWin.isDestroyed()) { openBraveWin(url); return }
+  currentUrl = url
+  braveWin.webContents.send('brave-loading', true)
+  braveWin.webContents.send('brave-url', url)
+  sendToBrave({ type: 'navigate', url })
+})
+
+ipcMain.on('browser-close', () => { closeBraveWin() })
+
+// Toolbar buttons (from preload-brave.js)
+ipcMain.on('brave-close',         () => { closeBraveWin() })
+ipcMain.on('brave-open-external', () => { if (currentUrl) shell.openExternal(currentUrl) })
+
+// ── Write launch path for the DLL to find us ─────────────────────────────────
+// The DLL reads native/bin/panel.path and ShellExecutes it when clicked
+// while Electron isn't running.
+function writeLaunchPath() {
+  let launchPath
+  if (app.isPackaged) {
+    launchPath = process.execPath
+  } else {
+    // electron.exe lives in node_modules/electron/dist/ — no cmd window
+    const electronExe = path.join(__dirname, 'node_modules', 'electron', 'dist', 'electron.exe')
+    launchPath = `"${electronExe}" "${__dirname}"`
+  }
+  const pathFile = path.join(__dirname, 'native', 'bin', 'panel.path')
+  try { fs.writeFileSync(pathFile, launchPath, 'utf8') } catch {}
+}
+
 // ── App ready ─────────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   disableNativeWidgets()
-  createPipeServer()   // start pipe before spawning helper
+  writeLaunchPath()
+  createPipeServer()   // taskbar-btn IPC on port 47321
+  createBraveServer()  // brave-host IPC on port 47322
   createWindow()
   createTray()
   spawnTaskbarBtn()
+  spawnBraveHost()
 
   const savedPin = getStore('wp-pinned')
   if (savedPin) togglePin(true)
@@ -230,7 +519,8 @@ app.whenReady().then(() => {
 
   globalShortcut.register('Super+W', () => {
     if (!win) return
-    const v = !win.isVisible(); v ? win.show() : win.hide(); notifyHelperState(v)
+    if (win.isVisible()) { hidePanel() }
+    else { lastToggleTime = Date.now(); win.show(); setTimeout(() => win.focus(), 150) }
   })
 })
 
