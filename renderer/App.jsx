@@ -177,37 +177,11 @@ function DemoBadge() {
   return <span style={{ fontSize:9, padding:"1px 5px", borderRadius:3, background:"rgba(255,255,255,0.06)", color:"#333", fontFamily:"DM Mono,monospace", marginLeft:4 }}>demo</span>;
 }
 
-// ── Column picker — three small squares, filled = current column ─────────────
-// Works like a position indicator: click an empty square to move the widget there.
-const COL_ORDER = ["left", "mid", "right"];
-function ColPicker({ col, onMoveLeft, onMoveMid, onMoveRight }) {
-  const handlers = { left: onMoveLeft, mid: onMoveMid, right: onMoveRight };
-  const titles   = { left: "Move to column 1", mid: "Move to column 2", right: "Move to column 3" };
-  return (
-    <div style={{ display:"flex", gap:2, alignItems:"center" }} title="Move widget to column…">
-      {COL_ORDER.map(c => {
-        const active = c === col;
-        return (
-          <button key={c} onClick={handlers[c]} title={titles[c]}
-            style={{
-              width:7, height:7, borderRadius:2, padding:0, flexShrink:0,
-              cursor: active ? "default" : "pointer",
-              border: "1px solid " + (active ? "#4f8ef7" : "rgba(255,255,255,0.15)"),
-              background: active ? "#4f8ef7" : "transparent",
-            }}
-          />
-        );
-      })}
-    </div>
-  );
-}
 
 // ── Card shell ───────────────────────────────────────────────────────────────
-function Shell({ color, title, sub, badge, expanded, onToggle, onMoveLeft, onMoveMid, onMoveRight, col, isDragOver, onDragStart, onDragOver, onDrop, onDragEnd, children }) {
+function Shell({ color, title, sub, badge, expanded, onToggle, isDragging, onDragStart, onDragEnd, children }) {
   return (
-    <div style={{ ...C.card, outline: isDragOver ? "1px solid rgba(79,142,247,0.4)" : "1px solid rgba(255,255,255,0.06)" }}
-      onDragOver={e=>{ e.preventDefault(); onDragOver?.(); }}
-      onDrop={e=>{ e.preventDefault(); onDrop?.(); }}>
+    <div style={{ ...C.card, opacity: isDragging ? 0.35 : 1, transition:"opacity 0.1s" }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 14px", cursor:"pointer", userSelect:"none" }} onClick={onToggle}>
         <div style={{ display:"flex", alignItems:"center", gap:8, minWidth:0 }}>
           <span
@@ -223,7 +197,6 @@ function Shell({ color, title, sub, badge, expanded, onToggle, onMoveLeft, onMov
           {badge}
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:5 }} onClick={e=>e.stopPropagation()}>
-          <ColPicker col={col} onMoveLeft={onMoveLeft} onMoveMid={onMoveMid} onMoveRight={onMoveRight} />
           <span style={{ ...C.chev, transform:expanded?"rotate(90deg)":"rotate(0deg)" }} onClick={onToggle}>›</span>
         </div>
       </div>
@@ -507,7 +480,7 @@ function TrafficWidget({ apiKey, onSaveKey }) {
 }
 
 // ── Widget renderer ──────────────────────────────────────────────────────────
-function WidgetCard({ id, categories, apiKeys, onSaveKey, col, onMoveLeft, onMoveMid, onMoveRight, colorIdx, onUnreadChange, onOpenUrl, expanded, onToggle, isDragOver, onDragStart, onDragOver, onDrop, onDragEnd }) {
+function WidgetCard({ id, categories, apiKeys, onSaveKey, colorIdx, onUnreadChange, onOpenUrl, expanded, onToggle, isDragging, onDragStart, onDragEnd }) {
   const newsData    = id.startsWith("cat:") ? NewsWidget({ category: categories.find(c=>c.label===id.slice(4)), colorIdx, onUnreadChange, onOpenUrl, expanded, onToggle }) : null;
   const weatherData = id==="weather" ? WeatherWidget({ expanded, onToggle }) : null;
   const stocksData  = id==="stocks"  ? StocksWidget({ apiKey:apiKeys.finnhub, onSaveKey, expanded, onToggle }) : null;
@@ -517,8 +490,7 @@ function WidgetCard({ id, categories, apiKeys, onSaveKey, col, onMoveLeft, onMov
   return (
     <Shell color={d.color} title={d.title} sub={d.sub} badge={d.badge}
       expanded={expanded} onToggle={onToggle}
-      col={col} onMoveLeft={onMoveLeft} onMoveMid={onMoveMid} onMoveRight={onMoveRight}
-      isDragOver={isDragOver} onDragStart={onDragStart} onDragOver={onDragOver} onDrop={onDrop} onDragEnd={onDragEnd}>
+      isDragging={isDragging} onDragStart={onDragStart} onDragEnd={onDragEnd}>
       {d.content}
     </Shell>
   );
@@ -734,16 +706,17 @@ export default function App() {
 
   // Drag-and-drop reorder state
   const [dragId,     setDragId]     = useState(null);
-  const [dragOverId, setDragOverId] = useState(null);
+  const [dropTarget, setDropTarget] = useState(null); // { col, beforeId } | null
 
-  function reorderWidget(fromId, toId) {
+  function handleDrop(fromId, targetCol, beforeId) {
+    setColumns(p => ({ ...p, [fromId]: targetCol }));
     setActiveIds(prev => {
-      const arr = [...prev];
-      const fi = arr.indexOf(fromId);
-      const ti = arr.indexOf(toId);
-      if (fi === -1 || ti === -1 || fi === ti) return prev;
-      arr.splice(fi, 1);
-      arr.splice(ti, 0, fromId);
+      const arr = prev.filter(x => x !== fromId);
+      if (beforeId !== null) {
+        const ti = arr.indexOf(beforeId);
+        if (ti !== -1) { arr.splice(ti, 0, fromId); return arr; }
+      }
+      arr.push(fromId);
       return arr;
     });
   }
@@ -868,7 +841,6 @@ export default function App() {
     setApiKeys(p=>({...p,[service]:key}));
     setActiveIds(p=>p.includes(service)?p:[...p,service]);
   }
-  function moveWidget(id, dir) { setColumns(p=>({...p,[id]:dir})); }
   function reset() {
     setCategories(null); setActiveIds([]); setColumns({}); setApiKeys({});
     setShowMgr(false); storageSave({});
@@ -895,27 +867,49 @@ export default function App() {
     </div>
   );
 
+  // Drop zone between cards — visible blue line when active, invisible hit area when dragging
+  function DropZone({ colName, beforeId }) {
+    const isActive = !!dragId && dropTarget?.col === colName && dropTarget?.beforeId === beforeId;
+    return (
+      <div
+        style={{
+          flexShrink: 0,
+          height: dragId ? 6 : 0,
+          background: 'transparent',
+          borderRadius: 2,
+          pointerEvents: dragId ? 'auto' : 'none',
+          outline: isActive ? '1.5px solid #4f8ef7' : 'none',
+          outlineOffset: '-2px',
+          transition: 'outline 0.06s',
+        }}
+        onDragOver={e=>{ e.preventDefault(); if (!isActive) setDropTarget({col:colName, beforeId}); }}
+        onDrop={e=>{ e.preventDefault(); if (dragId) handleDrop(dragId, colName, beforeId); }}
+      />
+    );
+  }
+
   // Shared WidgetCard renderer for a column
   function renderCol(ids, colName) {
-    return ids.map((id, i) => (
-      <div key={id} className="wi" style={{animationDelay:(i*25)+"ms"}}>
-        <WidgetCard id={id} categories={categories||[]} apiKeys={apiKeys} onSaveKey={saveKey}
-          col={colName}
-          onMoveLeft={()=>moveWidget(id,"left")}
-          onMoveMid={()=>moveWidget(id,"mid")}
-          onMoveRight={()=>moveWidget(id,"right")}
-          colorIdx={newsIds.indexOf(id)}
-          onUnreadChange={count=>onUnread(id,count)}
-          onOpenUrl={openBrowser}
-          expanded={getExpanded(id)}
-          onToggle={()=>toggleExpanded(id)}
-          isDragOver={dragOverId === id}
-          onDragStart={()=>setDragId(id)}
-          onDragOver={()=>{ if (dragOverId !== id) setDragOverId(id); }}
-          onDrop={()=>{ if (dragId && dragId !== id) reorderWidget(dragId, id); }}
-          onDragEnd={()=>{ setDragId(null); setDragOverId(null); }} />
-      </div>
-    ));
+    const items = [];
+    items.push(<DropZone key="dz-start" colName={colName} beforeId={ids[0] ?? null} />);
+    ids.forEach((id, i) => {
+      const nextId = ids[i + 1] ?? null;
+      items.push(
+        <div key={id} className="wi" style={{animationDelay:(i*25)+"ms"}}>
+          <WidgetCard id={id} categories={categories||[]} apiKeys={apiKeys} onSaveKey={saveKey}
+            colorIdx={newsIds.indexOf(id)}
+            onUnreadChange={count=>onUnread(id,count)}
+            onOpenUrl={openBrowser}
+            expanded={getExpanded(id)}
+            onToggle={()=>toggleExpanded(id)}
+            isDragging={dragId === id}
+            onDragStart={()=>{ setDragId(id); setDropTarget(null); }}
+            onDragEnd={()=>{ setDragId(null); setDropTarget(null); }} />
+        </div>
+      );
+      items.push(<DropZone key={"dz-"+id} colName={colName} beforeId={nextId} />);
+    });
+    return items;
   }
 
   return (

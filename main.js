@@ -178,7 +178,6 @@ function createWindow() {
     y:               workArea.y,
     frame:           false,
     transparent:     true,
-    backgroundColor: '#0a0a0c',
     alwaysOnTop:     true,
     skipTaskbar:     true,
     resizable:       false,            // we handle resize ourselves via drag handle
