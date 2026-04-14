@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, Tray, Menu, screen, ipcMain, nativeImage, systemPreferences, shell } = require('electron')
+const { app, BrowserWindow, globalShortcut, screen, ipcMain, nativeImage, systemPreferences, shell } = require('electron')
 const path   = require('path')
 const fs     = require('fs')
 const net    = require('net')
@@ -15,7 +15,6 @@ function log(...args) {
 try { fs.writeFileSync(LOG, '') } catch {}  // clear on startup
 
 let win              = null
-let tray             = null
 let isPinned         = false
 let lastToggleTime   = 0
 let isHiding         = false  // prevents double-hide (blur + toggle arriving together)
@@ -112,10 +111,16 @@ function createPipeServer() {
 }
 
 // Initiate slide-out: renderer animates then calls panel-hide-done → win.hide()
-function hidePanel() {
+// opts.keepBrave = true → don't close the browser window (user navigated to a 2nd article)
+function hidePanel(opts = {}) {
   if (!win || !win.isVisible() || isHiding) return
   isHiding = true
-  closeBraveWin()
+  if (!opts.keepBrave) {
+    closeBraveWin()
+  } else if (braveWin && !braveWin.isDestroyed()) {
+    // Browser stays visible; give it focus so user can interact immediately
+    setTimeout(() => { if (braveWin && !braveWin.isDestroyed()) braveWin.focus() }, 120)
+  }
   win.webContents.send('panel-hide')
   // Fallback: if renderer doesn't respond in 600ms, hide anyway
   const t = setTimeout(() => { win.hide(); notifyHelperState(false); isHiding = false }, 600)
@@ -169,10 +174,11 @@ function createWindow() {
   win = new BrowserWindow({
     width:           panelW,
     height:          workArea.height,
-    x:               -panelW,          // start off-screen; animation slides it in
+    x:               -panelW,            // start off-screen; animation slides it in
     y:               workArea.y,
     frame:           false,
     transparent:     true,
+    backgroundColor: '#0a0a0c',
     alwaysOnTop:     true,
     skipTaskbar:     true,
     resizable:       false,            // we handle resize ourselves via drag handle
@@ -228,7 +234,7 @@ function createWindow() {
     lastToggleTime = Date.now()
     const { workArea } = screen.getPrimaryDisplay()
     win.setBounds({ x: 0, y: workArea.y, width: win.getSize()[0], height: workArea.height })
-    // Delay so the W-button WM_LBUTTONDOWN passes through the hook before g_panelOn=true.
+    // Delay so the strip WM_LBUTTONDOWN passes through the hook before g_panelOn=true.
     setTimeout(() => { notifyHelperState(true); notifyHelperHwnds() }, 350)
     log('[win] show — rendererReady=', rendererReady)
     if (rendererReady) {
@@ -236,7 +242,7 @@ function createWindow() {
     }
   })
   win.on('hide', () => {
-    // Move off-screen so next show always starts the slide-in from translateX(-100%)
+    // Move off-screen left of the strip so next show starts slide-in from translateX(-100%)
     const w = win.getSize()[0]
     win.setPosition(-w, win.getPosition()[1])
     notifyHelperState(false)
@@ -244,36 +250,11 @@ function createWindow() {
   })
 }
 
-// ── Tray ──────────────────────────────────────────────────────────────────────
-function buildTrayMenu() {
-  return Menu.buildFromTemplate([
-    { label: 'Show / Hide', click: () => { win.isVisible() ? hidePanel() : win.show() }},
-    { label: isPinned ? 'Unpin (float)' : 'Pin to desktop', click: () => togglePin() },
-    { type: 'separator' },
-    { label: 'Start with Windows', type: 'checkbox',
-      checked: app.getLoginItemSettings().openAtLogin,
-      click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }) },
-    { type: 'separator' },
-    { label: 'Quit', click: () => app.exit(0) },
-  ])
-}
-
-function createTray() {
-  const iconPath = path.join(__dirname, 'assets', 'tray-icon.png')
-  tray = new Tray(iconPath)
-  tray.setToolTip('Widget Panel')
-  tray.setContextMenu(buildTrayMenu())
-  tray.on('double-click', () => { win.isVisible() ? hidePanel() : win.show() })
-}
-
-function refreshTrayMenu() { if (tray) tray.setContextMenu(buildTrayMenu()) }
-
 // ── Pin / unpin ───────────────────────────────────────────────────────────────
 function togglePin(forceTo) {
   isPinned = forceTo !== undefined ? forceTo : !isPinned
   win.setAlwaysOnTop(true, isPinned ? 'desktop' : 'floating')
   win.webContents.send('pin-state', isPinned)
-  refreshTrayMenu()
 }
 
 // ── Taskbar overlay icon (Electron's own button) ──────────────────────────────
@@ -311,7 +292,6 @@ ipcMain.on('badge-update', (_e, count) => sendBadge(count))
 ipcMain.handle('autostart-get', () => app.getLoginItemSettings().openAtLogin)
 ipcMain.handle('autostart-set', (_e, enabled) => {
   app.setLoginItemSettings({ openAtLogin: enabled })
-  refreshTrayMenu()
   return enabled
 })
 
@@ -352,12 +332,23 @@ ipcMain.on('panel-renderer-ready', () => {
 // panel-hide-done is handled inline in hidePanel() via ipcMain.once
 
 // ── Brave host TCP server (port 47322) ────────────────────────────────────────
-let braveServer = null
-let braveSocket = null
-let braveWin    = null
-let currentUrl  = ''
+let braveServer    = null
+let braveSocket    = null
+let braveWin       = null
+let currentUrl     = ''
+let navLoadTimer   = null   // auto-clears the loading spinner if brave-host never acks
 const BRAVE_W   = 900
 const TOOLBAR_H = 41
+
+// Clear the brave-loading spinner after a timeout in case brave-host doesn't
+// send 'ready' after navigation (current brave-host only sends it on first connect).
+function armNavLoadTimer() {
+  if (navLoadTimer) clearTimeout(navLoadTimer)
+  navLoadTimer = setTimeout(() => {
+    navLoadTimer = null
+    if (braveWin && !braveWin.isDestroyed()) braveWin.webContents.send('brave-loading', false)
+  }, 5000)
+}
 
 function sendToBrave(obj) {
   if (!braveSocket || braveSocket.destroyed) {
@@ -383,6 +374,7 @@ function createBraveServer() {
         try {
           const msg = JSON.parse(line)
           if (msg.type === 'ready' && braveWin) {
+            if (navLoadTimer) { clearTimeout(navLoadTimer); navLoadTimer = null }
             braveWin.webContents.send('brave-loading', false)
             braveWin.webContents.send('brave-url', currentUrl)
             // Brave may steal focus when reparented — restore focus to panel
@@ -459,12 +451,20 @@ function closeBraveWin() {
 
 ipcMain.on('browser-open', (_e, url) => {
   log('[browser-open] url=', url, 'braveWin=', !!(braveWin && !braveWin.isDestroyed()), 'socket=', !!braveSocket)
-  if (braveWin && !braveWin.isDestroyed()) {
-    // Reuse existing window — navigate Brave to new URL
+  const alreadyOpen = braveWin && !braveWin.isDestroyed()
+  if (alreadyOpen) {
+    // Navigate existing window to the new article
     currentUrl = url
     braveWin.webContents.send('brave-loading', true)
     braveWin.webContents.send('brave-url', url)
     sendToBrave({ type: 'navigate', url })
+    armNavLoadTimer()
+    // When not pinned: retract panel but keep browser visible so the article
+    // stays readable — second article click = "open and dismiss panel"
+    if (!isPinned && win && win.isVisible()) {
+      log('[browser-open] not pinned + already open → hidePanel(keepBrave)')
+      hidePanel({ keepBrave: true })
+    }
   } else {
     openBraveWin(url)
   }
@@ -476,6 +476,7 @@ ipcMain.on('browser-navigate', (_e, url) => {
   braveWin.webContents.send('brave-loading', true)
   braveWin.webContents.send('brave-url', url)
   sendToBrave({ type: 'navigate', url })
+  armNavLoadTimer()
 })
 
 ipcMain.on('browser-close', () => { closeBraveWin() })
@@ -506,16 +507,27 @@ app.whenReady().then(() => {
   writeLaunchPath()
   createPipeServer()   // taskbar-btn IPC on port 47321
   createBraveServer()  // brave-host IPC on port 47322
+  app.setAppUserModelId('com.widgetpanel.app')  // suppress default "Electron" window title
   createWindow()
-  createTray()
   spawnTaskbarBtn()
   spawnBraveHost()
 
   const savedPin = getStore('wp-pinned')
   if (savedPin) togglePin(true)
 
-  const savedAutoStart = getStore('wp-autostart')
-  if (savedAutoStart) app.setLoginItemSettings({ openAtLogin: true })
+  // Enable startup by default on first run so the panel is always pre-loaded.
+  // The strip's cold-launch path (ShellExecute) takes 3-5s; keeping Electron
+  // running in the background makes every subsequent click instant.
+  const autostartInitialized = getStore('wp-autostart-initialized')
+  if (!autostartInitialized) {
+    app.setLoginItemSettings({ openAtLogin: true })
+    setStore('wp-autostart-initialized', '1')
+    setStore('wp-autostart', '1')
+    log('[autostart] enabled by default on first run')
+  } else {
+    const savedAutoStart = getStore('wp-autostart')
+    if (savedAutoStart) app.setLoginItemSettings({ openAtLogin: true })
+  }
 
   globalShortcut.register('Super+W', () => {
     if (!win) return

@@ -1,11 +1,21 @@
 /*
  * taskbar-hook.dll  —  injected into Explorer.exe
  *
- * Subclasses Shell_TrayWnd so TraySubclassProc runs synchronously on
- * Explorer's own thread for every z-order/position change.
+ * Creates a WS_POPUP AppBar window docked to the left edge of the primary
+ * monitor.  The window is the full screen height but transparent everywhere
+ * except the pill button, which is centred vertically.
  *
- * IPC: TCP 127.0.0.1:47321 — no integrity-level restrictions (named pipes
- * blocked Explorer→Electron with ERROR_ACCESS_DENIED).
+ * AppBar (SHAppBarMessage ABE_LEFT) gives us proper shell integration:
+ *   • Shell guarantees the strip is never covered by other windows
+ *   • Full-screen apps trigger ABN_FULLSCREENAPP so we hide/show cleanly
+ *   • Auto-hide taskbar works fine (different edge, no conflict)
+ *   • Zero z-order fighting — no TOPMOST hackery required
+ *
+ * Transparency: WS_EX_LAYERED + LWA_COLORKEY.  The strip background is
+ * painted with TRANSP_KEY; layered colour-key makes those pixels both
+ * invisible and click-through.  Only the pill area is opaque / hittable.
+ *
+ * IPC: TCP 127.0.0.1:47321 — no integrity-level restrictions.
  */
 
 #define UNICODE
@@ -17,47 +27,42 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <shellapi.h>
-#include <dwmapi.h>
 #include <string>
 #include <cstdio>
 #include <cstdarg>
 
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
-#pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "shell32.lib")
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-static const wchar_t* WND_CLASS = L"WPHookBtn";
-static const UINT     WM_TBSYNC = WM_APP + 1;
-static const int      IPC_PORT  = 47321;
+static const wchar_t* WND_CLASS      = L"WPAppBarBtn";
+static const UINT     WM_APPBAR      = WM_APP + 1;   // AppBar callback message
+static const UINT     WM_STATECHANGE = WM_APP + 2;   // IPC thread → window thread: redraw + alpha
+static const int      IPC_PORT       = 47321;
 
-static const int BTN_W = 44;
-static const int BTN_H = 40;
+// AppBar strip — narrow enough to be unobtrusive; just wide enough for the chevron
+static const int STRIP_W = 18;
 
-static const COLORREF CLR_BG     = RGB(0x11, 0x11, 0x14);
-static const COLORREF CLR_ACTIVE = RGB(0x4f, 0x8e, 0xf7);
-static const COLORREF CLR_IDLE   = RGB(0x28, 0x28, 0x38);
-static const COLORREF CLR_BADGE  = RGB(0xf7, 0x4f, 0x7e);
-static const COLORREF CLR_WHITE  = RGB(0xff, 0xff, 0xff);
+// LWA_COLORKEY transparent colour — never appears in the arrow drawing
+static const COLORREF TRANSP_KEY = RGB(0, 0, 1);
 
 // ── State ─────────────────────────────────────────────────────────────────────
-static HWND          g_hwnd         = NULL;
-static HWND          g_taskbar      = NULL;
-static HMODULE       g_hMod         = NULL;
-static WNDPROC       g_origTrayProc = NULL;
-static SOCKET        g_sock         = INVALID_SOCKET;
-static int           g_badge        = 0;
-static volatile bool g_panelOn      = true;
-static volatile bool g_hover        = false;
-static volatile bool g_running      = true;
+static HWND          g_hwnd       = NULL;
+static HMODULE       g_hMod       = NULL;
+static SOCKET        g_sock       = INVALID_SOCKET;
+static int           g_badge      = 0;
+static volatile bool g_panelOn    = true;
+static volatile bool g_hover      = false;
+static volatile bool g_running    = true;
+static bool          g_appBarReg  = false;   // true once ABM_NEW succeeded
 static wchar_t       g_logPath[MAX_PATH] = {};
 
 // ── Mouse hook state (click-outside detection) ────────────────────────────────
-static HHOOK              g_mouseHook  = NULL;
-static LONG_PTR  g_panelHwnd  = 0;   // HWND of Electron panel window
-static LONG_PTR  g_braveHwnd  = 0;   // HWND of Brave toolbar window (0 if closed)
+static HHOOK         g_mouseHook  = NULL;
+static LONG_PTR      g_panelHwnd  = 0;
+static LONG_PTR      g_braveHwnd  = 0;
 
 // ── Log ───────────────────────────────────────────────────────────────────────
 static void Log(const char* fmt, ...)
@@ -72,42 +77,39 @@ static void Log(const char* fmt, ...)
     fclose(f);
 }
 
-// ── Sync button with taskbar ──────────────────────────────────────────────────
-static void SyncNow()
+// ── AppBar position ───────────────────────────────────────────────────────────
+static void PositionAppBar()
 {
-    if (!g_taskbar || !g_hwnd) return;
-    RECT tb{};
-    GetWindowRect(g_taskbar, &tb);
-    int tbH = tb.bottom - tb.top;
+    if (!g_hwnd || !g_appBarReg) return;
 
-    if (tbH <= 4) {
-        if (IsWindowVisible(g_hwnd)) ShowWindow(g_hwnd, SW_HIDE);
-        return;
-    }
+    HMONITOR hmon = MonitorFromPoint({ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
+    MONITORINFO mi = { sizeof(mi) };
+    if (!GetMonitorInfo(hmon, &mi)) return;
 
-    int btnX = tb.left + 4;
-    int btnY = tb.top  + (tbH - BTN_H) / 2;
-    SetWindowPos(g_hwnd, HWND_TOPMOST,
-                 btnX, btnY, BTN_W, BTN_H,
-                 SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOOWNERZORDER);
-}
+    APPBARDATA abd = { sizeof(abd) };
+    abd.hWnd             = g_hwnd;
+    abd.uEdge            = ABE_LEFT;
+    abd.uCallbackMessage = WM_APPBAR;
+    abd.rc = {
+        mi.rcMonitor.left,
+        mi.rcMonitor.top,
+        mi.rcMonitor.left + STRIP_W,
+        mi.rcMonitor.bottom
+    };
 
-// ── Shell_TrayWnd subclass ────────────────────────────────────────────────────
-static LRESULT CALLBACK TraySubclassProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
-{
-    LRESULT r = CallWindowProc(g_origTrayProc, hwnd, msg, wp, lp);
-    switch (msg) {
-    case WM_WINDOWPOSCHANGED:
-    case WM_SIZE:
-    case WM_MOVE:
-        SyncNow();
-        break;
-    case WM_DESTROY:
-        SetWindowLongPtrW(hwnd, GWLP_WNDPROC, (LONG_PTR)g_origTrayProc);
-        g_origTrayProc = NULL;
-        break;
-    }
-    return r;
+    SHAppBarMessage(ABM_QUERYPOS, &abd);
+    // Enforce our width — QUERYPOS may shrink the right edge; we want exactly STRIP_W.
+    abd.rc.right = abd.rc.left + STRIP_W;
+    SHAppBarMessage(ABM_SETPOS, &abd);
+
+    SetWindowPos(g_hwnd, HWND_TOP,
+                 abd.rc.left, abd.rc.top,
+                 abd.rc.right - abd.rc.left,
+                 abd.rc.bottom - abd.rc.top,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+
+    Log("PositionAppBar: (%d,%d)-(%d,%d)",
+        abd.rc.left, abd.rc.top, abd.rc.right, abd.rc.bottom);
 }
 
 // ── TCP IPC ───────────────────────────────────────────────────────────────────
@@ -170,9 +172,8 @@ static DWORD WINAPI IpcProc(LPVOID)
         } else if (s.find("\"state\"") != std::string::npos) {
             g_panelOn = s.find("\"visible\":true") != std::string::npos;
             if (!g_panelOn) { g_panelHwnd = 0; g_braveHwnd = 0; }
-            if (g_hwnd) InvalidateRect(g_hwnd, NULL, FALSE);
+            if (g_hwnd) PostMessage(g_hwnd, WM_STATECHANGE, 0, 0);
         } else if (s.find("\"hwnd\"") != std::string::npos) {
-            // {"type":"hwnd","panel":N,"brave":N}
             auto parseHwnd = [&](const char* key) -> LONG_PTR {
                 auto p = s.find(key);
                 if (p == std::string::npos) return 0;
@@ -188,7 +189,7 @@ static DWORD WINAPI IpcProc(LPVOID)
     return 0;
 }
 
-// ── Low-level mouse hook — fires for every click, regardless of focus ─────────
+// ── Low-level mouse hook (click-outside detection) ────────────────────────────
 static bool PtInHwnd(POINT pt, LONG_PTR hwndVal) {
     if (!hwndVal) return false;
     HWND hw = reinterpret_cast<HWND>(hwndVal);
@@ -213,47 +214,33 @@ static LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lPara
     return CallNextHookEx(g_mouseHook, nCode, wParam, lParam);
 }
 
-// ── Rendering ─────────────────────────────────────────────────────────────────
-static void DrawBtn(HDC hdc, RECT rc)
+// ── Alpha — near-invisible at rest, visible on hover / open ─────────────────
+static void UpdateAlpha()
 {
-    HBRUSH bg = CreateSolidBrush(CLR_BG);
-    FillRect(hdc, &rc, bg); DeleteObject(bg);
+    if (!g_hwnd) return;
+    BYTE alpha;
+    if      (g_panelOn) alpha = 200;   // solid indicator while panel is open
+    else if (g_hover)   alpha = 110;   // faint on hover
+    else                alpha = 1;     // alpha=0 makes layered windows non-hittable on Win11;
+                                       // alpha=1 is visually indistinguishable but stays hittable
+    SetLayeredWindowAttributes(g_hwnd, 0, alpha, LWA_ALPHA);
+}
 
-    int cx = (rc.left+rc.right)/2, cy = (rc.top+rc.bottom)/2, r = 11;
+// ── Rendering — plain coloured strip, no icons or text ───────────────────────
+static void DrawStrip(HDC hdc, RECT rc)
+{
+    // Background — always opaque so mouse events are received even when alpha=0.
+    COLORREF bg = g_panelOn ? RGB(18, 38, 72) : (g_hover ? RGB(28, 28, 42) : RGB(16, 16, 20));
+    HBRUSH br = CreateSolidBrush(bg);
+    FillRect(hdc, &rc, br);
+    DeleteObject(br);
 
-    COLORREF ic = (g_panelOn || g_hover) ? CLR_ACTIVE : CLR_IDLE;
-    HPEN   pen = CreatePen(PS_SOLID, 0, ic);
-    HBRUSH fil = CreateSolidBrush(ic);
-    HPEN   op  = (HPEN)SelectObject(hdc, pen);
-    HBRUSH ob  = (HBRUSH)SelectObject(hdc, fil);
-    RoundRect(hdc, cx-r, cy-r, cx+r, cy+r, 6, 6);
-    SelectObject(hdc, op); SelectObject(hdc, ob);
-    DeleteObject(pen); DeleteObject(fil);
-
-    SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, CLR_WHITE);
-    HFONT font = CreateFont(-11,0,0,0,FW_BOLD,0,0,0,ANSI_CHARSET,0,0,
-                            CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_SWISS,L"Segoe UI");
-    HFONT of = (HFONT)SelectObject(hdc, font);
-    RECT  ir{ cx-r, cy-r, cx+r, cy+r };
-    DrawText(hdc, L"W", 1, &ir, DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-    SelectObject(hdc, of); DeleteObject(font);
-
-    if (g_badge > 0) {
-        int bx=cx+r-2, by=cy-r+2, br=7;
-        HPEN   bp  = CreatePen(PS_SOLID,0,CLR_BADGE);
-        HBRUSH bbr = CreateSolidBrush(CLR_BADGE);
-        SelectObject(hdc,bp); SelectObject(hdc,bbr);
-        Ellipse(hdc,bx-br,by-br,bx+br,by+br);
-        DeleteObject(bp); DeleteObject(bbr);
-        wchar_t num[4]; swprintf_s(num,g_badge>9?L"9+":L"%d",g_badge);
-        SetTextColor(hdc,CLR_WHITE);
-        HFONT sf  = CreateFont(-7,0,0,0,FW_BOLD,0,0,0,ANSI_CHARSET,0,0,
-                               CLEARTYPE_QUALITY,DEFAULT_PITCH|FF_SWISS,L"Segoe UI");
-        HFONT osf = (HFONT)SelectObject(hdc,sf);
-        RECT  br2{ bx-br,by-br,bx+br,by+br };
-        DrawText(hdc,num,-1,&br2,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
-        SelectObject(hdc,osf); DeleteObject(sf);
+    // Thin accent line on the right edge (the panel-side edge) when panel is open.
+    if (g_panelOn) {
+        HBRUSH ab = CreateSolidBrush(RGB(79, 142, 247));
+        RECT edge = { rc.right - 2, rc.top, rc.right, rc.bottom };
+        FillRect(hdc, &edge, ab);
+        DeleteObject(ab);
     }
 }
 
@@ -261,52 +248,85 @@ static void DrawBtn(HDC hdc, RECT rc)
 static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
     switch (msg) {
-    case WM_TBSYNC: {
-        MSG tmp;
-        while (PeekMessage(&tmp, hwnd, WM_TBSYNC, WM_TBSYNC, PM_REMOVE)) {}
-        SyncNow();
+
+    // ── AppBar shell notifications ────────────────────────────────────────────
+    case WM_APPBAR:
+        switch ((UINT)wp) {
+        case ABN_POSCHANGED:
+            // Shell tells us another AppBar changed — re-query our position.
+            PositionAppBar();
+            break;
+        case ABN_FULLSCREENAPP:
+            // lp != 0 → fullscreen app opening; hide ourselves.
+            // lp == 0 → fullscreen app closed; reappear.
+            if (lp) {
+                ShowWindow(hwnd, SW_HIDE);
+            } else {
+                ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                PositionAppBar();
+            }
+            break;
+        case ABN_STATECHANGE:
+        case ABN_WINDOWARRANGE:
+            break;
+        }
         return 0;
+
+    // ── Required AppBar protocol ──────────────────────────────────────────────
+    case WM_ACTIVATE: {
+        APPBARDATA abd = { sizeof(abd) };
+        abd.hWnd = hwnd;
+        SHAppBarMessage(ABM_ACTIVATE, &abd);
+        return DefWindowProc(hwnd, msg, wp, lp);
     }
+    case WM_WINDOWPOSCHANGED: {
+        APPBARDATA abd = { sizeof(abd) };
+        abd.hWnd = hwnd;
+        SHAppBarMessage(ABM_WINDOWPOSCHANGED, &abd);
+        return DefWindowProc(hwnd, msg, wp, lp);
+    }
+
+    // ── Painting ──────────────────────────────────────────────────────────────
+    case WM_ERASEBKGND:
+        return 1;
     case WM_PAINT: {
         PAINTSTRUCT ps;
         HDC hdc = BeginPaint(hwnd, &ps);
         RECT rc; GetClientRect(hwnd, &rc);
-        HDC mem = CreateCompatibleDC(hdc);
+        HDC  mem = CreateCompatibleDC(hdc);
         HBITMAP bmp = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
         auto old = SelectObject(mem, bmp);
-        DrawBtn(mem, rc);
-        BitBlt(hdc,0,0,rc.right,rc.bottom,mem,0,0,SRCCOPY);
-        SelectObject(mem,old); DeleteObject(bmp); DeleteDC(mem);
+        DrawStrip(mem, rc);
+        BitBlt(hdc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old);
+        DeleteObject(bmp);
+        DeleteDC(mem);
         EndPaint(hwnd, &ps);
         return 0;
     }
+
+    // ── Input ─────────────────────────────────────────────────────────────────
     case WM_LBUTTONUP:
         Log("clicked — sock=%s", g_sock != INVALID_SOCKET ? "connected" : "none");
         if (g_sock != INVALID_SOCKET) {
-            // Panel is running — toggle it
             SendMsg(R"({"type":"toggle"})");
         } else {
-            // Panel not running — launch it from panel.path file
+            // Electron not running — launch it via the path file the DLL writes
             wchar_t pathFile[MAX_PATH];
             GetModuleFileNameW(g_hMod, pathFile, MAX_PATH);
             wchar_t* sl = wcsrchr(pathFile, L'\\');
             if (sl) wcscpy(sl + 1, L"panel.path");
-
             FILE* f = _wfopen(pathFile, L"r");
             if (f) {
                 char launchPath[1024] = {};
                 fread(launchPath, 1, sizeof(launchPath) - 1, f);
                 fclose(f);
-                // Trim newline
                 for (char* p = launchPath; *p; p++) {
                     if (*p == '\r' || *p == '\n') { *p = 0; break; }
                 }
                 Log("launching: %s", launchPath);
-                // Convert to wide and split into exe + args if needed
                 wchar_t wpath[1024] = {};
                 MultiByteToWideChar(CP_UTF8, 0, launchPath, -1, wpath, 1024);
-
-                // Find first space to split exe from args
                 wchar_t* space = wcschr(wpath, L' ');
                 if (space) {
                     *space = L'\0';
@@ -319,19 +339,37 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             }
         }
         return 0;
+
+    case WM_STATECHANGE:
+        UpdateAlpha();
+        InvalidateRect(hwnd, NULL, FALSE);
+        return 0;
     case WM_MOUSEMOVE:
         if (!g_hover) {
-            g_hover = true; InvalidateRect(hwnd,NULL,FALSE);
-            TRACKMOUSEEVENT tme{sizeof(tme),TME_LEAVE,hwnd,0};
+            g_hover = true;
+            UpdateAlpha();
+            InvalidateRect(hwnd, NULL, FALSE);
+            TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, hwnd, 0 };
             TrackMouseEvent(&tme);
         }
         return 0;
     case WM_MOUSELEAVE:
-        g_hover = false; InvalidateRect(hwnd,NULL,FALSE);
+        g_hover = false;
+        UpdateAlpha();
+        InvalidateRect(hwnd, NULL, FALSE);
         return 0;
-    case WM_DESTROY:
+
+    case WM_DESTROY: {
+        // Unregister AppBar before the window is gone
+        if (g_appBarReg) {
+            APPBARDATA abd = { sizeof(abd) };
+            abd.hWnd = hwnd;
+            SHAppBarMessage(ABM_REMOVE, &abd);
+            g_appBarReg = false;
+        }
         PostQuitMessage(0);
         return 0;
+    }
     }
     return DefWindowProc(hwnd, msg, wp, lp);
 }
@@ -341,51 +379,61 @@ static DWORD WINAPI BtnThread(LPVOID)
 {
     Log("BtnThread started");
 
-    for (int i = 0; i < 30 && !g_taskbar; i++) {
-        g_taskbar = FindWindow(L"Shell_TrayWnd", NULL);
-        if (!g_taskbar) Sleep(500);
-    }
-    if (!g_taskbar) { Log("Shell_TrayWnd not found"); return 1; }
-    Log("Shell_TrayWnd: %p", (void*)g_taskbar);
-
+    // Register window class
     WNDCLASSEX wc{};
-    wc.cbSize = sizeof(wc); wc.style = CS_HREDRAW|CS_VREDRAW;
-    wc.lpfnWndProc = WndProc; wc.hInstance = g_hMod;
-    wc.hCursor = LoadCursor(NULL,IDC_HAND); wc.hbrBackground = NULL;
+    wc.cbSize        = sizeof(wc);
+    wc.style         = CS_HREDRAW | CS_VREDRAW;
+    wc.lpfnWndProc   = WndProc;
+    wc.hInstance     = g_hMod;
+    wc.hCursor       = LoadCursor(NULL, IDC_HAND);
+    wc.hbrBackground = NULL;
     wc.lpszClassName = WND_CLASS;
     RegisterClassEx(&wc);
 
-    RECT tb{};
-    GetWindowRect(g_taskbar, &tb);
-    int tbH  = tb.bottom - tb.top;
-    int btnX = tb.left + 4;
-    int btnY = tb.top  + (tbH - BTN_H) / 2;
+    // Primary monitor full height
+    HMONITOR hmon = MonitorFromPoint({ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
+    MONITORINFO mi = { sizeof(mi) };
+    GetMonitorInfo(hmon, &mi);
+    int monX = mi.rcMonitor.left;
+    int monY = mi.rcMonitor.top;
+    int monH = mi.rcMonitor.bottom - mi.rcMonitor.top;
 
+    // WS_EX_LAYERED  — enables LWA_COLORKEY transparency
+    // WS_EX_TOOLWINDOW — no taskbar button for this helper window
+    // WS_EX_NOACTIVATE — clicking the pill never steals keyboard focus
+    // No WS_EX_TOPMOST — AppBar + shell manages z-order; no TOPMOST fighting
     g_hwnd = CreateWindowEx(
-        WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
-        WND_CLASS, L"W", WS_POPUP,
-        btnX, btnY, BTN_W, BTN_H,
+        WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        WND_CLASS, L"Widgets", WS_POPUP,
+        monX, monY, STRIP_W, monH,
         NULL, NULL, g_hMod, NULL);
 
     if (!g_hwnd) { Log("CreateWindowEx failed: %lu", GetLastError()); return 1; }
-    Log("popup created: %p", (void*)g_hwnd);
+    Log("AppBar window created: %p  size=(%d x %d)", (void*)g_hwnd, STRIP_W, monH);
 
-    DWM_WINDOW_CORNER_PREFERENCE pref = DWMWCP_ROUND;
-    DwmSetWindowAttribute(g_hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &pref, sizeof(pref));
+    // Transparent background + initial faint alpha (UpdateAlpha sets both flags)
+    UpdateAlpha();
 
-    if (tbH > 4) ShowWindow(g_hwnd, SW_SHOWNOACTIVATE);
+    // Register as an AppBar on the left edge
+    {
+        APPBARDATA abd = { sizeof(abd) };
+        abd.hWnd             = g_hwnd;
+        abd.uCallbackMessage = WM_APPBAR;
+        if (SHAppBarMessage(ABM_NEW, &abd)) {
+            g_appBarReg = true;
+            Log("AppBar registered");
+        } else {
+            Log("AppBar ABM_NEW failed — falling back to plain window");
+        }
+    }
+
+    PositionAppBar();   // sets final size/position via ABM_SETPOS + SetWindowPos
     UpdateWindow(g_hwnd);
 
-    g_origTrayProc = (WNDPROC)SetWindowLongPtrW(
-        g_taskbar, GWLP_WNDPROC, (LONG_PTR)TraySubclassProc);
-    Log("subclassed Shell_TrayWnd; origProc=%p", (void*)g_origTrayProc);
-
+    // Start IPC thread and mouse hook
     HANDLE hIpcThd = CreateThread(NULL, 0, IpcProc, NULL, 0, NULL);
-
-    // Global low-level mouse hook — intercepts all clicks for click-outside detection.
-    // Must be installed from a thread with a message pump (BtnThread qualifies).
     g_mouseHook = SetWindowsHookEx(WH_MOUSE_LL, LowLevelMouseProc, NULL, 0);
-    Log("mouse hook: %p", (void*)g_mouseHook);
+    Log("IPC thread: %p  mouse hook: %p", (void*)hIpcThd, (void*)g_mouseHook);
 
     MSG msg;
     while (g_running && GetMessage(&msg, NULL, 0, 0)) {
@@ -395,10 +443,6 @@ static DWORD WINAPI BtnThread(LPVOID)
 
     Log("BtnThread exiting");
     if (g_mouseHook) { UnhookWindowsHookEx(g_mouseHook); g_mouseHook = NULL; }
-    if (g_origTrayProc && g_taskbar) {
-        SetWindowLongPtrW(g_taskbar, GWLP_WNDPROC, (LONG_PTR)g_origTrayProc);
-        g_origTrayProc = NULL;
-    }
     g_running = false;
     if (g_sock != INVALID_SOCKET) { closesocket(g_sock); g_sock = INVALID_SOCKET; }
     if (hIpcThd) { WaitForSingleObject(hIpcThd, 3000); CloseHandle(hIpcThd); }
@@ -416,17 +460,13 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
         g_hMod    = hInst;
         g_running = true;
         GetModuleFileNameW(hInst, g_logPath, MAX_PATH);
-        { wchar_t* s = wcsrchr(g_logPath, L'\\'); if (s) wcscpy(s+1, L"hook.log"); }
+        { wchar_t* s = wcsrchr(g_logPath, L'\\'); if (s) wcscpy(s + 1, L"hook.log"); }
         { FILE* f = _wfopen(g_logPath, L"w"); if (f) fclose(f); }
         Log("DLL_PROCESS_ATTACH PID=%lu", GetCurrentProcessId());
         CreateThread(NULL, 0, BtnThread, NULL, 0, NULL);
         break;
     case DLL_PROCESS_DETACH:
         g_running = false;
-        if (g_origTrayProc && g_taskbar) {
-            SetWindowLongPtrW(g_taskbar, GWLP_WNDPROC, (LONG_PTR)g_origTrayProc);
-            g_origTrayProc = NULL;
-        }
         if (g_hwnd) PostMessage(g_hwnd, WM_QUIT, 0, 0);
         if (g_sock != INVALID_SOCKET) { closesocket(g_sock); g_sock = INVALID_SOCKET; }
         break;

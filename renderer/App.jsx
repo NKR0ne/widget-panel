@@ -6,11 +6,12 @@ const PROXY2   = "https://api.rss2json.com/v1/api.json?rss_url=";
 const METEO    = "https://api.open-meteo.com/v1/forecast";
 const FINNHUB  = "https://finnhub.io/api/v1";
 const TOMTOM   = "https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json";
-// Yahoo Finance unofficial — zero key, used as Finnhub fallback
 const YF_QUOTE = (sym) => PROXY1 + encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1d`);
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
-const SK_CONFIG = "wp-config";
+const SK_CONFIG   = "wp-config";
+const SK_COLW     = "wp-col-widths";
+const SK_EXPANDED = "wp-expanded";
 
 // ── Palette & system widget defs ─────────────────────────────────────────────
 const PALETTE = ["#4f8ef7","#5cc8a8","#b07ef7","#f7a64f","#f74f7e","#4ff7c8","#f7f74f","#c8f74f"];
@@ -22,18 +23,18 @@ const SYS = [
 
 // ── Mock fallback data ───────────────────────────────────────────────────────
 const MOCK_NEWS = [
-  { id:"1", title:"RISC-V chips are closing the gap with x86 in datacenter benchmarks",   source:"arstechnica.com", link:"#", time:"12m" },
-  { id:"2", title:"Firefox 127 ships with improved memory isolation on Windows",           source:"theregister.com", link:"#", time:"34m" },
-  { id:"3", title:"EU regulators open formal probe into Microsoft AI bundling practices",  source:"reuters.com",     link:"#", time:"1h"  },
-  { id:"4", title:"Apple acquires UK startup behind on-device LLM inference engine",       source:"ft.com",          link:"#", time:"2h"  },
-  { id:"5", title:"Nvidia Blackwell supply ramp expected to ease H200 constraints in Q3",  source:"tomshardware.com",link:"#", time:"3h"  },
+  { id:"1", title:"RISC-V chips are closing the gap with x86 in datacenter benchmarks",   source:"arstechnica.com", link:"#", time:"12m", image:null },
+  { id:"2", title:"Firefox 127 ships with improved memory isolation on Windows",           source:"theregister.com", link:"#", time:"34m", image:null },
+  { id:"3", title:"EU regulators open formal probe into Microsoft AI bundling practices",  source:"reuters.com",     link:"#", time:"1h",  image:null },
+  { id:"4", title:"Apple acquires UK startup behind on-device LLM inference engine",       source:"ft.com",          link:"#", time:"2h",  image:null },
+  { id:"5", title:"Nvidia Blackwell supply ramp expected to ease H200 constraints in Q3",  source:"tomshardware.com",link:"#", time:"3h",  image:null },
 ];
 const MOCK_NEWS_FR = [
-  { id:"f1", title:"Le gouvernement Legault dépose son budget 2025 avec surplus de 1,2 G$", source:"lapresse.ca",     link:"#", time:"5m"  },
-  { id:"f2", title:"Québec annonce 800 nouveaux logements sociaux dans la région de Québec",source:"radio-canada.ca", link:"#", time:"28m" },
-  { id:"f3", title:"Pont de Québec : les travaux de réfection majeures débutent cet été",   source:"lesoleil.com",    link:"#", time:"1h"  },
-  { id:"f4", title:"Feux de forêt : alerte préventive levée pour la Côte-Nord",             source:"tvanouvelles.ca", link:"#", time:"2h"  },
-  { id:"f5", title:"Le Canadien repêche en 5e position au prochain repêchage LNH",          source:"rds.ca",          link:"#", time:"3h"  },
+  { id:"f1", title:"Le gouvernement Legault dépose son budget 2025 avec surplus de 1,2 G$", source:"lapresse.ca",     link:"#", time:"5m",  image:null },
+  { id:"f2", title:"Québec annonce 800 nouveaux logements sociaux dans la région de Québec",source:"radio-canada.ca", link:"#", time:"28m", image:null },
+  { id:"f3", title:"Pont de Québec : les travaux de réfection majeures débutent cet été",   source:"lesoleil.com",    link:"#", time:"1h",  image:null },
+  { id:"f4", title:"Feux de forêt : alerte préventive levée pour la Côte-Nord",             source:"tvanouvelles.ca", link:"#", time:"2h",  image:null },
+  { id:"f5", title:"Le Canadien repêche en 5e position au prochain repêchage LNH",          source:"rds.ca",          link:"#", time:"3h",  image:null },
 ];
 const MOCK_WX = {
   current:{ temperature_2m:7, apparent_temperature:3, weather_code:2, wind_speed_10m:19, relative_humidity_2m:68 },
@@ -47,7 +48,7 @@ const MOCK_WX = {
     weather_code:[61,2,1,2,71], temperature_2m_max:[9,14,16,11,8], temperature_2m_min:[2,5,7,4,1],
   },
 };
-const MOCK_STOCKS = { AAPL:{c:213.49,pc:211.20,h:214.80}, MSFT:{c:417.72,pc:414.55,h:419.10}, NVDA:{c:875.40,pc:859.20,h:882.00}, SPY:{c:521.30,pc:518.80,h:523.50} };
+const MOCK_STOCKS  = { AAPL:{c:213.49,pc:211.20,h:214.80}, MSFT:{c:417.72,pc:414.55,h:419.10}, NVDA:{c:875.40,pc:859.20,h:882.00}, SPY:{c:521.30,pc:518.80,h:523.50} };
 const MOCK_TRAFFIC = { currentSpeed:72, freeFlowSpeed:100, confidence:0.87 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -96,27 +97,50 @@ function parseOPML(xml) {
   });
   return Object.values(cats);
 }
+
+// Extract thumbnail from a feed item element — checks enclosure, media:thumbnail, media:content
+function extractImage(it) {
+  // <enclosure url="..." type="image/..."/>
+  const enc = it.querySelector("enclosure");
+  if (enc && enc.getAttribute("type")?.startsWith("image")) {
+    const u = enc.getAttribute("url"); if (u) return u;
+  }
+  // <media:thumbnail url="..."/> or plain <thumbnail url="..."/>
+  for (const tag of ["thumbnail","content"]) {
+    // querySelectorAll can't use colons; try both qualified and local name
+    const els = Array.from(it.getElementsByTagName("media:" + tag))
+      .concat(Array.from(it.getElementsByTagName(tag)));
+    for (const el of els) {
+      const u = el.getAttribute("url");
+      const med = el.getAttribute("medium") || "";
+      if (u && (med === "image" || tag === "thumbnail")) return u;
+    }
+  }
+  // Try <image><url>...</url></image> inside the item
+  const imgEl = it.querySelector("image url");
+  if (imgEl?.textContent) return imgEl.textContent.trim() || null;
+  return null;
+}
+
 function parseXML(xml) {
   const doc=new DOMParser().parseFromString(xml,"text/xml");
   return Array.from(doc.querySelectorAll("item, entry")).map(it=>{
     const get=tag=>it.querySelector(tag)?.textContent?.trim()||"";
     const link=it.querySelector("link[href]")?.getAttribute("href")||it.querySelector("link")?.textContent?.trim()||get("guid");
-    return { id:get("guid")||link, title:get("title"), link,
+    const image = extractImage(it);
+    return { id:get("guid")||link, title:get("title"), link, image,
       source:(()=>{try{return new URL(link).hostname.replace("www.","");}catch{return "";}})(),
       time:relTime(get("pubDate")||get("published")||get("updated")) };
   }).filter(it=>it.title&&it.link);
 }
 async function fetchRSS(url) {
-  // Proxy 1 — allorigins
   try { const r=await fetch(PROXY1+encodeURIComponent(url)); if(r.ok){const items=parseXML(await r.text()).slice(0,7);if(items.length)return items;} } catch {}
-  // Proxy 2 — rss2json
-  try { const r=await fetch(PROXY2+encodeURIComponent(url)+"&count=6"); const d=await r.json(); if(d.status==="ok") return d.items.map(it=>({id:it.guid||it.link,title:it.title,link:it.link,source:(()=>{try{return new URL(it.link).hostname.replace("www.","");}catch{return "";}})(),time:relTime(it.pubDate)})); } catch {}
-  // Proxy 3 — corsproxy.io
+  try { const r=await fetch(PROXY2+encodeURIComponent(url)+"&count=6"); const d=await r.json(); if(d.status==="ok") return d.items.map(it=>({id:it.guid||it.link,title:it.title,link:it.link,image:it.thumbnail||it.enclosure?.link||null,source:(()=>{try{return new URL(it.link).hostname.replace("www.","");}catch{return "";}})(),time:relTime(it.pubDate)})); } catch {}
   try { const r=await fetch("https://corsproxy.io/?"+encodeURIComponent(url)); if(r.ok){const items=parseXML(await r.text()).slice(0,7);if(items.length)return items;} } catch {}
   return null;
 }
 
-// ── Yahoo Finance fallback for stock quotes ──────────────────────────────────
+// ── Yahoo Finance fallback ───────────────────────────────────────────────────
 async function fetchYahooQuote(sym) {
   try {
     const r = await fetch(YF_QUOTE(sym));
@@ -140,10 +164,10 @@ async function storageLoad() {
 // ── Styles ───────────────────────────────────────────────────────────────────
 const C = {
   card:  { background:"#18181c", borderRadius:12, border:"1px solid rgba(255,255,255,0.06)", overflow:"hidden" },
-  title: { fontSize:11, fontWeight:500, color:"#444", textTransform:"uppercase", letterSpacing:0.9 },
+  title: { fontSize:11, fontWeight:500, color:"#aaa", textTransform:"uppercase", letterSpacing:0.9 },
   dot:   { width:6, height:6, borderRadius:"50%", flexShrink:0, display:"inline-block" },
   badge: { fontSize:10, padding:"1px 6px", borderRadius:4, fontWeight:500 },
-  chev:  { color:"#282830", fontSize:16, lineHeight:1, display:"inline-block", flexShrink:0, transition:"transform 0.2s" },
+  chev:  { color:"#666", fontSize:16, lineHeight:1, display:"inline-block", flexShrink:0, transition:"transform 0.2s" },
   inp:   { background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.09)", borderRadius:8, padding:"7px 10px", color:"#ccc", fontSize:12, outline:"none", fontFamily:"'DM Sans',sans-serif" },
   btn:   { background:"rgba(79,142,247,0.15)", border:"1px solid rgba(79,142,247,0.25)", borderRadius:8, color:"#4f8ef7", fontSize:12, padding:"7px 14px", cursor:"pointer", fontWeight:500, fontFamily:"'DM Sans',sans-serif" },
   skel:  w=>({ height:10, borderRadius:4, background:"rgba(255,255,255,0.05)", width:w+"%", animation:"pulse 1.5s ease infinite", marginBottom:8 }),
@@ -152,37 +176,62 @@ const C = {
 function DemoBadge() {
   return <span style={{ fontSize:9, padding:"1px 5px", borderRadius:3, background:"rgba(255,255,255,0.06)", color:"#333", fontFamily:"DM Mono,monospace", marginLeft:4 }}>demo</span>;
 }
-function ColButton({ col, current, onClick }) {
-  const active = col===current;
+
+// ── Column picker — three small squares, filled = current column ─────────────
+// Works like a position indicator: click an empty square to move the widget there.
+const COL_ORDER = ["left", "mid", "right"];
+function ColPicker({ col, onMoveLeft, onMoveMid, onMoveRight }) {
+  const handlers = { left: onMoveLeft, mid: onMoveMid, right: onMoveRight };
+  const titles   = { left: "Move to column 1", mid: "Move to column 2", right: "Move to column 3" };
   return (
-    <button onClick={onClick} title={col==="left"?"Move to left column":"Move to right column"}
-      style={{ background:"none", border:"none", cursor:"pointer", padding:"2px 4px", color:active?"#4f8ef7":"#252530", fontSize:10, lineHeight:1 }}>
-      {col==="left"?"⬅":"➡"}
-    </button>
+    <div style={{ display:"flex", gap:2, alignItems:"center" }} title="Move widget to column…">
+      {COL_ORDER.map(c => {
+        const active = c === col;
+        return (
+          <button key={c} onClick={handlers[c]} title={titles[c]}
+            style={{
+              width:7, height:7, borderRadius:2, padding:0, flexShrink:0,
+              cursor: active ? "default" : "pointer",
+              border: "1px solid " + (active ? "#4f8ef7" : "rgba(255,255,255,0.15)"),
+              background: active ? "#4f8ef7" : "transparent",
+            }}
+          />
+        );
+      })}
+    </div>
   );
 }
 
 // ── Card shell ───────────────────────────────────────────────────────────────
-function Shell({ color, title, sub, badge, expanded, onToggle, onMoveLeft, onMoveRight, col, children }) {
+function Shell({ color, title, sub, badge, expanded, onToggle, onMoveLeft, onMoveMid, onMoveRight, col, isDragOver, onDragStart, onDragOver, onDrop, onDragEnd, children }) {
   return (
-    <div style={C.card}>
+    <div style={{ ...C.card, outline: isDragOver ? "1px solid rgba(79,142,247,0.4)" : "1px solid rgba(255,255,255,0.06)" }}
+      onDragOver={e=>{ e.preventDefault(); onDragOver?.(); }}
+      onDrop={e=>{ e.preventDefault(); onDrop?.(); }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 14px", cursor:"pointer", userSelect:"none" }} onClick={onToggle}>
         <div style={{ display:"flex", alignItems:"center", gap:8, minWidth:0 }}>
+          <span
+            draggable
+            onDragStart={e=>{ e.stopPropagation(); onDragStart?.(); }}
+            onDragEnd={()=>onDragEnd?.()}
+            onClick={e=>e.stopPropagation()}
+            title="Drag to reorder"
+            style={{ color:"#3a3a50", fontSize:11, cursor:"grab", userSelect:"none", flexShrink:0, lineHeight:1, padding:"0 4px 0 0" }}>⠿</span>
           <span style={{ ...C.dot, background:color }} />
           <span style={C.title}>{title}</span>
           {sub && <span style={{ fontSize:10, color:"#333", fontFamily:"DM Mono,monospace" }}>{sub}</span>}
           {badge}
         </div>
-        <div style={{ display:"flex", alignItems:"center", gap:2 }} onClick={e=>e.stopPropagation()}>
-          <ColButton col="left"  current={col} onClick={onMoveLeft}  />
-          <ColButton col="right" current={col} onClick={onMoveRight} />
-          <span style={{ ...C.chev, transform:expanded?"rotate(90deg)":"rotate(0deg)", marginLeft:4 }} onClick={onToggle}>›</span>
+        <div style={{ display:"flex", alignItems:"center", gap:5 }} onClick={e=>e.stopPropagation()}>
+          <ColPicker col={col} onMoveLeft={onMoveLeft} onMoveMid={onMoveMid} onMoveRight={onMoveRight} />
+          <span style={{ ...C.chev, transform:expanded?"rotate(90deg)":"rotate(0deg)" }} onClick={onToggle}>›</span>
         </div>
       </div>
       {expanded && <div style={{ padding:"0 14px 12px" }}>{children}</div>}
     </div>
   );
 }
+
 function Skel({ n=3 }) {
   return (
     <div style={{ paddingTop:8 }}>
@@ -200,7 +249,6 @@ function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
   const [demo,setDemo]=useState(false);
   const [status,setStatus]=useState("loading");
   const [readIds,setReadIds]=useState(new Set());
-  const [expanded,setExpanded]=useState(true);
   const unread=items.filter(i=>!readIds.has(i.id)).length;
 
   useEffect(()=>{ onUnreadChange?.(unread); },[unread]);
@@ -220,7 +268,7 @@ function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
     ?<span style={{fontSize:10,color:"#333"}}>fetching…</span>
     :(status==="ok"&&unread>0&&!demo)?<span style={{...C.badge,background:color+"22",color}}>{unread}</span>:null;
 
-  return { color, title:category.label, badge:badgeEl, expanded, onToggle:()=>setExpanded(e=>!e),
+  return { color, title:category.label, badge:badgeEl,
     content:(
       <div>
         {status==="loading"&&<Skel/>}
@@ -230,10 +278,19 @@ function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
               setReadIds(p=>new Set([...p,item.id]));
               if(item.link&&item.link!=="#") onOpenUrl?.(item.link);
             }}>
-            <div style={{fontSize:12,color:"#a0a0a8",lineHeight:1.45,marginBottom:4}}>{item.title}</div>
-            <div style={{display:"flex",justifyContent:"space-between"}}>
-              <span style={{fontSize:10,color:"#2e2e38"}}>{item.source}</span>
-              <span style={{fontSize:10,color:"#242430",fontFamily:"DM Mono,monospace"}}>{item.time}</span>
+            <div style={{display:"flex",gap:8,alignItems:"flex-start"}}>
+              {item.image&&(
+                <img src={item.image} loading="lazy" alt=""
+                  style={{width:44,height:44,borderRadius:6,objectFit:"cover",flexShrink:0,background:"rgba(255,255,255,0.05)"}}
+                  onError={e=>{e.target.style.display="none";}}/>
+              )}
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{fontSize:12,color:"#a0a0a8",lineHeight:1.45,marginBottom:4}}>{item.title}</div>
+                <div style={{display:"flex",justifyContent:"space-between"}}>
+                  <span style={{fontSize:10,color:"#2e2e38"}}>{item.source}</span>
+                  <span style={{fontSize:10,color:"#242430",fontFamily:"DM Mono,monospace"}}>{item.time}</span>
+                </div>
+              </div>
             </div>
           </div>
         ))}</div>}
@@ -247,7 +304,6 @@ function WeatherWidget() {
   const [wx,setWx]=useState(null);
   const [demo,setDemo]=useState(false);
   const [status,setStatus]=useState("loading");
-  const [expanded,setExpanded]=useState(true);
 
   useEffect(()=>{
     const url=METEO+"?latitude=46.8123&longitude=-71.1756"
@@ -263,7 +319,7 @@ function WeatherWidget() {
   const nowIdx=hourly?Math.max(0,hourly.time.findIndex(t=>new Date(t)>new Date())-1):0;
   const [cond,icon]=cur?wmo(cur.weather_code):["","⛅"];
 
-  return { color:"#f7c94f", title:"Weather", sub:"Lévis, QC", expanded, onToggle:()=>setExpanded(e=>!e),
+  return { color:"#f7c94f", title:"Weather", sub:"Lévis, QC",
     content:(
       <div>
         {status==="loading"&&<Skel n={2}/>}
@@ -321,14 +377,13 @@ function WeatherWidget() {
   };
 }
 
-// ── Stocks widget — Finnhub primary, Yahoo Finance fallback ──────────────────
+// ── Stocks widget ────────────────────────────────────────────────────────────
 const TICKERS=["AAPL","MSFT","NVDA","SPY"];
 function StocksWidget({ apiKey, onSaveKey }) {
   const [quotes,setQuotes]=useState({});
   const [demo,setDemo]=useState(false);
-  const [source,setSource]=useState("");   // "finnhub" | "yahoo" | "demo"
+  const [source,setSource]=useState("");
   const [status,setStatus]=useState(apiKey?"loading":"yahoo");
-  const [expanded,setExpanded]=useState(true);
   const [draft,setDraft]=useState("");
 
   useEffect(()=>{
@@ -357,7 +412,7 @@ function StocksWidget({ apiKey, onSaveKey }) {
 
   const subLabel = source==="finnhub"?"Finnhub":source==="yahoo"?"Yahoo Finance · no key":"demo";
 
-  return { color:"#5cc8a8", title:"Stocks", sub:subLabel, expanded, onToggle:()=>setExpanded(e=>!e),
+  return { color:"#5cc8a8", title:"Stocks", sub:subLabel,
     content:(
       <div>
         {!apiKey&&status==="ok"&&source!=="demo"&&(
@@ -402,7 +457,6 @@ function TrafficWidget({ apiKey, onSaveKey }) {
   const [flow,setFlow]=useState(null);
   const [demo,setDemo]=useState(false);
   const [status,setStatus]=useState(apiKey?"loading":"nokey");
-  const [expanded,setExpanded]=useState(true);
   const [draft,setDraft]=useState("");
 
   useEffect(()=>{
@@ -417,7 +471,7 @@ function TrafficWidget({ apiKey, onSaveKey }) {
   const tColor=ratio>0.8?"#5cc8a8":ratio>0.5?"#f7c94f":"#f77f4f";
   const tLabel=ratio>0.8?"Free flow":ratio>0.5?"Moderate":"Heavy";
 
-  return { color:"#f77f4f", title:"Traffic", sub:"TomTom · A-20 Lévis", expanded, onToggle:()=>setExpanded(e=>!e),
+  return { color:"#f77f4f", title:"Traffic", sub:"TomTom · A-20 Lévis",
     content:(
       <div>
         {status==="nokey"&&(
@@ -453,17 +507,18 @@ function TrafficWidget({ apiKey, onSaveKey }) {
 }
 
 // ── Widget renderer ──────────────────────────────────────────────────────────
-function WidgetCard({ id, categories, apiKeys, onSaveKey, col, onMoveLeft, onMoveRight, colorIdx, onUnreadChange, onOpenUrl }) {
-  const newsData    = id.startsWith("cat:") ? NewsWidget({ category: categories.find(c=>c.label===id.slice(4)), colorIdx, onUnreadChange, onOpenUrl }) : null;
-  const weatherData = id==="weather" ? WeatherWidget() : null;
-  const stocksData  = id==="stocks"  ? StocksWidget({ apiKey:apiKeys.finnhub, onSaveKey }) : null;
-  const trafficData = id==="traffic" ? TrafficWidget({ apiKey:apiKeys.tomtom, onSaveKey }) : null;
+function WidgetCard({ id, categories, apiKeys, onSaveKey, col, onMoveLeft, onMoveMid, onMoveRight, colorIdx, onUnreadChange, onOpenUrl, expanded, onToggle, isDragOver, onDragStart, onDragOver, onDrop, onDragEnd }) {
+  const newsData    = id.startsWith("cat:") ? NewsWidget({ category: categories.find(c=>c.label===id.slice(4)), colorIdx, onUnreadChange, onOpenUrl, expanded, onToggle }) : null;
+  const weatherData = id==="weather" ? WeatherWidget({ expanded, onToggle }) : null;
+  const stocksData  = id==="stocks"  ? StocksWidget({ apiKey:apiKeys.finnhub, onSaveKey, expanded, onToggle }) : null;
+  const trafficData = id==="traffic" ? TrafficWidget({ apiKey:apiKeys.tomtom, onSaveKey, expanded, onToggle }) : null;
   const d = newsData || weatherData || stocksData || trafficData;
   if (!d) return null;
   return (
     <Shell color={d.color} title={d.title} sub={d.sub} badge={d.badge}
-      expanded={d.expanded} onToggle={d.onToggle}
-      col={col} onMoveLeft={onMoveLeft} onMoveRight={onMoveRight}>
+      expanded={expanded} onToggle={onToggle}
+      col={col} onMoveLeft={onMoveLeft} onMoveMid={onMoveMid} onMoveRight={onMoveRight}
+      isDragOver={isDragOver} onDragStart={onDragStart} onDragOver={onDragOver} onDrop={onDrop} onDragEnd={onDragEnd}>
       {d.content}
     </Shell>
   );
@@ -605,13 +660,10 @@ function SettingsModal({ onClose, opacity, onOpacityChange }) {
 }
 
 // ── Taskbar notification rotator ──────────────────────────────────────────────
-// Cycles through a digest of live data snippets every 8s in a tooltip-style strip
-// and sends badge counts to main via IPC.
 function useNotificationRotator(snippets, totalUnread) {
   const [idx, setIdx] = useState(0);
   const [visible, setVisible] = useState(false);
 
-  // Rotate displayed snippet every 8 seconds if there are any
   useEffect(()=>{
     if (!snippets.length) { setVisible(false); return; }
     setVisible(true);
@@ -619,7 +671,6 @@ function useNotificationRotator(snippets, totalUnread) {
     return ()=>clearInterval(t);
   },[snippets.length]);
 
-  // Push badge to taskbar button
   useEffect(()=>{ api.badge?.set(totalUnread); },[totalUnread]);
 
   return { snippet: snippets[idx] || null, visible };
@@ -636,51 +687,85 @@ export default function App() {
   const [storageReady, setStorageReady] = useState(false);
   const [pinned,       setPinned]       = useState(false);
   const [time,         setTime]         = useState(new Date());
-  const [visible,      setVisible]      = useState(false);  // slide-in state
+  const [visible,      setVisible]      = useState(false);
   const [opacity,      setOpacity]      = useState(1);
   const [accentColor,  setAccentColor]  = useState('#202020');
+
+  // Column widths: left + mid are fixed; right column is flex
+  const [colWidths, setColWidths] = useState({ left: 220, mid: 240 });
+  const colWidthsRef = useRef({ left: 220, mid: 240 });
+  useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
+
+  // Expand/collapse state per widget id — persisted
+  const [expandedMap, setExpandedMap] = useState({});
+
+  function getExpanded(id)   { return expandedMap[id] !== false; }
+  function toggleExpanded(id) {
+    setExpandedMap(p => ({ ...p, [id]: !(p[id] !== false) }));
+  }
+
+  // Column divider drag — purely in-renderer
+  function onColDividerDown(which) {
+    return (e) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = colWidthsRef.current[which];
+      const onMove = (ev) => {
+        const newW = Math.max(150, Math.min(startW + (ev.clientX - startX), 500));
+        setColWidths(p => ({ ...p, [which]: newW }));
+      };
+      const onUp = () => {
+        window.removeEventListener('mousemove', onMove);
+        window.removeEventListener('mouseup', onUp);
+        api.store.set(SK_COLW, JSON.stringify(colWidthsRef.current));
+      };
+      window.addEventListener('mousemove', onMove);
+      window.addEventListener('mouseup', onUp);
+    };
+  }
+
   function openBrowser(url) {
     window.electronAPI?.browser?.open(url);
   }
 
-  const resizingRef  = useRef(false);
-  const startXRef    = useRef(0);
-  const startWRef    = useRef(0);
-
-  // Unread counts per widget id
   const [unreadMap, setUnreadMap] = useState({});
   const totalUnread = Object.values(unreadMap).reduce((a,b)=>a+b, 0);
-
-  // Notification snippets — short strings rotated in the header ticker
   const [snippets, setSnippets] = useState([]);
+
+  // Drag-and-drop reorder state
+  const [dragId,     setDragId]     = useState(null);
+  const [dragOverId, setDragOverId] = useState(null);
+
+  function reorderWidget(fromId, toId) {
+    setActiveIds(prev => {
+      const arr = [...prev];
+      const fi = arr.indexOf(fromId);
+      const ti = arr.indexOf(toId);
+      if (fi === -1 || ti === -1 || fi === ti) return prev;
+      arr.splice(fi, 1);
+      arr.splice(ti, 0, fromId);
+      return arr;
+    });
+  }
 
   useEffect(()=>{ const t=setInterval(()=>setTime(new Date()),1000); return ()=>clearInterval(t); },[]);
 
-  // ── Slide animation ────────────────────────────────────────────────────────
+  // ── Slide animation ──────────────────────────────────────────────────────
   useEffect(() => {
-    const api = window.electronAPI?.panel;
-    if (!api) return;
-
-    // Slide-in: main sends panel-show after win.show()
-    api.onShow(() => setVisible(true));
-
-    // Slide-out: main sends panel-hide → animate → tell main to call win.hide()
-    api.onHide(() => {
+    const panelApi = window.electronAPI?.panel;
+    if (!panelApi) return;
+    panelApi.onShow(() => setVisible(true));
+    panelApi.onHide(() => {
       setVisible(false);
-      setTimeout(() => api.hideDone(), 270);
+      setTimeout(() => panelApi.hideDone(), 270);
     });
-
-    // Tell main we're ready — main will send panel-show if window is already visible
-    api.ready();
+    panelApi.ready();
   }, []);
 
-  // ── Resize drag handle ─────────────────────────────────────────────────────
+  // ── Resize drag handle (panel width) ────────────────────────────────────
   const onResizeMouseDown = useCallback((e) => {
     e.preventDefault();
-    // Hand off to main process — it polls getCursorScreenPoint() so dragging
-    // past the window's right edge still works correctly.
     window.electronAPI?.panel?.resizeStart(e.screenX, window.innerWidth);
-
     const onUp = () => {
       window.electronAPI?.panel?.resizeEnd();
       window.removeEventListener('mouseup', onUp);
@@ -688,46 +773,79 @@ export default function App() {
     window.addEventListener('mouseup', onUp);
   }, []);
 
-  // Build canonical column map: news → left, system → right
-  // LEFT = system widgets, RIGHT = news
+  // ── Default column assignment ────────────────────────────────────────────
   function defaultColumns(cats) {
     const cols = {};
-    (cats||[]).forEach(c=>{ cols["cat:"+c.label]="right"; });
-    cols.weather="left"; cols.stocks="left"; cols.traffic="left";
+    (cats||[]).forEach(c => { cols["cat:" + c.label] = "mid"; });
+    cols.weather = "left";
+    cols.stocks  = "left";
+    cols.traffic = "left";
     return cols;
   }
 
-  // Load persisted config
+  // Column resolver — falls back to "left" for system, "mid" for news
+  function getColFor(id) {
+    if (columns[id]) return columns[id];
+    return id.startsWith("cat:") ? "mid" : "left";
+  }
+
+  // ── Load persisted config ────────────────────────────────────────────────
   useEffect(()=>{
     storageLoad().then(saved=>{
       if (saved?.categories?.length) {
         setCategories(saved.categories);
         setActiveIds(saved.activeIds||[]);
-        // v2: reset columns if saved with old layout (system on right = stale)
-        const cols = saved.columns||{};
+        const cols = saved.columns || {};
+        // Stale check: system widgets landed on "right" (pre-v2)
         const stale = cols.weather==="right" || cols.stocks==="right" || cols.traffic==="right";
-        setColumns(stale ? defaultColumns(saved.categories) : cols);
+        // Migration: no "mid" assignments → old 2-col layout, move news from "right" → "mid"
+        const hasMid = Object.values(cols).some(v => v === "mid");
+        let finalCols;
+        if (stale) {
+          finalCols = defaultColumns(saved.categories);
+        } else if (!hasMid && Object.keys(cols).length > 0) {
+          finalCols = {};
+          for (const [id, c] of Object.entries(cols)) {
+            finalCols[id] = (c === "right" && id.startsWith("cat:")) ? "mid" : c;
+          }
+        } else {
+          finalCols = cols;
+        }
+        setColumns(finalCols);
         setApiKeys(saved.apiKeys||{});
       }
       setStorageReady(true);
     });
-    // Restore pin state
+
     api.pin?.get().then(p=>setPinned(!!p));
-    // Listen for pin changes from tray menu
     api.pin?.onChange(p=>setPinned(!!p));
-    // Restore opacity
     api.store.get('wp-opacity').then(v=>{ if (v) setOpacity(parseFloat(v)); });
-    // Fetch Windows accent color
+    api.store.get(SK_COLW).then(v=>{
+      if (v) try {
+        const p = JSON.parse(v);
+        setColWidths(p);
+        colWidthsRef.current = p;
+      } catch {}
+    });
+    api.store.get(SK_EXPANDED).then(v=>{
+      if (v) try { setExpandedMap(JSON.parse(v)); } catch {}
+    });
     window.electronAPI?.system?.accentColor().then(c=>{ if (c) setAccentColor(c); });
   },[]);
 
-  // Persist on change
+  // Persist main config on change
   useEffect(()=>{
     if (!storageReady || !categories) return;
     storageSave({ categories, activeIds, columns, apiKeys });
   },[categories, activeIds, columns, apiKeys, storageReady]);
 
-  // Build notification snippets when unread changes
+  // Persist expanded map on change
+  useEffect(()=>{
+    if (!storageReady) return;
+    api.store.set(SK_EXPANDED, JSON.stringify(expandedMap));
+  },[expandedMap, storageReady]);
+
+  // Build notification snippets
   useEffect(()=>{
     const items=[];
     Object.entries(unreadMap).forEach(([id,count])=>{
@@ -745,23 +863,16 @@ export default function App() {
     const defaults=[...cats.slice(0,2).map(c=>"cat:"+c.label),"weather","stocks","traffic"];
     setCategories(cats); setActiveIds(defaults); setColumns(defaultColumns(cats));
   }
-
-  function resetColumns() {
-    setColumns(defaultColumns(categories));
-  }
-
+  function resetColumns() { setColumns(defaultColumns(categories)); }
   function saveKey(service, key) {
     setApiKeys(p=>({...p,[service]:key}));
     setActiveIds(p=>p.includes(service)?p:[...p,service]);
   }
-
   function moveWidget(id, dir) { setColumns(p=>({...p,[id]:dir})); }
-
   function reset() {
     setCategories(null); setActiveIds([]); setColumns({}); setApiKeys({});
     setShowMgr(false); storageSave({});
   }
-
   async function togglePin() {
     const next = await api.pin?.toggle();
     setPinned(!!next);
@@ -769,9 +880,10 @@ export default function App() {
   }
 
   const loaded = !!categories;
-  const leftIds  = activeIds.filter(id=>(columns[id]||"left")==="left");
-  const rightIds = activeIds.filter(id=>(columns[id]||"right")==="right");
-  const newsIds  = activeIds.filter(id=>id.startsWith("cat:"));
+  const leftIds  = activeIds.filter(id => getColFor(id) === "left");
+  const midIds   = activeIds.filter(id => getColFor(id) === "mid");
+  const rightIds = activeIds.filter(id => getColFor(id) === "right");
+  const newsIds  = activeIds.filter(id => id.startsWith("cat:"));
 
   const onUnread = useCallback((id, count)=>{
     setUnreadMap(p=>({...p,[id]:count}));
@@ -782,6 +894,29 @@ export default function App() {
       <div style={{fontSize:11,color:"#333"}}>Loading…</div>
     </div>
   );
+
+  // Shared WidgetCard renderer for a column
+  function renderCol(ids, colName) {
+    return ids.map((id, i) => (
+      <div key={id} className="wi" style={{animationDelay:(i*25)+"ms"}}>
+        <WidgetCard id={id} categories={categories||[]} apiKeys={apiKeys} onSaveKey={saveKey}
+          col={colName}
+          onMoveLeft={()=>moveWidget(id,"left")}
+          onMoveMid={()=>moveWidget(id,"mid")}
+          onMoveRight={()=>moveWidget(id,"right")}
+          colorIdx={newsIds.indexOf(id)}
+          onUnreadChange={count=>onUnread(id,count)}
+          onOpenUrl={openBrowser}
+          expanded={getExpanded(id)}
+          onToggle={()=>toggleExpanded(id)}
+          isDragOver={dragOverId === id}
+          onDragStart={()=>setDragId(id)}
+          onDragOver={()=>{ if (dragOverId !== id) setDragOverId(id); }}
+          onDrop={()=>{ if (dragId && dragId !== id) reorderWidget(dragId, id); }}
+          onDragEnd={()=>{ setDragId(null); setDragOverId(null); }} />
+      </div>
+    ));
+  }
 
   return (
     <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans',sans-serif",background:"transparent",overflow:"hidden"}}>
@@ -813,6 +948,15 @@ export default function App() {
         .resize-handle:hover,.resize-handle:active{
           background:rgba(79,142,247,0.25);
         }
+        .col-divider{
+          width:4px;flex-shrink:0;cursor:col-resize;
+          background:rgba(255,255,255,0.03);
+          transition:background 0.15s;
+          user-select:none;
+        }
+        .col-divider:hover{
+          background:rgba(79,142,247,0.2);
+        }
       `}</style>
 
       {/* ── Sliding wrapper ── */}
@@ -827,17 +971,19 @@ export default function App() {
           transition:"width 280ms cubic-bezier(0.32,0,0.16,1)"}}>
 
           <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
-            {/* Header */}
+
+            {/* ── Header ── */}
             <div style={{padding:"18px 20px 10px",borderBottom:"1px solid rgba(255,255,255,0.05)",display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexShrink:0}}>
               <div>
-                <div style={{fontSize:28,fontWeight:300,color:"#f0f0f0",letterSpacing:-1,lineHeight:1,fontFamily:"'DM Mono',monospace"}}>
-                  {String(time.getHours()).padStart(2,"0")}:{String(time.getMinutes()).padStart(2,"0")}
+                <div style={{fontSize:28,fontWeight:300,color:"#f0f0f0",letterSpacing:-1,lineHeight:1,fontFamily:"'DM Mono',monospace",display:"flex",alignItems:"baseline",gap:2}}>
+                  <span>{String(time.getHours()).padStart(2,"0")}:{String(time.getMinutes()).padStart(2,"0")}</span>
+                  <span style={{fontSize:16,color:"#555",letterSpacing:0}}>{String(time.getSeconds()).padStart(2,"0")}</span>
                 </div>
-                <div style={{fontSize:10,color:"#222",marginTop:4,textTransform:"capitalize"}}>
+                <div style={{fontSize:10,color:"#666",marginTop:4,textTransform:"capitalize"}}>
                   {time.toLocaleDateString("fr-CA",{weekday:"long",month:"long",day:"numeric"})}
                 </div>
                 {tickerVisible && snippet && (
-                  <div key={snippet} style={{fontSize:10,color:"#3a3a50",marginTop:6,fontFamily:"DM Mono,monospace",animation:"ticker 0.3s ease both"}}>
+                  <div key={snippet} style={{fontSize:10,color:"#666",marginTop:6,fontFamily:"DM Mono,monospace",animation:"ticker 0.3s ease both"}}>
                     {totalUnread > 0 && <span style={{color:"#4f8ef7",marginRight:6}}>●</span>}{snippet}
                   </div>
                 )}
@@ -849,59 +995,61 @@ export default function App() {
                   📌
                 </button>
                 {loaded&&<button onClick={()=>setShowMgr(true)} title="Manage widgets"
-                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#2a2a30",fontSize:15,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⚙</button>}
+                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#777",fontSize:15,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⚙</button>}
                 {loaded&&<button onClick={resetColumns} title="Reset column layout"
-                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#1c1c22",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⇄</button>}
+                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#777",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⇄</button>}
                 <button onClick={()=>setShowSettings(true)} title="Settings"
-                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#1c1c22",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>≡</button>
+                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#777",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>≡</button>
                 {loaded&&<button onClick={reset} title="Reset / new OPML"
-                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#1c1c22",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>↺</button>}
+                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#777",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>↺</button>}
               </div>
             </div>
 
-            {/* Body */}
+            {/* ── Body ── */}
             {!loaded && <OPMLDrop onLoaded={handleOPML} />}
             {loaded && (
-              <div style={{flex:1,overflow:"hidden",display:"flex",gap:0}}>
-                <div style={{flex:"0 0 auto",width:280,maxWidth:280,overflowY:"auto",padding:"12px 8px 12px 12px",display:"flex",flexDirection:"column",gap:8,borderRight:"1px solid rgba(255,255,255,0.04)"}}>
-                  <div style={{fontSize:9,color:"#1e1e28",textTransform:"uppercase",letterSpacing:1.5,fontFamily:"DM Mono,monospace",marginBottom:2,paddingLeft:2}}>Left</div>
-                  {leftIds.map((id,i)=>(
-                    <div key={id} className="wi" style={{animationDelay:(i*25)+"ms"}}>
-                      <WidgetCard id={id} categories={categories||[]} apiKeys={apiKeys} onSaveKey={saveKey}
-                        col="left" onMoveLeft={()=>moveWidget(id,"left")} onMoveRight={()=>moveWidget(id,"right")}
-                        colorIdx={newsIds.indexOf(id)} onUnreadChange={count=>onUnread(id,count)} onOpenUrl={openBrowser}/>
-                    </div>
-                  ))}
-                  {leftIds.length===0&&<div style={{textAlign:"center",color:"#1e1e28",fontSize:11,marginTop:40}}>⬅ Move widgets here</div>}
+              <div style={{flex:1,overflow:"hidden",display:"flex"}}>
+
+                {/* Column 1 */}
+                <div style={{flexShrink:0,width:colWidths.left,overflowY:"auto",padding:"10px 6px 12px 10px",display:"flex",flexDirection:"column",gap:8}}>
+                  {renderCol(leftIds, "left")}
+                  {leftIds.length===0&&<div style={{textAlign:"center",color:"#555",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
                 </div>
-                <div style={{flex:1,overflowY:"auto",padding:"12px 12px 12px 8px",display:"flex",flexDirection:"column",gap:8}}>
-                  <div style={{fontSize:9,color:"#1e1e28",textTransform:"uppercase",letterSpacing:1.5,fontFamily:"DM Mono,monospace",marginBottom:2,paddingLeft:2}}>Right</div>
-                  {rightIds.map((id,i)=>(
-                    <div key={id} className="wi" style={{animationDelay:(i*25)+"ms"}}>
-                      <WidgetCard id={id} categories={categories||[]} apiKeys={apiKeys} onSaveKey={saveKey}
-                        col="right" onMoveLeft={()=>moveWidget(id,"left")} onMoveRight={()=>moveWidget(id,"right")}
-                        colorIdx={newsIds.indexOf(id)} onUnreadChange={count=>onUnread(id,count)} onOpenUrl={openBrowser}/>
-                    </div>
-                  ))}
-                  {rightIds.length===0&&<div style={{textAlign:"center",color:"#1e1e28",fontSize:11,marginTop:40}}>➡ Move widgets here</div>}
+
+                {/* Divider col 1 | col 2 */}
+                <div className="col-divider" onMouseDown={onColDividerDown('left')} />
+
+                {/* Column 2 */}
+                <div style={{flexShrink:0,width:colWidths.mid,overflowY:"auto",padding:"10px 6px 12px 6px",display:"flex",flexDirection:"column",gap:8}}>
+                  {renderCol(midIds, "mid")}
+                  {midIds.length===0&&<div style={{textAlign:"center",color:"#555",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
+                </div>
+
+                {/* Divider col 2 | col 3 */}
+                <div className="col-divider" onMouseDown={onColDividerDown('mid')} />
+
+                {/* Column 3 */}
+                <div style={{flex:1,overflowY:"auto",padding:"10px 10px 12px 6px",display:"flex",flexDirection:"column",gap:8}}>
+                  {renderCol(rightIds, "right")}
+                  {rightIds.length===0&&<div style={{textAlign:"center",color:"#555",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
                 </div>
               </div>
             )}
 
-            {/* Footer */}
+            {/* ── Footer ── */}
             {loaded&&(
               <div style={{padding:"8px 16px",borderTop:"1px solid rgba(255,255,255,0.04)",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
-                <span style={{fontSize:9,color:"#1a1a22",fontFamily:"DM Mono,monospace"}}>{categories.length} categories · OPML</span>
-                <button onClick={()=>setShowMgr(true)} style={{background:"none",border:"1px solid rgba(255,255,255,0.06)",color:"#282832",fontSize:10,padding:"3px 8px",borderRadius:5,cursor:"pointer"}}>+ Add widget</button>
+                <span style={{fontSize:9,color:"#555",fontFamily:"DM Mono,monospace"}}>{categories.length} categories · OPML</span>
+                <button onClick={()=>setShowMgr(true)} style={{background:"none",border:"1px solid rgba(255,255,255,0.1)",color:"#888",fontSize:10,padding:"3px 8px",borderRadius:5,cursor:"pointer"}}>+ Add widget</button>
               </div>
             )}
           </div>
 
-          {/* Resize handle */}
+          {/* Resize handle (panel width) */}
           <div className="resize-handle" onMouseDown={onResizeMouseDown} />
-        </div>{/* end panel content */}
+        </div>
 
-      </div>{/* end panel-wrap */}
+      </div>
 
       {showMgr&&loaded&&<CategoryManager categories={categories} activeIds={activeIds} setActiveIds={setActiveIds} onClose={()=>setShowMgr(false)} onReset={reset}/>}
       {showSettings&&<SettingsModal onClose={()=>setShowSettings(false)} opacity={opacity} onOpacityChange={v=>{ setOpacity(v); api.store.set('wp-opacity', String(v)); }}/>}
