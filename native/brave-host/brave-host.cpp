@@ -2,10 +2,11 @@
 // Launches Brave once, reparents it into braveWin, then navigates via CDP.
 //
 // Protocol (newline-delimited JSON):
-//   Electron → brave-host  {"type":"open","hwnd":N,"url":"...","y":41,"w":900,"h":H}
+//   Electron → brave-host  {"type":"open","hwnd":N,"url":"...","x":1052,"y":41,"w":900,"h":H}
 //   Electron → brave-host  {"type":"navigate","url":"..."}
 //   Electron → brave-host  {"type":"resize","w":900,"h":H}
 //   Electron → brave-host  {"type":"close"}
+//   Electron → brave-host  {"type":"detach"}
 //   brave-host → Electron  {"type":"ready"}
 //   brave-host → Electron  {"type":"error","msg":"..."}
 
@@ -249,7 +250,7 @@ static bool NavigateViaCDP(const std::string& url) {
 static PROCESS_INFORMATION g_pi   = {};
 static HWND                g_brave = NULL;
 static HWND                g_parent = NULL;
-static int                 g_y = 41, g_w = 900, g_h = 800;
+static int                 g_x = 0, g_y = 41, g_w = 900, g_h = 800;
 static std::wstring        g_bravePath;
 static bool                g_launched = false; // Brave launched and reparented
 
@@ -308,7 +309,7 @@ static bool ReparentBrave(const std::vector<HWND>& snapBefore) {
     exStyle &= ~(WS_EX_APPWINDOW | WS_EX_OVERLAPPEDWINDOW);
     SetWindowLongPtrW(g_brave, GWL_EXSTYLE, exStyle);
     SetParent(g_brave, g_parent);
-    SetWindowPos(g_brave, HWND_TOP, 0, g_y, g_w, g_h - g_y,
+    SetWindowPos(g_brave, HWND_TOP, g_x, g_y, g_w, g_h - g_y,
                  SWP_SHOWWINDOW | SWP_FRAMECHANGED);
     g_launched = true;
     return true;
@@ -330,6 +331,7 @@ static void HandleMessage(const std::string& line) {
 
     if (type == "open") {
         g_parent = reinterpret_cast<HWND>((ULONG_PTR)jnum(line, "hwnd"));
+        g_x = (int)jnum(line, "x");
         g_y = (int)jnum(line, "y");
         g_w = (int)jnum(line, "w");
         g_h = (int)jnum(line, "h");
@@ -367,10 +369,32 @@ static void HandleMessage(const std::string& line) {
         g_w = (int)jnum(line, "w");
         g_h = (int)jnum(line, "h");
         if (g_brave && IsWindow(g_brave))
-            SetWindowPos(g_brave, NULL, 0, g_y, g_w, g_h - g_y, SWP_NOZORDER | SWP_NOACTIVATE);
+            SetWindowPos(g_brave, NULL, g_x, g_y, g_w, g_h - g_y, SWP_NOZORDER | SWP_NOACTIVATE);
     }
     else if (type == "close") {
         KillBrave();
+    }
+    else if (type == "detach") {
+        // User opened the URL in the external browser — keep the Brave process
+        // alive so the new tab survives; just unparent the embedded window and
+        // release our handle without terminating the process.
+        if (g_brave && IsWindow(g_brave)) {
+            LONG_PTR style = GetWindowLongPtrW(g_brave, GWL_STYLE);
+            style &= ~WS_CHILD;
+            style |= WS_OVERLAPPEDWINDOW;
+            SetWindowLongPtrW(g_brave, GWL_STYLE, style);
+            LONG_PTR exStyle = GetWindowLongPtrW(g_brave, GWL_EXSTYLE);
+            exStyle |= WS_EX_APPWINDOW;
+            SetWindowLongPtrW(g_brave, GWL_EXSTYLE, exStyle);
+            SetParent(g_brave, NULL);
+            ShowWindow(g_brave, SW_HIDE);  // hide the old app-mode window
+            SetWindowPos(g_brave, NULL, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        }
+        g_brave    = NULL;
+        g_launched = false;
+        // Release handles without killing — process keeps running for the external tab
+        if (g_pi.hProcess) { CloseHandle(g_pi.hProcess); CloseHandle(g_pi.hThread); g_pi = {}; }
     }
 }
 

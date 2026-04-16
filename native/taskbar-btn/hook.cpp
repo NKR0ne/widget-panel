@@ -208,7 +208,11 @@ static LRESULT CALLBACK LowLevelMouseProc(int nCode, WPARAM wParam, LPARAM lPara
         bool inPanel = PtInHwnd(pt, g_panelHwnd);
         bool inBrave = PtInHwnd(pt, g_braveHwnd);
         bool onBtn   = (WindowFromPoint(pt) == g_hwnd);
-        if (!inPanel && !inBrave && !onBtn)
+        // Only fire if we actually know where the panel is.
+        // g_panelHwnd is zero until the first "hwnd" IPC message arrives, and
+        // is reset to zero whenever the panel hides.  During that window the
+        // check would incorrectly classify every click as "outside".
+        if (!inPanel && !inBrave && !onBtn && g_panelHwnd != 0)
             SendMsg(R"({"type":"clickoutside"})");
     }
     return CallNextHookEx(g_mouseHook, nCode, wParam, lParam);

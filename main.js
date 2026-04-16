@@ -20,6 +20,8 @@ let lastToggleTime   = 0
 let isHiding         = false  // prevents double-hide (blur + toggle arriving together)
 let coldStart        = true   // true until first successful IPC connection
 let rendererReady    = false  // true once renderer has registered its panel listeners
+let panelOnlyWidth   = 0      // panel width before browser was embedded
+let browserEmbedded  = false  // whether brave window is currently embedded in win
 
 // ── Single instance lock ──────────────────────────────────────────────────────
 const gotLock = app.requestSingleInstanceLock()
@@ -47,6 +49,7 @@ function disableNativeWidgets() {
 
 let pipeServer = null
 let pipeSocket = null   // one client (the taskbar-btn process)
+let lastBrowserOpenTime = 0   // debounce blur after opening a browser link
 
 function broadcastToHelper(obj) {
   if (!pipeSocket || pipeSocket.destroyed) return
@@ -111,15 +114,16 @@ function createPipeServer() {
 }
 
 // Initiate slide-out: renderer animates then calls panel-hide-done → win.hide()
-// opts.keepBrave = true → don't close the browser window (user navigated to a 2nd article)
 function hidePanel(opts = {}) {
   if (!win || !win.isVisible() || isHiding) return
   isHiding = true
-  if (!opts.keepBrave) {
-    closeBraveWin()
-  } else if (braveWin && !braveWin.isDestroyed()) {
-    // Browser stays visible; give it focus so user can interact immediately
-    setTimeout(() => { if (braveWin && !braveWin.isDestroyed()) braveWin.focus() }, 120)
+  if (browserEmbedded) {
+    // Kill brave immediately so the native child doesn't linger during the slide animation
+    sendToBrave({ type: 'close' })
+    browserEmbedded = false
+    win.webContents.send('browser-pane-hide')
+    const { workArea } = screen.getPrimaryDisplay()
+    win.setBounds({ x: 0, y: workArea.y, width: panelOnlyWidth, height: workArea.height })
   }
   win.webContents.send('panel-hide')
   // Fallback: if renderer doesn't respond in 600ms, hide anyway
@@ -138,16 +142,14 @@ function notifyHelperState(visible) {
   broadcastToHelper({ type: 'state', visible })
 }
 
-// Send panel+brave HWNDs to the DLL so the mouse hook can call GetWindowRect directly.
+// Send panel HWND to the DLL so the mouse hook can call GetWindowRect directly.
+// Brave is now a child of win, so win's rect covers the full panel+browser area.
 // Win32 GetWindowRect always returns physical coords — no DPI math needed.
 function notifyHelperHwnds() {
   if (!win || win.isDestroyed()) return
   const panelHwnd = Number(win.getNativeWindowHandle().readBigInt64LE(0))
-  const braveHwnd = (braveWin && !braveWin.isDestroyed())
-    ? Number(braveWin.getNativeWindowHandle().readBigInt64LE(0))
-    : 0
-  log('[notifyHelperHwnds] panel=', panelHwnd, 'brave=', braveHwnd)
-  broadcastToHelper({ type: 'hwnd', panel: panelHwnd, brave: braveHwnd })
+  log('[notifyHelperHwnds] panel=', panelHwnd)
+  broadcastToHelper({ type: 'hwnd', panel: panelHwnd, brave: 0 })
 }
 
 // ── Spawn taskbar-btn.exe ─────────────────────────────────────────────────────
@@ -177,7 +179,8 @@ function createWindow() {
     x:               -panelW,            // start off-screen; animation slides it in
     y:               workArea.y,
     frame:           false,
-    transparent:     true,
+    transparent:     false,             // must be false — WS_EX_LAYERED is incompatible with SetParent + DXGI
+    backgroundColor: '#0a0a0c',
     alwaysOnTop:     true,
     skipTaskbar:     true,
     resizable:       false,            // we handle resize ourselves via drag handle
@@ -216,14 +219,17 @@ function createWindow() {
   // Debounce: ignore blur within 300ms of a toggle to avoid the W button
   // click briefly focusing Explorer and immediately hiding the panel.
   win.on('blur', () => {
-    const dt = Date.now() - lastToggleTime
-    log('[blur] isPinned=', isPinned, 'isVisible=', win.isVisible(), 'dt=', dt)
+    const dt        = Date.now() - lastToggleTime
+    const dtBrowser = Date.now() - lastBrowserOpenTime
+    log('[blur] isPinned=', isPinned, 'isVisible=', win.isVisible(), 'dt=', dt, 'dtBrowser=', dtBrowser)
     if (!isPinned && win.isVisible()) {
-      if (dt < 200) { log('[blur] debounced'); return }
-      // Don't hide if focus moved to the adjacent Brave window
-      if (braveWin && !braveWin.isDestroyed() && braveWin.isFocused()) {
-        log('[blur] braveWin focused — skip hide'); return
-      }
+      if (dt < 200) { log('[blur] debounced (toggle)'); return }
+      // Debounce for 500ms after a browser-open — the Win32 SetParent can
+      // fire blur before the child window has finished attaching.
+      if (dtBrowser < 500) { log('[blur] debounced (browser-open)'); return }
+      // Brave is a child of win — interacting with its content causes blur on win
+      // because the HWND focus moves to the child. Skip hide when browser is embedded.
+      if (browserEmbedded) { log('[blur] browserEmbedded — skip hide'); return }
       log('[blur] → hidePanel()')
       hidePanel()
     }
@@ -232,7 +238,10 @@ function createWindow() {
   win.on('show', () => {
     lastToggleTime = Date.now()
     const { workArea } = screen.getPrimaryDisplay()
-    win.setBounds({ x: 0, y: workArea.y, width: win.getSize()[0], height: workArea.height })
+    // When browser is embedded, win is already at full width — preserve it.
+    // Otherwise restore to panel-only size.
+    const targetW = browserEmbedded ? win.getSize()[0] : (panelOnlyWidth || win.getSize()[0])
+    win.setBounds({ x: 0, y: workArea.y, width: targetW, height: workArea.height })
     // Delay so the strip WM_LBUTTONDOWN passes through the hook before g_panelOn=true.
     setTimeout(() => { notifyHelperState(true); notifyHelperHwnds() }, 350)
     log('[win] show — rendererReady=', rendererReady)
@@ -300,7 +309,7 @@ let resizeStartX    = 0
 let resizeStartW    = 0
 
 ipcMain.on('panel-resize-start', (_e, startX, startW) => {
-  if (!win) return
+  if (!win || browserEmbedded) return   // don't resize panel while browser is embedded
   resizeStartX = startX
   resizeStartW = startW
   if (resizeInterval) clearInterval(resizeInterval)
@@ -333,19 +342,17 @@ ipcMain.on('panel-renderer-ready', () => {
 // ── Brave host TCP server (port 47322) ────────────────────────────────────────
 let braveServer    = null
 let braveSocket    = null
-let braveWin       = null
 let currentUrl     = ''
 let navLoadTimer   = null   // auto-clears the loading spinner if brave-host never acks
-const BRAVE_W   = 900
 const TOOLBAR_H = 41
 
 // Clear the brave-loading spinner after a timeout in case brave-host doesn't
-// send 'ready' after navigation (current brave-host only sends it on first connect).
+// send 'ready' after navigation.
 function armNavLoadTimer() {
   if (navLoadTimer) clearTimeout(navLoadTimer)
   navLoadTimer = setTimeout(() => {
     navLoadTimer = null
-    if (braveWin && !braveWin.isDestroyed()) braveWin.webContents.send('brave-loading', false)
+    if (win && !win.isDestroyed() && browserEmbedded) win.webContents.send('brave-loading', false)
   }, 5000)
 }
 
@@ -372,10 +379,10 @@ function createBraveServer() {
       chunk.toString().split('\n').filter(l => l.trim()).forEach(line => {
         try {
           const msg = JSON.parse(line)
-          if (msg.type === 'ready' && braveWin) {
+          if (msg.type === 'ready' && browserEmbedded) {
             if (navLoadTimer) { clearTimeout(navLoadTimer); navLoadTimer = null }
-            braveWin.webContents.send('brave-loading', false)
-            braveWin.webContents.send('brave-url', currentUrl)
+            win.webContents.send('brave-loading', false)
+            win.webContents.send('brave-url', currentUrl)
             // Brave may steal focus when reparented — restore focus to panel
             if (win && win.isVisible()) setTimeout(() => win.focus(), 150)
           }
@@ -400,89 +407,87 @@ function spawnBraveHost() {
   app.on('before-quit', () => { try { child.kill() } catch {} })
 }
 
-function openBraveWin(url) {
-  const { workArea } = screen.getPrimaryDisplay()
-  const panelW = win ? win.getSize()[0] : 720
-  const x = panelW
+function openBraveInPanel(url) {
+  const { workArea, bounds, scaleFactor: sf } = screen.getPrimaryDisplay()
+  const panelW = win.getSize()[0]
+  if (!browserEmbedded) panelOnlyWidth = panelW
 
-  if (!braveWin) {
-    braveWin = new BrowserWindow({
-      width:       BRAVE_W,
-      height:      workArea.height,
-      x,
-      y:           workArea.y,
-      frame:       false,
-      transparent: false,
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      resizable:   false,
-      show:        false,
-      backgroundColor: '#18181c',
-      webPreferences: {
-        preload:          path.join(__dirname, 'preload-brave.js'),
-        contextIsolation: true,
-        nodeIntegration:  false,
-      },
-    })
-    braveWin.loadFile(path.join(__dirname, 'brave-toolbar.html'))
-    braveWin.on('closed', () => { braveWin = null })
-  } else {
-    braveWin.setBounds({ x, y: workArea.y, width: BRAVE_W, height: workArea.height })
-  }
+  // Compute brave width in physical pixels to avoid DPI rounding overflow on right edge
+  const physPanelRight  = Math.round(panelW * sf)
+  const physScreenRight = Math.round(bounds.width * sf)
+  const braveW = Math.floor((physScreenRight - physPanelRight - 2) / sf)
+  const totalW = panelW + braveW
+  const braveH = workArea.height
 
   currentUrl = url
-  braveWin.webContents.send('brave-loading', true)
-  braveWin.webContents.send('brave-url', url)
-  braveWin.showInactive()
-  if (win && win.isVisible()) notifyHelperHwnds()  // update exclusion zone to include brave
+  lastBrowserOpenTime = Date.now()
 
-  // Tell brave-host to open/navigate
-  const hwnd = braveWin.getNativeWindowHandle().readBigInt64LE(0)
-  sendToBrave({ type: 'open', hwnd: Number(hwnd), url, y: TOOLBAR_H, w: BRAVE_W, h: workArea.height })
+  // Expand win to cover full screen width (panel + browser area)
+  win.setBounds({ x: 0, y: workArea.y, width: totalW, height: braveH })
+  browserEmbedded = true
+
+  win.webContents.send('browser-pane-show', { url, braveX: panelW })
+  win.webContents.send('brave-loading', true)
+  win.webContents.send('brave-url', url)
+
+  // Tell brave-host to launch/reparent Brave as a child of win at offset (panelW, TOOLBAR_H)
+  const panelHwnd = Number(win.getNativeWindowHandle().readBigInt64LE(0))
+  sendToBrave({ type: 'open', hwnd: panelHwnd, x: panelW, y: TOOLBAR_H, w: braveW, h: braveH, url })
+  notifyHelperHwnds()
 }
 
-function closeBraveWin() {
+function closeBraveInPanel() {
   sendToBrave({ type: 'close' })
-  if (braveWin) { braveWin.hide(); braveWin.destroy(); braveWin = null }
+  browserEmbedded = false
   currentUrl = ''
-  if (win && win.isVisible()) notifyHelperHwnds()  // shrink exclusion zone back to panel only
+  win.webContents.send('browser-pane-hide')
+  const { workArea } = screen.getPrimaryDisplay()
+  if (panelOnlyWidth > 0) win.setBounds({ x: 0, y: workArea.y, width: panelOnlyWidth, height: workArea.height })
+  notifyHelperHwnds()
 }
 
 ipcMain.on('browser-open', (_e, url) => {
-  log('[browser-open] url=', url, 'braveWin=', !!(braveWin && !braveWin.isDestroyed()), 'socket=', !!braveSocket)
-  const alreadyOpen = braveWin && !braveWin.isDestroyed()
-  if (alreadyOpen) {
-    // Navigate existing window to the new article
+  log('[browser-open] url=', url, 'browserEmbedded=', browserEmbedded, 'socket=', !!braveSocket)
+  if (browserEmbedded) {
+    // Navigate existing embedded window to the new article
     currentUrl = url
-    braveWin.webContents.send('brave-loading', true)
-    braveWin.webContents.send('brave-url', url)
+    win.webContents.send('brave-loading', true)
+    win.webContents.send('brave-url', url)
     sendToBrave({ type: 'navigate', url })
     armNavLoadTimer()
-    // When not pinned: retract panel but keep browser visible so the article
-    // stays readable — second article click = "open and dismiss panel"
-    if (!isPinned && win && win.isVisible()) {
-      log('[browser-open] not pinned + already open → hidePanel(keepBrave)')
-      hidePanel({ keepBrave: true })
-    }
   } else {
-    openBraveWin(url)
+    openBraveInPanel(url)
   }
 })
 
 ipcMain.on('browser-navigate', (_e, url) => {
-  if (!braveWin || braveWin.isDestroyed()) { openBraveWin(url); return }
+  if (!browserEmbedded) { openBraveInPanel(url); return }
   currentUrl = url
-  braveWin.webContents.send('brave-loading', true)
-  braveWin.webContents.send('brave-url', url)
+  win.webContents.send('brave-loading', true)
+  win.webContents.send('brave-url', url)
   sendToBrave({ type: 'navigate', url })
   armNavLoadTimer()
 })
 
-ipcMain.on('browser-close', () => { closeBraveWin() })
+ipcMain.on('browser-close', () => { closeBraveInPanel() })
 
-// Toolbar buttons (from preload-brave.js)
-ipcMain.on('brave-close',         () => { closeBraveWin() })
-ipcMain.on('brave-open-external', () => { if (currentUrl) shell.openExternal(currentUrl) })
+// Toolbar buttons (from preload.js browser object)
+ipcMain.on('brave-close',         () => { closeBraveInPanel() })
+ipcMain.on('brave-open-external', () => {
+  if (!currentUrl) return
+  shell.openExternal(currentUrl)
+  // Send "detach" so brave-host unparents the embedded window and releases the
+  // process handle WITHOUT killing Brave — the externally-opened tab lives on.
+  sendToBrave({ type: 'detach' })
+  browserEmbedded = false
+  win.webContents.send('browser-pane-hide')
+  const { workArea } = screen.getPrimaryDisplay()
+  if (panelOnlyWidth > 0) win.setBounds({ x: 0, y: workArea.y, width: panelOnlyWidth, height: workArea.height })
+  currentUrl = ''
+  notifyHelperHwnds()
+  // Slide the panel away after detaching
+  setTimeout(() => hidePanel(), 300)
+})
 
 // ── Write launch path for the DLL to find us ─────────────────────────────────
 // The DLL reads native/bin/panel.path and ShellExecutes it when clicked

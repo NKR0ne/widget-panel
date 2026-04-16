@@ -169,7 +169,7 @@ const C = {
   badge: { fontSize:10, padding:"1px 6px", borderRadius:4, fontWeight:500 },
   chev:  { color:"#666", fontSize:16, lineHeight:1, display:"inline-block", flexShrink:0, transition:"transform 0.2s" },
   inp:   { background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.09)", borderRadius:8, padding:"7px 10px", color:"#ccc", fontSize:12, outline:"none", fontFamily:"'DM Sans',sans-serif" },
-  btn:   { background:"rgba(79,142,247,0.15)", border:"1px solid rgba(79,142,247,0.25)", borderRadius:8, color:"#4f8ef7", fontSize:12, padding:"7px 14px", cursor:"pointer", fontWeight:500, fontFamily:"'DM Sans',sans-serif" },
+  btn:   { background:"color-mix(in srgb, var(--accent) 15%, transparent)", border:"1px solid color-mix(in srgb, var(--accent) 30%, transparent)", borderRadius:8, color:"var(--accent)", fontSize:12, padding:"7px 14px", cursor:"pointer", fontWeight:500, fontFamily:"'DM Sans',sans-serif" },
   skel:  w=>({ height:10, borderRadius:4, background:"rgba(255,255,255,0.05)", width:w+"%", animation:"pulse 1.5s ease infinite", marginBottom:8 }),
 };
 
@@ -228,13 +228,18 @@ function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
 
   useEffect(()=>{
     if (!category.feeds?.length){setItems(mockForCategory(category.label));setDemo(true);setStatus("ok");return;}
-    setStatus("loading");
-    Promise.all(category.feeds.slice(0,2).map(f=>fetchRSS(f.url)))
-      .then(results=>{
-        const live=results.flat().filter(Boolean).filter((v,i,a)=>a.findIndex(x=>x.id===v.id)===i).slice(0,7);
-        if(live.length){setItems(live);setDemo(false);setStatus("ok");}
-        else{setItems(mockForCategory(category.label));setDemo(true);setStatus("ok");}
-      }).catch(()=>{setItems(mockForCategory(category.label));setDemo(true);setStatus("ok");});
+    const doFetch = () => {
+      setStatus("loading");
+      Promise.all(category.feeds.slice(0,2).map(f=>fetchRSS(f.url)))
+        .then(results=>{
+          const live=results.flat().filter(Boolean).filter((v,i,a)=>a.findIndex(x=>x.id===v.id)===i).slice(0,7);
+          if(live.length){setItems(live);setDemo(false);setStatus("ok");}
+          else{setItems(mockForCategory(category.label));setDemo(true);setStatus("ok");}
+        }).catch(()=>{setItems(mockForCategory(category.label));setDemo(true);setStatus("ok");});
+    };
+    doFetch();
+    const t = setInterval(doFetch, 30 * 60 * 1000); // refresh every 30 min
+    return () => clearInterval(t);
   },[category.label]);
 
   const badgeEl=status==="loading"
@@ -283,9 +288,14 @@ function WeatherWidget() {
       +"&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m"
       +"&hourly=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min"
       +"&timezone=America%2FToronto&forecast_days=5";
-    fetch(url).then(r=>r.ok?r.json():Promise.reject()).then(d=>{setWx(d);setDemo(false);setStatus("ok");})
-      .catch(()=>fetch(PROXY1+encodeURIComponent(url)).then(r=>r.json()).then(d=>{setWx(d);setDemo(false);setStatus("ok");})
-        .catch(()=>{setWx(MOCK_WX);setDemo(true);setStatus("ok");}));
+    const doFetch = () => {
+      fetch(url).then(r=>r.ok?r.json():Promise.reject()).then(d=>{setWx(d);setDemo(false);setStatus("ok");})
+        .catch(()=>fetch(PROXY1+encodeURIComponent(url)).then(r=>r.json()).then(d=>{setWx(d);setDemo(false);setStatus("ok");})
+          .catch(()=>{setWx(MOCK_WX);setDemo(true);setStatus("ok");}));
+    };
+    doFetch();
+    const t = setInterval(doFetch, 30 * 60 * 1000); // refresh every 30 min
+    return () => clearInterval(t);
   },[]);
 
   const cur=wx?.current, daily=wx?.daily, hourly=wx?.hourly;
@@ -360,17 +370,22 @@ function StocksWidget({ apiKey, onSaveKey }) {
   const [draft,setDraft]=useState("");
 
   useEffect(()=>{
-    if (apiKey) {
-      setStatus("loading");
-      Promise.all(TICKERS.map(sym=>fetch(FINNHUB+"/quote?symbol="+sym+"&token="+apiKey).then(r=>r.json()).then(d=>[sym,d]).catch(()=>[sym,null])))
-        .then(res=>{
-          const m={};res.forEach(([sym,d])=>{if(d?.c)m[sym]=d;});
-          if(Object.keys(m).length){setQuotes(m);setSource("finnhub");setStatus("ok");return;}
-          return fetchYahoo();
-        }).catch(fetchYahoo);
-    } else {
-      fetchYahoo();
-    }
+    const doFetch = () => {
+      if (apiKey) {
+        setStatus("loading");
+        Promise.all(TICKERS.map(sym=>fetch(FINNHUB+"/quote?symbol="+sym+"&token="+apiKey).then(r=>r.json()).then(d=>[sym,d]).catch(()=>[sym,null])))
+          .then(res=>{
+            const m={};res.forEach(([sym,d])=>{if(d?.c)m[sym]=d;});
+            if(Object.keys(m).length){setQuotes(m);setSource("finnhub");setStatus("ok");return;}
+            return fetchYahoo();
+          }).catch(fetchYahoo);
+      } else {
+        fetchYahoo();
+      }
+    };
+    doFetch();
+    const t = setInterval(doFetch, 5 * 60 * 1000); // refresh every 5 min
+    return () => clearInterval(t);
   },[apiKey]);
 
   function fetchYahoo() {
@@ -434,10 +449,15 @@ function TrafficWidget({ apiKey, onSaveKey }) {
 
   useEffect(()=>{
     if(!apiKey){setStatus("nokey");return;}
-    setStatus("loading");
-    fetch(TOMTOM+"?point=46.7900,-71.2900&key="+apiKey).then(r=>r.json())
-      .then(d=>{if(d.flowSegmentData){setFlow(d.flowSegmentData);setDemo(false);setStatus("ok");}else{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");}})
-      .catch(()=>{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");});
+    const doFetch = () => {
+      setStatus("loading");
+      fetch(TOMTOM+"?point=46.7900,-71.2900&key="+apiKey).then(r=>r.json())
+        .then(d=>{if(d.flowSegmentData){setFlow(d.flowSegmentData);setDemo(false);setStatus("ok");}else{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");}})
+        .catch(()=>{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");});
+    };
+    doFetch();
+    const t = setInterval(doFetch, 5 * 60 * 1000); // refresh every 5 min
+    return () => clearInterval(t);
   },[apiKey]);
 
   const ratio=flow?Math.min(1,flow.currentSpeed/flow.freeFlowSpeed):0;
@@ -515,7 +535,7 @@ function OPMLDrop({ onLoaded }) {
       <div onDragOver={e=>{e.preventDefault();setDragging(true);}} onDragLeave={()=>setDragging(false)}
         onDrop={e=>{e.preventDefault();setDragging(false);processFile(e.dataTransfer.files[0]);}}
         onClick={()=>fileRef.current?.click()}
-        style={{border:"1px dashed "+(dragging?"#4f8ef7":"rgba(255,255,255,0.1)"),borderRadius:12,padding:"28px 20px",textAlign:"center",cursor:"pointer",background:dragging?"rgba(79,142,247,0.06)":"rgba(255,255,255,0.02)",transition:"all 0.15s",marginBottom:16}}>
+        style={{border:"1px dashed "+(dragging?"var(--accent)":"rgba(255,255,255,0.1)"),borderRadius:12,padding:"28px 20px",textAlign:"center",cursor:"pointer",background:dragging?"color-mix(in srgb, var(--accent) 6%, transparent)":"rgba(255,255,255,0.02)",transition:"all 0.15s",marginBottom:16}}>
         <div style={{fontSize:26,marginBottom:10,opacity:0.45}}>📰</div>
         <div style={{fontSize:13,color:"#999",fontWeight:500,marginBottom:5}}>Drop your Feedly OPML here</div>
         <div style={{fontSize:11,color:"#333"}}>or click to browse</div>
@@ -609,7 +629,7 @@ function SettingsModal({ onClose, opacity, onOpacityChange }) {
           </div>
           <button onClick={toggleAutostart} style={{
             width:36,height:20,borderRadius:10,border:"none",cursor:"pointer",transition:"background 0.2s",position:"relative",
-            background:autostart?"#4f8ef7":"rgba(255,255,255,0.1)"
+            background:autostart?"var(--accent)":"rgba(255,255,255,0.1)"
           }}>
             <span style={{position:"absolute",top:2,left:autostart?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:"left 0.2s",display:"block"}}/>
           </button>
@@ -621,7 +641,7 @@ function SettingsModal({ onClose, opacity, onOpacityChange }) {
           </div>
           <input type="range" min="0.2" max="1" step="0.01" value={opacity}
             onChange={e=>onOpacityChange(parseFloat(e.target.value))}
-            style={{width:"100%",accentColor:"#4f8ef7",cursor:"pointer"}}/>
+            style={{width:"100%",accentColor:"var(--accent)",cursor:"pointer"}}/>
         </div>
         <div style={{fontSize:10,color:"#282830",marginTop:16,lineHeight:1.5}}>
           Panel position: left edge · Win+W to toggle
@@ -662,6 +682,7 @@ export default function App() {
   const [visible,      setVisible]      = useState(false);
   const [opacity,      setOpacity]      = useState(1);
   const [accentColor,  setAccentColor]  = useState('#202020');
+  const [browserPane,  setBrowserPane]  = useState({ open: false, url: '', loading: false, braveX: 0 });
 
   // Column widths: left + mid are fixed; right column is flex
   const [colWidths, setColWidths] = useState({ left: 220, mid: 240 });
@@ -733,6 +754,16 @@ export default function App() {
       setTimeout(() => panelApi.hideDone(), 270);
     });
     panelApi.ready();
+  }, []);
+
+  // ── Browser pane (embedded Brave) ────────────────────────────────────────
+  useEffect(() => {
+    const bApi = window.electronAPI?.browser;
+    if (!bApi) return;
+    bApi.onPaneShow(({ url, braveX }) => setBrowserPane({ open: true, url, loading: false, braveX }));
+    bApi.onPaneHide(() => setBrowserPane(p => ({ ...p, open: false })));
+    bApi.onLoading(v => setBrowserPane(p => ({ ...p, loading: v })));
+    bApi.onUrl(u => setBrowserPane(p => ({ ...p, url: u })));
   }, []);
 
   // ── Resize drag handle (panel width) ────────────────────────────────────
@@ -867,35 +898,34 @@ export default function App() {
     </div>
   );
 
-  // Drop zone between cards — visible blue line when active, invisible hit area when dragging
-  function DropZone({ colName, beforeId }) {
-    const isActive = !!dragId && dropTarget?.col === colName && dropTarget?.beforeId === beforeId;
-    return (
-      <div
-        style={{
-          flexShrink: 0,
-          height: dragId ? 6 : 0,
-          background: 'transparent',
-          borderRadius: 2,
-          pointerEvents: dragId ? 'auto' : 'none',
-          outline: isActive ? '1.5px solid #4f8ef7' : 'none',
-          outlineOffset: '-2px',
-          transition: 'outline 0.06s',
-        }}
-        onDragOver={e=>{ e.preventDefault(); if (!isActive) setDropTarget({col:colName, beforeId}); }}
-        onDrop={e=>{ e.preventDefault(); if (dragId) handleDrop(dragId, colName, beforeId); }}
-      />
-    );
-  }
-
-  // Shared WidgetCard renderer for a column
+  // Shared WidgetCard renderer for a column.
+  // Drop targets are the card wrappers themselves — top-half hover = insert before,
+  // bottom-half hover = insert after. Border lines show the insertion point.
   function renderCol(ids, colName) {
-    const items = [];
-    items.push(<DropZone key="dz-start" colName={colName} beforeId={ids[0] ?? null} />);
-    ids.forEach((id, i) => {
+    return ids.map((id, i) => {
       const nextId = ids[i + 1] ?? null;
-      items.push(
-        <div key={id} className="wi" style={{animationDelay:(i*25)+"ms"}}>
+      const dropBefore = dragId && dropTarget?.col === colName && dropTarget?.beforeId === id;
+      const dropAfter  = dragId && dropTarget?.col === colName && dropTarget?.beforeId === nextId;
+      return (
+        <div key={id} className="wi" style={{
+          animationDelay: (i*25)+"ms",
+          borderTop:    dropBefore ? '2px solid var(--accent)' : '2px solid transparent',
+          borderBottom: dropAfter  ? '2px solid var(--accent)' : '2px solid transparent',
+          transition: 'border-color 0.06s',
+        }}
+        onDragOver={e=>{
+          e.preventDefault(); e.stopPropagation();
+          const rect = e.currentTarget.getBoundingClientRect();
+          const before = e.clientY < rect.top + rect.height / 2;
+          const target = { col: colName, beforeId: before ? id : nextId };
+          if (!dropTarget || dropTarget.col !== colName || dropTarget.beforeId !== target.beforeId) {
+            setDropTarget(target);
+          }
+        }}
+        onDrop={e=>{
+          e.preventDefault(); e.stopPropagation();
+          if (dragId && dropTarget) handleDrop(dragId, dropTarget.col, dropTarget.beforeId);
+        }}>
           <WidgetCard id={id} categories={categories||[]} apiKeys={apiKeys} onSaveKey={saveKey}
             colorIdx={newsIds.indexOf(id)}
             onUnreadChange={count=>onUnread(id,count)}
@@ -907,13 +937,11 @@ export default function App() {
             onDragEnd={()=>{ setDragId(null); setDropTarget(null); }} />
         </div>
       );
-      items.push(<DropZone key={"dz-"+id} colName={colName} beforeId={nextId} />);
     });
-    return items;
   }
 
   return (
-    <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans',sans-serif",background:"transparent",overflow:"hidden"}}>
+    <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans',sans-serif",background:"transparent",overflow:"hidden","--accent":accentColor}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@300;400&display=swap');
         *{box-sizing:border-box;margin:0;padding:0}
@@ -922,9 +950,10 @@ export default function App() {
         @keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
         @keyframes pulse{0%,100%{opacity:.18}50%{opacity:.44}}
         @keyframes ticker{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+        @keyframes spin{to{transform:rotate(360deg)}}
         .wi{animation:fadeIn 0.2s ease both}
         input{color-scheme:dark}
-        a{color:#4f8ef7}
+        a{color:var(--accent)}
         .panel-wrap{
           transform: translateX(-100%);
           transition: transform 260ms cubic-bezier(0.32,0,0.16,1);
@@ -935,12 +964,12 @@ export default function App() {
         }
         .resize-handle{
           width:5px;flex-shrink:0;cursor:ew-resize;
-          background:transparent;
+          background:#18181c;
           transition:background 0.15s;
           position:relative;z-index:10;
         }
         .resize-handle:hover,.resize-handle:active{
-          background:rgba(79,142,247,0.25);
+          background:color-mix(in srgb, var(--accent) 25%, transparent);
         }
         .col-divider{
           width:4px;flex-shrink:0;cursor:col-resize;
@@ -949,7 +978,7 @@ export default function App() {
           user-select:none;
         }
         .col-divider:hover{
-          background:rgba(79,142,247,0.2);
+          background:color-mix(in srgb, var(--accent) 20%, transparent);
         }
       `}</style>
 
@@ -978,14 +1007,14 @@ export default function App() {
                 </div>
                 {tickerVisible && snippet && (
                   <div key={snippet} style={{fontSize:10,color:"#666",marginTop:6,fontFamily:"DM Mono,monospace",animation:"ticker 0.3s ease both"}}>
-                    {totalUnread > 0 && <span style={{color:"#4f8ef7",marginRight:6}}>●</span>}{snippet}
+                    {totalUnread > 0 && <span style={{color:"var(--accent)",marginRight:6}}>●</span>}{snippet}
                   </div>
                 )}
               </div>
               <div style={{display:"flex",gap:4,alignItems:"center",marginTop:2}}>
                 <button onClick={togglePin} title={pinned?"Unpin":"Pin to desktop"}
-                  style={{background:pinned?"rgba(79,142,247,0.15)":"none",border:pinned?"1px solid rgba(79,142,247,0.25)":"1px solid transparent",
-                    borderRadius:6,color:pinned?"#4f8ef7":"#2a2a30",fontSize:14,cursor:"pointer",padding:"3px 6px",lineHeight:1,transition:"all 0.15s"}}>
+                  style={{background:pinned?"color-mix(in srgb, var(--accent) 15%, transparent)":"none",border:pinned?"1px solid color-mix(in srgb, var(--accent) 30%, transparent)":"1px solid transparent",
+                    borderRadius:6,color:pinned?"var(--accent)":"#2a2a30",fontSize:14,cursor:"pointer",padding:"3px 6px",lineHeight:1,transition:"all 0.15s"}}>
                   📌
                 </button>
                 {loaded&&<button onClick={()=>setShowMgr(true)} title="Manage widgets"
@@ -1005,7 +1034,9 @@ export default function App() {
               <div style={{flex:1,overflow:"hidden",display:"flex"}}>
 
                 {/* Column 1 */}
-                <div style={{flexShrink:0,width:colWidths.left,overflowY:"auto",padding:"10px 6px 12px 10px",display:"flex",flexDirection:"column",gap:8}}>
+                <div style={{flexShrink:0,width:colWidths.left,overflowY:"auto",padding:"10px 6px 12px 10px",display:"flex",flexDirection:"column",gap:8}}
+                  onDragOver={e=>{e.preventDefault();setDropTarget({col:"left",beforeId:null});}}
+                  onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
                   {renderCol(leftIds, "left")}
                   {leftIds.length===0&&<div style={{textAlign:"center",color:"#555",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
                 </div>
@@ -1014,7 +1045,9 @@ export default function App() {
                 <div className="col-divider" onMouseDown={onColDividerDown('left')} />
 
                 {/* Column 2 */}
-                <div style={{flexShrink:0,width:colWidths.mid,overflowY:"auto",padding:"10px 6px 12px 6px",display:"flex",flexDirection:"column",gap:8}}>
+                <div style={{flexShrink:0,width:colWidths.mid,overflowY:"auto",padding:"10px 6px 12px 6px",display:"flex",flexDirection:"column",gap:8}}
+                  onDragOver={e=>{e.preventDefault();setDropTarget({col:"mid",beforeId:null});}}
+                  onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
                   {renderCol(midIds, "mid")}
                   {midIds.length===0&&<div style={{textAlign:"center",color:"#555",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
                 </div>
@@ -1023,7 +1056,9 @@ export default function App() {
                 <div className="col-divider" onMouseDown={onColDividerDown('mid')} />
 
                 {/* Column 3 */}
-                <div style={{flex:1,overflowY:"auto",padding:"10px 10px 12px 6px",display:"flex",flexDirection:"column",gap:8}}>
+                <div style={{flex:1,overflowY:"auto",padding:"10px 10px 12px 6px",display:"flex",flexDirection:"column",gap:8}}
+                  onDragOver={e=>{e.preventDefault();setDropTarget({col:"right",beforeId:null});}}
+                  onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
                   {renderCol(rightIds, "right")}
                   {rightIds.length===0&&<div style={{textAlign:"center",color:"#555",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
                 </div>
@@ -1047,6 +1082,38 @@ export default function App() {
 
       {showMgr&&loaded&&<CategoryManager categories={categories} activeIds={activeIds} setActiveIds={setActiveIds} onClose={()=>setShowMgr(false)} onReset={reset}/>}
       {showSettings&&<SettingsModal onClose={()=>setShowSettings(false)} opacity={opacity} onOpacityChange={v=>{ setOpacity(v); api.store.set('wp-opacity', String(v)); }}/>}
+
+      {/* ── Browser toolbar (overlays the native Brave child window area) ── */}
+      {browserPane.open && (
+        <div style={{
+          position: 'fixed', left: browserPane.braveX, top: 0, right: 0, height: 41,
+          background: '#18181c', borderBottom: '1px solid rgba(255,255,255,0.06)',
+          display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px',
+          zIndex: 9999, userSelect: 'none',
+        }}>
+          {browserPane.loading && (
+            <div style={{width:13,height:13,border:'2px solid rgba(255,255,255,0.1)',borderTop:'2px solid #888',borderRadius:'50%',animation:'spin 0.7s linear infinite',flexShrink:0}}/>
+          )}
+          <div style={{flex:1,fontSize:11,color:'#666',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontFamily:'DM Mono,monospace'}}>
+            {browserPane.url}
+          </div>
+          <button
+            onClick={() => window.electronAPI?.browser?.openExternal()}
+            title="Open in Brave"
+            style={{background:'none',border:'none',color:'#555',fontSize:13,cursor:'pointer',padding:'4px 6px',lineHeight:1,borderRadius:4,transition:'color 0.1s'}}
+            onMouseEnter={e=>e.currentTarget.style.color='#aaa'} onMouseLeave={e=>e.currentTarget.style.color='#555'}>
+            ↗
+          </button>
+          <button
+            onClick={() => window.electronAPI?.browser?.close()}
+            title="Close browser"
+            style={{background:'none',border:'none',color:'#555',fontSize:13,cursor:'pointer',padding:'4px 6px',lineHeight:1,borderRadius:4,transition:'color 0.1s'}}
+            onMouseEnter={e=>e.currentTarget.style.color='#aaa'} onMouseLeave={e=>e.currentTarget.style.color='#555'}>
+            ✕
+          </button>
+        </div>
+      )}
     </div>
   );
 }
+

@@ -29,9 +29,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   browser: {
-    open:     (url) => ipcRenderer.send('browser-open',     url),
-    navigate: (url) => ipcRenderer.send('browser-navigate', url),
-    close:    ()    => ipcRenderer.send('browser-close'),
+    open:         (url) => ipcRenderer.send('browser-open',       url),
+    navigate:     (url) => ipcRenderer.send('browser-navigate',   url),
+    close:        ()    => ipcRenderer.send('browser-close'),
+    openExternal: ()    => ipcRenderer.send('brave-open-external'),
+    onPaneShow:   (cb)  => ipcRenderer.on('browser-pane-show',  (_e, d) => cb(d)),
+    onPaneHide:   (cb)  => ipcRenderer.on('browser-pane-hide',  cb),
+    onLoading:    (cb)  => ipcRenderer.on('brave-loading',      (_e, v) => cb(v)),
+    onUrl:        (cb)  => ipcRenderer.on('brave-url',          (_e, u) => cb(u)),
   },
 
   panel: {
