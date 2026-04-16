@@ -984,10 +984,11 @@ export default function App() {
 
       {/* ── Sliding wrapper ── */}
       <div className={`panel-wrap${visible?" open":""}`}
-           style={{display:"flex",flexDirection:"row",height:"100vh",width:"100vw"}}>
+           style={{display:"flex",flexDirection:"row",height:"100vh",
+                   width: browserPane.open ? browserPane.braveX : '100vw'}}>
 
         {/* ── Panel content ── */}
-        <div style={{flex:"0 0 auto",width:"100vw",display:"flex",flexDirection:"row",
+        <div style={{flex:"0 0 auto",width: browserPane.open ? browserPane.braveX : '100vw',display:"flex",flexDirection:"row",
           background:`color-mix(in srgb, ${accentColor} 8%, rgba(20,20,24,${opacity}))`,
           backdropFilter:opacity<1?`blur(${Math.round((1-opacity)*40)}px)`:"none",
           WebkitBackdropFilter:opacity<1?`blur(${Math.round((1-opacity)*40)}px)`:"none",
