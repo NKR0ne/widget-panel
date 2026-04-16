@@ -540,6 +540,66 @@ app.whenReady().then(() => {
   })
 })
 
+// ── Microsoft Graph proxy (avoids CORS in renderer) ──────────────────────────
+const https = require('https')
+
+function httpsRequest(options, body) {
+  return new Promise((resolve, reject) => {
+    const req = https.request(options, res => {
+      let data = ''
+      res.on('data', chunk => data += chunk)
+      res.on('end', () => {
+        if (!data) { resolve({ status: res.statusCode, body: null }); return }
+        try { resolve({ status: res.statusCode, body: JSON.parse(data) }) }
+        catch  { resolve({ status: res.statusCode, body: data }) }
+      })
+    })
+    req.on('error', reject)
+    if (body) req.write(body)
+    req.end()
+  })
+}
+
+ipcMain.handle('ms-graph-fetch', async (_e, url, accessToken) => {
+  const u = new URL(url)
+  return httpsRequest({ hostname: u.hostname, path: u.pathname + u.search,
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } })
+})
+
+ipcMain.handle('ms-graph-patch', async (_e, url, accessToken, patchBody) => {
+  const u = new URL(url)
+  const body = JSON.stringify(patchBody)
+  return httpsRequest({
+    hostname: u.hostname, path: u.pathname + u.search, method: 'PATCH',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json',
+               'Content-Length': Buffer.byteLength(body) }
+  }, body)
+})
+
+ipcMain.handle('ms-devicecode-start', async (_e, clientId, scopes) => {
+  const body = `client_id=${encodeURIComponent(clientId)}&scope=${encodeURIComponent(scopes.join(' '))}`
+  return httpsRequest({
+    hostname: 'login.microsoftonline.com', path: '/common/oauth2/v2.0/devicecode', method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) }
+  }, body)
+})
+
+ipcMain.handle('ms-devicecode-poll', async (_e, clientId, deviceCode) => {
+  const body = `client_id=${encodeURIComponent(clientId)}&grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=${encodeURIComponent(deviceCode)}`
+  return httpsRequest({
+    hostname: 'login.microsoftonline.com', path: '/common/oauth2/v2.0/token', method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) }
+  }, body)
+})
+
+ipcMain.handle('ms-token-refresh', async (_e, clientId, refreshToken) => {
+  const body = `client_id=${encodeURIComponent(clientId)}&grant_type=refresh_token&refresh_token=${encodeURIComponent(refreshToken)}`
+  return httpsRequest({
+    hostname: 'login.microsoftonline.com', path: '/common/oauth2/v2.0/token', method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) }
+  }, body)
+})
+
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   if (pipeServer) pipeServer.close()

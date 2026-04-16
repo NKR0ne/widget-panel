@@ -12,13 +12,18 @@ const YF_QUOTE = (sym) => PROXY1 + encodeURIComponent(`https://query1.finance.ya
 const SK_CONFIG   = "wp-config";
 const SK_COLW     = "wp-col-widths";
 const SK_EXPANDED = "wp-expanded";
+const SK_MS_CLIENT = "wp-ms-client";
+const SK_MS_TOKENS = "wp-ms-tokens";
 
 // ── Palette & system widget defs ─────────────────────────────────────────────
 const PALETTE = ["#4f8ef7","#5cc8a8","#b07ef7","#f7a64f","#f74f7e","#4ff7c8","#f7f74f","#c8f74f"];
 const SYS = [
-  { id:"weather", label:"Weather", note:"Open-Meteo · no key", color:"#f7c94f" },
-  { id:"traffic", label:"Traffic", note:"TomTom · free key",   color:"#f77f4f" },
-  { id:"stocks",  label:"Stocks",  note:"Finnhub · free key",  color:"#5cc8a8" },
+  { id:"weather", label:"Weather",          note:"Open-Meteo · no key",           color:"#f7c94f" },
+  { id:"traffic", label:"Traffic",          note:"TomTom · free key",             color:"#f77f4f" },
+  { id:"stocks",  label:"Stocks",           note:"Finnhub · free key",            color:"#5cc8a8" },
+  { id:"clock",   label:"Clock",            note:"No API needed",                 color:"#e8e8f0" },
+  { id:"agenda",  label:"Outlook Agenda",   note:"Microsoft Graph · OAuth",       color:"#0078d4" },
+  { id:"todo",    label:"Microsoft To-Do",  note:"Microsoft Graph · OAuth",       color:"#2564cf" },
 ];
 
 // ── Mock fallback data ───────────────────────────────────────────────────────
@@ -50,6 +55,22 @@ const MOCK_WX = {
 };
 const MOCK_STOCKS  = { AAPL:{c:213.49,pc:211.20,h:214.80}, MSFT:{c:417.72,pc:414.55,h:419.10}, NVDA:{c:875.40,pc:859.20,h:882.00}, SPY:{c:521.30,pc:518.80,h:523.50} };
 const MOCK_TRAFFIC = { currentSpeed:72, freeFlowSpeed:100, confidence:0.87 };
+const MOCK_EVENTS = (() => {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const fmt = (d, h, m) => { const x=new Date(d); x.setHours(h,m,0,0); return x.toISOString(); };
+  return [
+    { id:"e1", subject:"Standup",       start:{dateTime:fmt(today,9,0)},  end:{dateTime:fmt(today,9,30)},  location:{displayName:"Teams"} },
+    { id:"e2", subject:"Sprint review", start:{dateTime:fmt(today,14,0)}, end:{dateTime:fmt(today,15,0)},  location:{displayName:"Salle A"} },
+    { id:"e3", subject:"1:1 Manager",   start:{dateTime:fmt(today,16,30)},end:{dateTime:fmt(today,17,0)},  location:{displayName:""} },
+    { id:"e4", subject:"Architecture review", start:{dateTime:fmt(new Date(today.getTime()+86400000),10,0)}, end:{dateTime:fmt(new Date(today.getTime()+86400000),11,0)}, location:{displayName:"Teams"} },
+  ];
+})();
+const MOCK_TASKS = [
+  { id:"t1", title:"Review PR #247",         status:"notStarted", importance:"high" },
+  { id:"t2", title:"Update architecture docs",status:"notStarted", importance:"normal" },
+  { id:"t3", title:"Deploy to staging",       status:"inProgress", importance:"normal" },
+  { id:"t4", title:"Write sprint retro notes",status:"notStarted", importance:"low" },
+];
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function relTime(str) {
@@ -499,13 +520,372 @@ function TrafficWidget({ apiKey, onSaveKey }) {
   };
 }
 
+// ── Clock widget ─────────────────────────────────────────────────────────────
+function ClockWidget() {
+  const [t, setT] = useState(new Date());
+  useEffect(() => { const id = setInterval(() => setT(new Date()), 1000); return () => clearInterval(id); }, []);
+
+  const h = t.getHours() % 12, m = t.getMinutes(), s = t.getSeconds();
+  const cx = 64, cy = 64, r = 54;
+  const toXY = (angle, len) => [cx + len * Math.cos(angle), cy + len * Math.sin(angle)];
+  const hrA  = (h * 30 + m * 0.5 - 90) * Math.PI / 180;
+  const minA = (m * 6 + s * 0.1 - 90) * Math.PI / 180;
+  const secA = (s * 6 - 90) * Math.PI / 180;
+
+  return { color:"#e8e8f0", title:"Clock",
+    content:(
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",paddingTop:6,paddingBottom:2}}>
+        <svg width={128} height={128} viewBox="0 0 128 128" style={{display:"block"}}>
+          {/* Outer ring */}
+          <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={1}/>
+          {/* Hour markers */}
+          {Array.from({length:60}).map((_,i) => {
+            const a = (i * 6 - 90) * Math.PI / 180;
+            const isMaj = i % 5 === 0;
+            const [x1,y1] = toXY(a, r - (isMaj ? 1 : 0.5));
+            const [x2,y2] = toXY(a, r - (isMaj ? 9 : 5));
+            return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2}
+              stroke={isMaj ? "rgba(255,255,255,0.45)" : "rgba(255,255,255,0.12)"}
+              strokeWidth={isMaj ? 1.5 : 0.75} strokeLinecap="round"/>;
+          })}
+          {/* Hour hand */}
+          {(()=>{ const [x,y]=toXY(hrA,30), [bx,by]=toXY(hrA+Math.PI,9);
+            return <line x1={bx} y1={by} x2={x} y2={y} stroke="rgba(255,255,255,0.95)" strokeWidth={3} strokeLinecap="round"/>; })()}
+          {/* Minute hand */}
+          {(()=>{ const [x,y]=toXY(minA,46), [bx,by]=toXY(minA+Math.PI,10);
+            return <line x1={bx} y1={by} x2={x} y2={y} stroke="rgba(255,255,255,0.75)" strokeWidth={1.75} strokeLinecap="round"/>; })()}
+          {/* Second hand */}
+          {(()=>{ const [x,y]=toXY(secA,47), [bx,by]=toXY(secA+Math.PI,13);
+            return <line x1={bx} y1={by} x2={x} y2={y} stroke="#f74f7e" strokeWidth={1} strokeLinecap="round"/>; })()}
+          {/* Center cap */}
+          <circle cx={cx} cy={cy} r={3.5} fill="#f74f7e"/>
+          <circle cx={cx} cy={cy} r={1.5} fill="rgba(20,20,24,0.8)"/>
+        </svg>
+        <div style={{fontSize:11,color:"#444",fontFamily:"DM Mono,monospace",letterSpacing:2,marginTop:4}}>
+          {String(t.getHours()).padStart(2,"0")}:{String(m).padStart(2,"0")}:{String(s).padStart(2,"0")}
+          <span style={{fontSize:9,color:"#2a2a34",marginLeft:5}}>{t.getHours()<12?"AM":"PM"}</span>
+        </div>
+        <div style={{fontSize:10,color:"#2a2a34",marginTop:3,textTransform:"capitalize"}}>
+          {t.toLocaleDateString("fr-CA",{weekday:"long",month:"long",day:"numeric"})}
+        </div>
+      </div>
+    )
+  };
+}
+
+// ── Microsoft auth hook (shared store keys: wp-ms-client + wp-ms-tokens) ─────
+function useMsAuth() {
+  const [clientId,   setCid]    = useState('');
+  const [tokens,     setTokens] = useState(null);
+  const [step,       setStep]   = useState('loading');
+  // step: loading | setup | devicecode | polling | ok | error
+  const [deviceInfo, setDevice] = useState(null);
+  const [cidDraft,   setCidDraft] = useState('');
+  const msApi = window.electronAPI?.msGraph;
+
+  useEffect(() => {
+    Promise.all([api.store.get(SK_MS_CLIENT), api.store.get(SK_MS_TOKENS)]).then(([cid, tokStr]) => {
+      const cid_ = cid || '';
+      setCid(cid_);
+      setCidDraft(cid_);
+      if (!cid_) { setStep('setup'); return; }
+      const tok = tokStr ? (() => { try { return JSON.parse(tokStr); } catch { return null; } })() : null;
+      if (!tok) { setStep('setup'); return; }
+      if (tok.expiry < Date.now() + 60000) { doRefresh(cid_, tok.refreshToken); }
+      else { setTokens(tok); setStep('ok'); }
+    });
+  }, []);
+
+  // Auto-refresh 5 min before expiry
+  useEffect(() => {
+    if (step !== 'ok' || !tokens) return;
+    const ttl = tokens.expiry - Date.now() - 5 * 60 * 1000;
+    const t = setTimeout(() => doRefresh(clientId, tokens.refreshToken), Math.max(0, ttl));
+    return () => clearTimeout(t);
+  }, [tokens?.expiry, step]);
+
+  async function doRefresh(cid, rt) {
+    try {
+      const res = await msApi?.tokenRefresh(cid, rt);
+      if (res?.body?.access_token) {
+        saveTok({ accessToken: res.body.access_token, refreshToken: res.body.refresh_token || rt,
+                  expiry: Date.now() + (res.body.expires_in || 3600) * 1000 });
+      } else { setStep('setup'); }
+    } catch { setStep('setup'); }
+  }
+
+  function saveTok(tok) {
+    setTokens(tok);
+    api.store.set(SK_MS_TOKENS, JSON.stringify(tok));
+    setStep('ok');
+  }
+
+  async function startAuth(cid) {
+    const scopes = ['Calendars.Read', 'Tasks.ReadWrite', 'offline_access', 'User.Read'];
+    setCid(cid);
+    api.store.set(SK_MS_CLIENT, cid);
+    setStep('devicecode');
+    try {
+      const res = await msApi?.deviceCodeStart(cid, scopes);
+      if (res?.body?.error || !res?.body?.user_code) { setStep('error'); return; }
+      setDevice(res.body);
+      setStep('polling');
+      poll(cid, res.body.device_code, res.body.interval || 5);
+    } catch { setStep('error'); }
+  }
+
+  function poll(cid, code, interval) {
+    setTimeout(async () => {
+      try {
+        const res = await msApi?.deviceCodePoll(cid, code);
+        const b = res?.body;
+        if (b?.access_token) {
+          saveTok({ accessToken: b.access_token, refreshToken: b.refresh_token,
+                    expiry: Date.now() + (b.expires_in || 3600) * 1000 });
+        } else if (b?.error === 'authorization_pending') { poll(cid, code, interval); }
+        else if (b?.error === 'slow_down')               { poll(cid, code, interval + 5); }
+        else { setStep('error'); }
+      } catch { setStep('error'); }
+    }, interval * 1000);
+  }
+
+  function signOut() {
+    setTokens(null); setStep('setup');
+    api.store.delete(SK_MS_TOKENS);
+  }
+
+  return { clientId, tokens, step, deviceInfo, cidDraft, setCidDraft, startAuth, signOut };
+}
+
+// Shared setup UI used by both MS widgets
+function MsSetupPane({ step, deviceInfo, cidDraft, setCidDraft, startAuth, accentColor }) {
+  if (step === 'setup' || step === 'error') return (
+    <div style={{paddingTop:6}}>
+      <div style={{fontSize:11,color:"#3a3a44",lineHeight:1.7,marginBottom:8}}>
+        {step === 'error' ? "Auth failed. " : ""}Enter your <span style={{color:"#666"}}>Azure app client ID</span> to connect Microsoft.
+      </div>
+      <div style={{display:"flex",gap:6}}>
+        <input value={cidDraft} onChange={e=>setCidDraft(e.target.value)}
+          placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+          style={{...C.inp,flex:1,fontSize:10,fontFamily:"DM Mono,monospace"}}/>
+        {cidDraft && <button onClick={()=>startAuth(cidDraft)} style={C.btn}>→</button>}
+      </div>
+      <div style={{fontSize:9,color:"#252530",marginTop:8,lineHeight:1.7}}>
+        portal.azure.com → App registrations → New → grant <em>Calendars.Read</em> + <em>Tasks.ReadWrite</em> → enable public client flows
+      </div>
+    </div>
+  );
+  if (step === 'devicecode' || step === 'polling') return (
+    <div style={{paddingTop:6}}>
+      <div style={{fontSize:11,color:"#555",marginBottom:8}}>
+        Open <span style={{color:"var(--accent)"}}>{deviceInfo?.verification_uri || "microsoft.com/devicelogin"}</span> and enter:
+      </div>
+      <div style={{fontFamily:"DM Mono,monospace",fontSize:22,letterSpacing:5,color:"#e0e0e0",
+        background:"rgba(255,255,255,0.06)",borderRadius:8,padding:"8px 12px",textAlign:"center",marginBottom:8}}>
+        {deviceInfo?.user_code || "···"}
+      </div>
+      <div style={{fontSize:10,color:"#333",display:"flex",alignItems:"center",gap:6}}>
+        <div style={{width:8,height:8,border:"1.5px solid #333",borderTop:"1.5px solid #888",borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>
+        Waiting for authorization…
+      </div>
+    </div>
+  );
+  return null;
+}
+
+// ── Outlook Agenda widget ─────────────────────────────────────────────────────
+function AgendaWidget() {
+  const auth = useMsAuth();
+  const [events,  setEvents]  = useState([]);
+  const [demo,    setDemo]    = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (auth.step !== 'ok' || !auth.tokens) return;
+    const go = () => fetchEvents(auth.tokens.accessToken);
+    go();
+    const t = setInterval(go, 5 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [auth.step, auth.tokens?.accessToken]);
+
+  async function fetchEvents(token) {
+    setLoading(true);
+    try {
+      const now = new Date(), end = new Date(now.getTime() + 2 * 86400000);
+      const url = `https://graph.microsoft.com/v1.0/me/calendar/events`
+        + `?$filter=start/dateTime ge '${now.toISOString()}' and start/dateTime le '${end.toISOString()}'`
+        + `&$orderby=start/dateTime&$select=subject,start,end,location,isAllDay&$top=10`;
+      const res = await window.electronAPI.msGraph.fetch(url, token);
+      if (res.status === 401) { auth.signOut(); return; }
+      if (res.body?.value) { setEvents(res.body.value); setDemo(false); }
+      else { setEvents(MOCK_EVENTS); setDemo(true); }
+    } catch { setEvents(MOCK_EVENTS); setDemo(true); }
+    setLoading(false);
+  }
+
+  function fmtTime(dt) {
+    return new Date(dt).toLocaleTimeString("fr-CA", { hour:"2-digit", minute:"2-digit" });
+  }
+
+  const today = new Date(); today.setHours(0,0,0,0);
+  const tomorrow = new Date(today.getTime() + 86400000);
+  function dayKey(ev) {
+    const d = new Date(ev.start.dateTime || ev.start.date); d.setHours(0,0,0,0);
+    if (d.getTime() === today.getTime()) return "Aujourd'hui";
+    if (d.getTime() === tomorrow.getTime()) return "Demain";
+    return d.toLocaleDateString("fr-CA", { weekday:"long", month:"short", day:"numeric" });
+  }
+  const groups = {};
+  events.forEach(ev => { const k = dayKey(ev); (groups[k] = groups[k]||[]).push(ev); });
+
+  const showAuth = ['loading','setup','devicecode','polling','error'].includes(auth.step);
+
+  return { color:"#0078d4", title:"Outlook Agenda",
+    content:(
+      <div>
+        {showAuth && <MsSetupPane {...auth}/>}
+        {auth.step === 'ok' && (
+          <div>
+            {loading && <Skel n={2}/>}
+            {!loading && (
+              <div>
+                {demo && <DemoBadge/>}
+                {Object.keys(groups).length === 0 && (
+                  <div style={{paddingTop:10,fontSize:11,color:"#2a2a34",textAlign:"center"}}>Aucun événement à venir</div>
+                )}
+                {Object.entries(groups).map(([day, evs]) => (
+                  <div key={day} style={{marginTop:10}}>
+                    <div style={{fontSize:9,color:"#2564cf",textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:6}}>{day}</div>
+                    {evs.map((ev,i) => {
+                      const hasLoc = ev.location?.displayName;
+                      return (
+                        <div key={ev.id} style={{display:"flex",gap:10,padding:"6px 0",
+                          borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none",alignItems:"flex-start"}}>
+                          <div style={{flexShrink:0,textAlign:"right",width:42}}>
+                            <div style={{fontSize:10,color:"#0078d4",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.start.dateTime)}</div>
+                            <div style={{fontSize:9,color:"#2a2a34",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.end.dateTime)}</div>
+                          </div>
+                          <div style={{width:2,alignSelf:"stretch",background:"#0078d422",borderRadius:1,flexShrink:0}}/>
+                          <div style={{flex:1,minWidth:0}}>
+                            <div style={{fontSize:12,color:"#ccc",lineHeight:1.35}}>{ev.subject}</div>
+                            {hasLoc && <div style={{fontSize:10,color:"#2a2a34",marginTop:2}}>{ev.location.displayName}</div>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+                <button onClick={auth.signOut} style={{marginTop:14,background:"none",border:"none",fontSize:9,color:"#222228",cursor:"pointer",padding:0}}>Déconnecter</button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  };
+}
+
+// ── Microsoft To-Do widget ────────────────────────────────────────────────────
+function TodoWidget() {
+  const auth   = useMsAuth();
+  const [tasks,  setTasks]   = useState([]);
+  const [listId, setListId]  = useState(null);
+  const [demo,   setDemo]    = useState(false);
+  const [loading,setLoading] = useState(false);
+
+  useEffect(() => {
+    if (auth.step !== 'ok' || !auth.tokens) return;
+    const go = () => fetchTasks(auth.tokens.accessToken);
+    go();
+    const t = setInterval(go, 5 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [auth.step, auth.tokens?.accessToken]);
+
+  async function fetchTasks(token) {
+    setLoading(true);
+    try {
+      const listsRes = await window.electronAPI.msGraph.fetch(
+        'https://graph.microsoft.com/v1.0/me/todo/lists', token);
+      if (listsRes.status === 401) { auth.signOut(); return; }
+      const lists = listsRes.body?.value || [];
+      const list  = lists.find(l => l.wellknownListName === 'defaultList') || lists[0];
+      if (!list) { setLoading(false); return; }
+      setListId(list.id);
+      const tasksRes = await window.electronAPI.msGraph.fetch(
+        `https://graph.microsoft.com/v1.0/me/todo/lists/${list.id}/tasks`
+        + `?$filter=status ne 'completed'&$orderby=importance desc,createdDateTime&$top=20`, token);
+      if (tasksRes.body?.value) { setTasks(tasksRes.body.value); setDemo(false); }
+      else { setTasks(MOCK_TASKS); setDemo(true); }
+    } catch { setTasks(MOCK_TASKS); setDemo(true); }
+    setLoading(false);
+  }
+
+  async function complete(taskId) {
+    setTasks(p => p.filter(t => t.id !== taskId));
+    if (!demo && listId && auth.tokens) {
+      await window.electronAPI.msGraph.patch(
+        `https://graph.microsoft.com/v1.0/me/todo/lists/${listId}/tasks/${taskId}`,
+        auth.tokens.accessToken, { status: 'completed' });
+    }
+  }
+
+  const importanceColor = i => i === 'high' ? '#f74f7e' : i === 'normal' ? '#555' : '#333';
+
+  const showAuth = ['loading','setup','devicecode','polling','error'].includes(auth.step);
+
+  return { color:"#2564cf", title:"Microsoft To-Do",
+    content:(
+      <div>
+        {showAuth && <MsSetupPane {...auth}/>}
+        {auth.step === 'ok' && (
+          <div>
+            {loading && <Skel n={3}/>}
+            {!loading && (
+              <div>
+                {demo && <DemoBadge/>}
+                {tasks.length === 0 && (
+                  <div style={{paddingTop:10,fontSize:11,color:"#2a2a34",textAlign:"center"}}>Aucune tâche en cours ✓</div>
+                )}
+                {tasks.map((task, i) => (
+                  <div key={task.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",
+                    borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none"}}>
+                    <button onClick={()=>complete(task.id)} title="Mark complete"
+                      style={{width:16,height:16,borderRadius:"50%",border:"1.5px solid #333",background:"none",
+                        cursor:"pointer",flexShrink:0,padding:0,display:"flex",alignItems:"center",justifyContent:"center",
+                        transition:"border-color 0.15s,background 0.15s"}}
+                      onMouseEnter={e=>{e.currentTarget.style.borderColor="#2564cf";e.currentTarget.style.background="rgba(37,100,207,0.15)";}}
+                      onMouseLeave={e=>{e.currentTarget.style.borderColor="#333";e.currentTarget.style.background="none";}}>
+                    </button>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12,color:"#bbb",lineHeight:1.35}}>{task.title}</div>
+                    </div>
+                    <div style={{width:5,height:5,borderRadius:"50%",background:importanceColor(task.importance),flexShrink:0}}/>
+                  </div>
+                ))}
+                {tasks.length > 0 && <div style={{fontSize:9,color:"#222228",marginTop:10}}>{tasks.length} tâche{tasks.length>1?"s":""} · Liste principale</div>}
+                <button onClick={auth.signOut} style={{marginTop:6,background:"none",border:"none",fontSize:9,color:"#222228",cursor:"pointer",padding:0,display:"block"}}>Déconnecter</button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  };
+}
+
 // ── Widget renderer ──────────────────────────────────────────────────────────
 function WidgetCard({ id, categories, apiKeys, onSaveKey, colorIdx, onUnreadChange, onOpenUrl, expanded, onToggle, isDragging, onDragStart, onDragEnd }) {
   const newsData    = id.startsWith("cat:") ? NewsWidget({ category: categories.find(c=>c.label===id.slice(4)), colorIdx, onUnreadChange, onOpenUrl, expanded, onToggle }) : null;
   const weatherData = id==="weather" ? WeatherWidget({ expanded, onToggle }) : null;
   const stocksData  = id==="stocks"  ? StocksWidget({ apiKey:apiKeys.finnhub, onSaveKey, expanded, onToggle }) : null;
   const trafficData = id==="traffic" ? TrafficWidget({ apiKey:apiKeys.tomtom, onSaveKey, expanded, onToggle }) : null;
-  const d = newsData || weatherData || stocksData || trafficData;
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const clockData   = id==="clock"   ? ClockWidget() : null;
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const agendaData  = id==="agenda"  ? AgendaWidget() : null;
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const todoData    = id==="todo"    ? TodoWidget()   : null;
+  const d = newsData || weatherData || stocksData || trafficData || clockData || agendaData || todoData;
   if (!d) return null;
   return (
     <Shell color={d.color} title={d.title} sub={d.sub} badge={d.badge}
@@ -784,6 +1164,9 @@ export default function App() {
     cols.weather = "left";
     cols.stocks  = "left";
     cols.traffic = "left";
+    cols.clock   = "left";
+    cols.agenda  = "right";
+    cols.todo    = "right";
     return cols;
   }
 

@@ -28,6 +28,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     accentColor: () => ipcRenderer.invoke('system-accent-color'),
   },
 
+  msGraph: {
+    fetch:           (url, token)         => ipcRenderer.invoke('ms-graph-fetch',       url, token),
+    patch:           (url, token, body)   => ipcRenderer.invoke('ms-graph-patch',       url, token, body),
+    deviceCodeStart: (clientId, scopes)   => ipcRenderer.invoke('ms-devicecode-start',  clientId, scopes),
+    deviceCodePoll:  (clientId, code)     => ipcRenderer.invoke('ms-devicecode-poll',   clientId, code),
+    tokenRefresh:    (clientId, rt)       => ipcRenderer.invoke('ms-token-refresh',     clientId, rt),
+  },
+
   browser: {
     open:         (url) => ipcRenderer.send('browser-open',       url),
     navigate:     (url) => ipcRenderer.send('browser-navigate',   url),
