@@ -574,23 +574,23 @@ function ClockWidget() {
 }
 
 // ── Microsoft auth hook (shared store keys: wp-ms-client + wp-ms-tokens) ─────
-// Uses auth code + PKCE flow: opens real browser → handles MFA / conditional access.
-// Callback server listens on port 47340 — register http://localhost:47340/callback in Azure.
 function useMsAuth() {
-  const [clientId,  setCid]      = useState('');
-  const [tokens,    setTokens]   = useState(null);
-  const [step,      setStep]     = useState('loading');
-  // step: loading | setup | authenticating | ok | error
-  const [cidDraft,  setCidDraft] = useState('');
+  const [clientId,   setCid]    = useState('');
+  const [tokens,     setTokens] = useState(null);
+  const [step,       setStep]   = useState('loading');
+  // step: loading | setup | devicecode | polling | ok | error
+  const [deviceInfo, setDevice] = useState(null);
+  const [cidDraft,   setCidDraft] = useState('');
   const msApi = window.electronAPI?.msGraph;
 
   useEffect(() => {
     Promise.all([api.store.get(SK_MS_CLIENT), api.store.get(SK_MS_TOKENS)]).then(([cid, tokStr]) => {
       const cid_ = cid || '';
-      setCid(cid_); setCidDraft(cid_);
+      setCid(cid_);
+      setCidDraft(cid_);
       if (!cid_) { setStep('setup'); return; }
       const tok = tokStr ? (() => { try { return JSON.parse(tokStr); } catch { return null; } })() : null;
-      if (!tok)  { setStep('setup'); return; }
+      if (!tok) { setStep('setup'); return; }
       if (tok.expiry < Date.now() + 60000) { doRefresh(cid_, tok.refreshToken); }
       else { setTokens(tok); setStep('ok'); }
     });
@@ -621,50 +621,73 @@ function useMsAuth() {
   }
 
   async function startAuth(cid) {
-    setCid(cid); api.store.set(SK_MS_CLIENT, cid);
-    setStep('authenticating');
+    const scopes = ['Calendars.Read', 'Tasks.ReadWrite', 'offline_access', 'User.Read'];
+    setCid(cid);
+    api.store.set(SK_MS_CLIENT, cid);
+    setStep('devicecode');
     try {
-      const scopes = ['Calendars.Read', 'Tasks.ReadWrite', 'offline_access', 'User.Read'];
-      const res = await msApi?.authPkce(cid, scopes);
-      if (res?.body?.access_token) {
-        saveTok({ accessToken: res.body.access_token, refreshToken: res.body.refresh_token,
-                  expiry: Date.now() + (res.body.expires_in || 3600) * 1000 });
-      } else { setStep('error'); }
+      const res = await msApi?.deviceCodeStart(cid, scopes);
+      if (res?.body?.error || !res?.body?.user_code) { setStep('error'); return; }
+      setDevice(res.body);
+      setStep('polling');
+      poll(cid, res.body.device_code, res.body.interval || 5);
     } catch { setStep('error'); }
   }
 
-  function signOut() { setTokens(null); setStep('setup'); api.store.delete(SK_MS_TOKENS); }
+  function poll(cid, code, interval) {
+    setTimeout(async () => {
+      try {
+        const res = await msApi?.deviceCodePoll(cid, code);
+        const b = res?.body;
+        if (b?.access_token) {
+          saveTok({ accessToken: b.access_token, refreshToken: b.refresh_token,
+                    expiry: Date.now() + (b.expires_in || 3600) * 1000 });
+        } else if (b?.error === 'authorization_pending') { poll(cid, code, interval); }
+        else if (b?.error === 'slow_down')               { poll(cid, code, interval + 5); }
+        else { setStep('error'); }
+      } catch { setStep('error'); }
+    }, interval * 1000);
+  }
 
-  return { clientId, tokens, step, cidDraft, setCidDraft, startAuth, signOut };
+  function signOut() {
+    setTokens(null); setStep('setup');
+    api.store.delete(SK_MS_TOKENS);
+  }
+
+  return { clientId, tokens, step, deviceInfo, cidDraft, setCidDraft, startAuth, signOut };
 }
 
 // Shared setup UI used by both MS widgets
-function MsSetupPane({ step, cidDraft, setCidDraft, startAuth }) {
+function MsSetupPane({ step, deviceInfo, cidDraft, setCidDraft, startAuth, accentColor }) {
   if (step === 'setup' || step === 'error') return (
     <div style={{paddingTop:6}}>
-      {step === 'error' && <div style={{fontSize:11,color:"#f77f4f",marginBottom:8}}>Authentification échouée. Réessayer.</div>}
-      <input value={cidDraft} onChange={e=>setCidDraft(e.target.value)}
-        placeholder="Azure app client ID…"
-        style={{...C.inp,width:"100%",fontSize:10,fontFamily:"DM Mono,monospace",marginBottom:8,boxSizing:"border-box"}}/>
-      {cidDraft && (
-        <button onClick={()=>startAuth(cidDraft)} style={{...C.btn,width:"100%",textAlign:"center"}}>
-          Se connecter avec Microsoft →
-        </button>
-      )}
-      <div style={{fontSize:9,color:"#252530",marginTop:10,lineHeight:1.8}}>
-        <strong style={{color:"#333"}}>Setup (une fois)</strong><br/>
-        portal.azure.com → App registrations → New<br/>
-        Authentication → Mobile/desktop → Redirect URI:<br/>
-        <span style={{color:"#444",fontFamily:"DM Mono,monospace"}}>http://localhost:47340/callback</span><br/>
-        Enable public client flows · grant <em>Calendars.Read</em> + <em>Tasks.ReadWrite</em>
+      <div style={{fontSize:11,color:"#3a3a44",lineHeight:1.7,marginBottom:8}}>
+        {step === 'error' ? "Auth failed. " : ""}Enter your <span style={{color:"#666"}}>Azure app client ID</span> to connect Microsoft.
+      </div>
+      <div style={{display:"flex",gap:6}}>
+        <input value={cidDraft} onChange={e=>setCidDraft(e.target.value)}
+          placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+          style={{...C.inp,flex:1,fontSize:10,fontFamily:"DM Mono,monospace"}}/>
+        {cidDraft && <button onClick={()=>startAuth(cidDraft)} style={C.btn}>→</button>}
+      </div>
+      <div style={{fontSize:9,color:"#252530",marginTop:8,lineHeight:1.7}}>
+        portal.azure.com → App registrations → New → grant <em>Calendars.Read</em> + <em>Tasks.ReadWrite</em> → enable public client flows
       </div>
     </div>
   );
-  if (step === 'authenticating') return (
-    <div style={{paddingTop:8,display:"flex",alignItems:"center",gap:8}}>
-      <div style={{width:10,height:10,border:"1.5px solid #333",borderTop:"1.5px solid #888",
-        borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>
-      <span style={{fontSize:11,color:"#555"}}>Authentification dans le navigateur…</span>
+  if (step === 'devicecode' || step === 'polling') return (
+    <div style={{paddingTop:6}}>
+      <div style={{fontSize:11,color:"#555",marginBottom:8}}>
+        Open <span style={{color:"var(--accent)"}}>{deviceInfo?.verification_uri || "microsoft.com/devicelogin"}</span> and enter:
+      </div>
+      <div style={{fontFamily:"DM Mono,monospace",fontSize:22,letterSpacing:5,color:"#e0e0e0",
+        background:"rgba(255,255,255,0.06)",borderRadius:8,padding:"8px 12px",textAlign:"center",marginBottom:8}}>
+        {deviceInfo?.user_code || "···"}
+      </div>
+      <div style={{fontSize:10,color:"#333",display:"flex",alignItems:"center",gap:6}}>
+        <div style={{width:8,height:8,border:"1.5px solid #333",borderTop:"1.5px solid #888",borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>
+        Waiting for authorization…
+      </div>
     </div>
   );
   return null;
