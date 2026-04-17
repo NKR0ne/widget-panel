@@ -55,10 +55,4 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resizeStart: (startX, startW) => ipcRenderer.send('panel-resize-start', startX, startW),
     resizeEnd:   ()               => ipcRenderer.send('panel-resize-end'),
   },
-
-  outlook: {
-    calendar:     ()   => ipcRenderer.invoke('outlook-calendar'),
-    tasks:        ()   => ipcRenderer.invoke('outlook-tasks'),
-    completeTask: (id) => ipcRenderer.invoke('outlook-complete-task', id),
-  },
 })
