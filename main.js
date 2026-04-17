@@ -576,20 +576,69 @@ ipcMain.handle('ms-graph-patch', async (_e, url, accessToken, patchBody) => {
   }, body)
 })
 
-ipcMain.handle('ms-devicecode-start', async (_e, clientId, scopes) => {
-  const body = `client_id=${encodeURIComponent(clientId)}&scope=${encodeURIComponent(scopes.join(' '))}`
-  return httpsRequest({
-    hostname: 'login.microsoftonline.com', path: '/common/oauth2/v2.0/devicecode', method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) }
-  }, body)
-})
+// Auth code + PKCE flow — opens the real browser so MFA / conditional access work.
+// Fixed callback port so the redirect URI is predictable (register it in Azure once).
+const MS_AUTH_PORT = 47340
 
-ipcMain.handle('ms-devicecode-poll', async (_e, clientId, deviceCode) => {
-  const body = `client_id=${encodeURIComponent(clientId)}&grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=${encodeURIComponent(deviceCode)}`
-  return httpsRequest({
-    hostname: 'login.microsoftonline.com', path: '/common/oauth2/v2.0/token', method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) }
-  }, body)
+ipcMain.handle('ms-auth-pkce', async (_e, clientId, scopes) => {
+  const crypto = require('crypto')
+  const http   = require('http')
+
+  return new Promise((resolve, reject) => {
+    const codeVerifier  = crypto.randomBytes(32).toString('base64url')
+    const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url')
+    const redirectUri   = `http://localhost:${MS_AUTH_PORT}/callback`
+
+    const authUrl = 'https://login.microsoftonline.com/common/oauth2/v2.0/authorize'
+      + `?client_id=${encodeURIComponent(clientId)}`
+      + `&response_type=code`
+      + `&redirect_uri=${encodeURIComponent(redirectUri)}`
+      + `&scope=${encodeURIComponent(scopes.join(' '))}`
+      + `&code_challenge=${codeChallenge}`
+      + `&code_challenge_method=S256`
+      + `&prompt=select_account`
+
+    const server = http.createServer((req, res) => {
+      if (!req.url?.startsWith('/callback')) { res.end(); return }
+      const params = new URL(req.url, `http://localhost:${MS_AUTH_PORT}`).searchParams
+      const code   = params.get('code')
+      const error  = params.get('error')
+
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+      res.end(`<!DOCTYPE html><html><head><meta charset=utf-8><title>Widget Panel</title></head>
+        <body style="font-family:system-ui;background:#0a0a0c;color:#aaa;display:flex;align-items:center;
+          justify-content:center;height:100vh;margin:0;flex-direction:column;gap:14px">
+          <div style="font-size:32px">${error ? '✗' : '✓'}</div>
+          <div style="font-size:14px">${error
+            ? 'Authentication failed: ' + error
+            : 'Authentication complete — you can close this tab.'}</div>
+        </body></html>`)
+
+      server.close()
+      if (error) { reject(new Error(error)); return }
+      if (!code)  { reject(new Error('no code in callback')); return }
+
+      const body = `client_id=${encodeURIComponent(clientId)}`
+        + `&grant_type=authorization_code`
+        + `&code=${encodeURIComponent(code)}`
+        + `&redirect_uri=${encodeURIComponent(redirectUri)}`
+        + `&code_verifier=${encodeURIComponent(codeVerifier)}`
+
+      httpsRequest({
+        hostname: 'login.microsoftonline.com', path: '/common/oauth2/v2.0/token', method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) }
+      }, body).then(resolve).catch(reject)
+    })
+
+    server.on('error', err => reject(err))
+    server.listen(MS_AUTH_PORT, '127.0.0.1', () => {
+      log('[ms-auth] callback server ready on', MS_AUTH_PORT, '— opening browser')
+      shell.openExternal(authUrl)
+    })
+
+    const timeout = setTimeout(() => { server.close(); reject(new Error('auth timeout')) }, 5 * 60 * 1000)
+    server.on('close', () => clearTimeout(timeout))
+  })
 })
 
 ipcMain.handle('ms-token-refresh', async (_e, clientId, refreshToken) => {
