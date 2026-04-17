@@ -12,8 +12,6 @@ const YF_QUOTE = (sym) => PROXY1 + encodeURIComponent(`https://query1.finance.ya
 const SK_CONFIG   = "wp-config";
 const SK_COLW     = "wp-col-widths";
 const SK_EXPANDED = "wp-expanded";
-const SK_MS_CLIENT = "wp-ms-client";
-const SK_MS_TOKENS = "wp-ms-tokens";
 
 // ── Palette & system widget defs ─────────────────────────────────────────────
 const PALETTE = ["#4f8ef7","#5cc8a8","#b07ef7","#f7a64f","#f74f7e","#4ff7c8","#f7f74f","#c8f74f"];
@@ -22,8 +20,8 @@ const SYS = [
   { id:"traffic", label:"Traffic",          note:"TomTom · free key",             color:"#f77f4f" },
   { id:"stocks",  label:"Stocks",           note:"Finnhub · free key",            color:"#5cc8a8" },
   { id:"clock",   label:"Clock",            note:"No API needed",                 color:"#e8e8f0" },
-  { id:"agenda",  label:"Outlook Agenda",   note:"Microsoft Graph · OAuth",       color:"#0078d4" },
-  { id:"todo",    label:"Microsoft To-Do",  note:"Microsoft Graph · OAuth",       color:"#2564cf" },
+  { id:"agenda",  label:"Outlook Agenda",   note:"Outlook COM · local",           color:"#0078d4" },
+  { id:"todo",    label:"Microsoft To-Do",  note:"Outlook COM · local",           color:"#2564cf" },
 ];
 
 // ── Mock fallback data ───────────────────────────────────────────────────────
@@ -573,211 +571,78 @@ function ClockWidget() {
   };
 }
 
-// ── Microsoft auth hook (shared store keys: wp-ms-client + wp-ms-tokens) ─────
-function useMsAuth() {
-  const [clientId,   setCid]    = useState('');
-  const [tokens,     setTokens] = useState(null);
-  const [step,       setStep]   = useState('loading');
-  // step: loading | setup | devicecode | polling | ok | error
-  const [deviceInfo, setDevice] = useState(null);
-  const [cidDraft,   setCidDraft] = useState('');
-  const msApi = window.electronAPI?.msGraph;
-
-  useEffect(() => {
-    Promise.all([api.store.get(SK_MS_CLIENT), api.store.get(SK_MS_TOKENS)]).then(([cid, tokStr]) => {
-      const cid_ = cid || '';
-      setCid(cid_);
-      setCidDraft(cid_);
-      if (!cid_) { setStep('setup'); return; }
-      const tok = tokStr ? (() => { try { return JSON.parse(tokStr); } catch { return null; } })() : null;
-      if (!tok) { setStep('setup'); return; }
-      if (tok.expiry < Date.now() + 60000) { doRefresh(cid_, tok.refreshToken); }
-      else { setTokens(tok); setStep('ok'); }
-    });
-  }, []);
-
-  // Auto-refresh 5 min before expiry
-  useEffect(() => {
-    if (step !== 'ok' || !tokens) return;
-    const ttl = tokens.expiry - Date.now() - 5 * 60 * 1000;
-    const t = setTimeout(() => doRefresh(clientId, tokens.refreshToken), Math.max(0, ttl));
-    return () => clearTimeout(t);
-  }, [tokens?.expiry, step]);
-
-  async function doRefresh(cid, rt) {
-    try {
-      const res = await msApi?.tokenRefresh(cid, rt);
-      if (res?.body?.access_token) {
-        saveTok({ accessToken: res.body.access_token, refreshToken: res.body.refresh_token || rt,
-                  expiry: Date.now() + (res.body.expires_in || 3600) * 1000 });
-      } else { setStep('setup'); }
-    } catch { setStep('setup'); }
-  }
-
-  function saveTok(tok) {
-    setTokens(tok);
-    api.store.set(SK_MS_TOKENS, JSON.stringify(tok));
-    setStep('ok');
-  }
-
-  async function startAuth(cid) {
-    const scopes = ['Calendars.Read', 'Tasks.ReadWrite', 'offline_access', 'User.Read'];
-    setCid(cid);
-    api.store.set(SK_MS_CLIENT, cid);
-    setStep('devicecode');
-    try {
-      const res = await msApi?.deviceCodeStart(cid, scopes);
-      if (res?.body?.error || !res?.body?.user_code) { setStep('error'); return; }
-      setDevice(res.body);
-      setStep('polling');
-      poll(cid, res.body.device_code, res.body.interval || 5);
-    } catch { setStep('error'); }
-  }
-
-  function poll(cid, code, interval) {
-    setTimeout(async () => {
-      try {
-        const res = await msApi?.deviceCodePoll(cid, code);
-        const b = res?.body;
-        if (b?.access_token) {
-          saveTok({ accessToken: b.access_token, refreshToken: b.refresh_token,
-                    expiry: Date.now() + (b.expires_in || 3600) * 1000 });
-        } else if (b?.error === 'authorization_pending') { poll(cid, code, interval); }
-        else if (b?.error === 'slow_down')               { poll(cid, code, interval + 5); }
-        else { setStep('error'); }
-      } catch { setStep('error'); }
-    }, interval * 1000);
-  }
-
-  function signOut() {
-    setTokens(null); setStep('setup');
-    api.store.delete(SK_MS_TOKENS);
-  }
-
-  return { clientId, tokens, step, deviceInfo, cidDraft, setCidDraft, startAuth, signOut };
-}
-
-// Shared setup UI used by both MS widgets
-function MsSetupPane({ step, deviceInfo, cidDraft, setCidDraft, startAuth, accentColor }) {
-  if (step === 'setup' || step === 'error') return (
-    <div style={{paddingTop:6}}>
-      <div style={{fontSize:11,color:"#3a3a44",lineHeight:1.7,marginBottom:8}}>
-        {step === 'error' ? "Auth failed. " : ""}Enter your <span style={{color:"#666"}}>Azure app client ID</span> to connect Microsoft.
-      </div>
-      <div style={{display:"flex",gap:6}}>
-        <input value={cidDraft} onChange={e=>setCidDraft(e.target.value)}
-          placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-          style={{...C.inp,flex:1,fontSize:10,fontFamily:"DM Mono,monospace"}}/>
-        {cidDraft && <button onClick={()=>startAuth(cidDraft)} style={C.btn}>→</button>}
-      </div>
-      <div style={{fontSize:9,color:"#252530",marginTop:8,lineHeight:1.7}}>
-        portal.azure.com → App registrations → New → grant <em>Calendars.Read</em> + <em>Tasks.ReadWrite</em> → enable public client flows
-      </div>
-    </div>
-  );
-  if (step === 'devicecode' || step === 'polling') return (
-    <div style={{paddingTop:6}}>
-      <div style={{fontSize:11,color:"#555",marginBottom:8}}>
-        Open <span style={{color:"var(--accent)"}}>{deviceInfo?.verification_uri || "microsoft.com/devicelogin"}</span> and enter:
-      </div>
-      <div style={{fontFamily:"DM Mono,monospace",fontSize:22,letterSpacing:5,color:"#e0e0e0",
-        background:"rgba(255,255,255,0.06)",borderRadius:8,padding:"8px 12px",textAlign:"center",marginBottom:8}}>
-        {deviceInfo?.user_code || "···"}
-      </div>
-      <div style={{fontSize:10,color:"#333",display:"flex",alignItems:"center",gap:6}}>
-        <div style={{width:8,height:8,border:"1.5px solid #333",borderTop:"1.5px solid #888",borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>
-        Waiting for authorization…
-      </div>
-    </div>
-  );
-  return null;
-}
-
-// ── Outlook Agenda widget ─────────────────────────────────────────────────────
+// ── Outlook Agenda widget (Outlook COM via PowerShell — no Azure/OAuth needed) ─
 function AgendaWidget() {
-  const auth = useMsAuth();
-  const [events,  setEvents]  = useState([]);
+  const [events,  setEvents]  = useState(null);  // null = loading
   const [demo,    setDemo]    = useState(false);
-  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (auth.step !== 'ok' || !auth.tokens) return;
-    const go = () => fetchEvents(auth.tokens.accessToken);
+    const go = async () => {
+      try {
+        const data = await window.electronAPI?.outlook?.calendar();
+        if (Array.isArray(data) && data.length > 0) { setEvents(data); setDemo(false); }
+        else if (Array.isArray(data))                { setEvents([]); setDemo(false); }
+        else                                          { setEvents(MOCK_EVENTS); setDemo(true); }
+      } catch { setEvents(MOCK_EVENTS); setDemo(true); }
+    };
     go();
     const t = setInterval(go, 5 * 60 * 1000);
     return () => clearInterval(t);
-  }, [auth.step, auth.tokens?.accessToken]);
-
-  async function fetchEvents(token) {
-    setLoading(true);
-    try {
-      const now = new Date(), end = new Date(now.getTime() + 2 * 86400000);
-      const url = `https://graph.microsoft.com/v1.0/me/calendar/events`
-        + `?$filter=start/dateTime ge '${now.toISOString()}' and start/dateTime le '${end.toISOString()}'`
-        + `&$orderby=start/dateTime&$select=subject,start,end,location,isAllDay&$top=10`;
-      const res = await window.electronAPI.msGraph.fetch(url, token);
-      if (res.status === 401) { auth.signOut(); return; }
-      if (res.body?.value) { setEvents(res.body.value); setDemo(false); }
-      else { setEvents(MOCK_EVENTS); setDemo(true); }
-    } catch { setEvents(MOCK_EVENTS); setDemo(true); }
-    setLoading(false);
-  }
+  }, []);
 
   function fmtTime(dt) {
     return new Date(dt).toLocaleTimeString("fr-CA", { hour:"2-digit", minute:"2-digit" });
   }
 
-  const today = new Date(); today.setHours(0,0,0,0);
+  const today    = new Date(); today.setHours(0,0,0,0);
   const tomorrow = new Date(today.getTime() + 86400000);
   function dayKey(ev) {
-    const d = new Date(ev.start.dateTime || ev.start.date); d.setHours(0,0,0,0);
-    if (d.getTime() === today.getTime()) return "Aujourd'hui";
+    const d = new Date(ev.start); d.setHours(0,0,0,0);
+    if (d.getTime() === today.getTime())    return "Aujourd'hui";
     if (d.getTime() === tomorrow.getTime()) return "Demain";
     return d.toLocaleDateString("fr-CA", { weekday:"long", month:"short", day:"numeric" });
   }
-  const groups = {};
-  events.forEach(ev => { const k = dayKey(ev); (groups[k] = groups[k]||[]).push(ev); });
 
-  const showAuth = ['loading','setup','devicecode','polling','error'].includes(auth.step);
+  // COM returns {start, end} as ISO strings; MOCK_EVENTS use {start:{dateTime:...}}
+  function evStart(ev) { return ev.start?.dateTime ?? ev.start; }
+  function evEnd(ev)   { return ev.end?.dateTime   ?? ev.end;   }
+  function evLoc(ev)   { return ev.location?.displayName ?? ev.location ?? ""; }
+
+  const groups = {};
+  (events || []).forEach(ev => { const k = dayKey(ev); (groups[k] = groups[k]||[]).push(ev); });
 
   return { color:"#0078d4", title:"Outlook Agenda",
     content:(
       <div>
-        {showAuth && <MsSetupPane {...auth}/>}
-        {auth.step === 'ok' && (
+        {events === null && <Skel n={2}/>}
+        {events !== null && (
           <div>
-            {loading && <Skel n={2}/>}
-            {!loading && (
-              <div>
-                {demo && <DemoBadge/>}
-                {Object.keys(groups).length === 0 && (
-                  <div style={{paddingTop:10,fontSize:11,color:"#2a2a34",textAlign:"center"}}>Aucun événement à venir</div>
-                )}
-                {Object.entries(groups).map(([day, evs]) => (
-                  <div key={day} style={{marginTop:10}}>
-                    <div style={{fontSize:9,color:"#2564cf",textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:6}}>{day}</div>
-                    {evs.map((ev,i) => {
-                      const hasLoc = ev.location?.displayName;
-                      return (
-                        <div key={ev.id} style={{display:"flex",gap:10,padding:"6px 0",
-                          borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none",alignItems:"flex-start"}}>
-                          <div style={{flexShrink:0,textAlign:"right",width:42}}>
-                            <div style={{fontSize:10,color:"#0078d4",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.start.dateTime)}</div>
-                            <div style={{fontSize:9,color:"#2a2a34",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.end.dateTime)}</div>
-                          </div>
-                          <div style={{width:2,alignSelf:"stretch",background:"#0078d422",borderRadius:1,flexShrink:0}}/>
-                          <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:12,color:"#ccc",lineHeight:1.35}}>{ev.subject}</div>
-                            {hasLoc && <div style={{fontSize:10,color:"#2a2a34",marginTop:2}}>{ev.location.displayName}</div>}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ))}
-                <button onClick={auth.signOut} style={{marginTop:14,background:"none",border:"none",fontSize:9,color:"#222228",cursor:"pointer",padding:0}}>Déconnecter</button>
-              </div>
+            {demo && <DemoBadge/>}
+            {Object.keys(groups).length === 0 && (
+              <div style={{paddingTop:10,fontSize:11,color:"#2a2a34",textAlign:"center"}}>Aucun événement à venir</div>
             )}
+            {Object.entries(groups).map(([day, evs]) => (
+              <div key={day} style={{marginTop:10}}>
+                <div style={{fontSize:9,color:"#2564cf",textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:6}}>{day}</div>
+                {evs.map((ev, i) => {
+                  const loc = evLoc(ev);
+                  return (
+                    <div key={ev.id || i} style={{display:"flex",gap:10,padding:"6px 0",
+                      borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none",alignItems:"flex-start"}}>
+                      <div style={{flexShrink:0,textAlign:"right",width:42}}>
+                        <div style={{fontSize:10,color:"#0078d4",fontFamily:"DM Mono,monospace"}}>{fmtTime(evStart(ev))}</div>
+                        <div style={{fontSize:9,color:"#2a2a34",fontFamily:"DM Mono,monospace"}}>{fmtTime(evEnd(ev))}</div>
+                      </div>
+                      <div style={{width:2,alignSelf:"stretch",background:"#0078d422",borderRadius:1,flexShrink:0}}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,color:"#ccc",lineHeight:1.35}}>{ev.subject}</div>
+                        {loc && <div style={{fontSize:10,color:"#2a2a34",marginTop:2}}>{loc}</div>}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -785,87 +650,61 @@ function AgendaWidget() {
   };
 }
 
-// ── Microsoft To-Do widget ────────────────────────────────────────────────────
+// ── Microsoft To-Do widget (Outlook COM via PowerShell — no Azure/OAuth needed) ─
 function TodoWidget() {
-  const auth   = useMsAuth();
-  const [tasks,  setTasks]   = useState([]);
-  const [listId, setListId]  = useState(null);
-  const [demo,   setDemo]    = useState(false);
-  const [loading,setLoading] = useState(false);
+  const [tasks,   setTasks]   = useState(null);  // null = loading
+  const [demo,    setDemo]    = useState(false);
 
   useEffect(() => {
-    if (auth.step !== 'ok' || !auth.tokens) return;
-    const go = () => fetchTasks(auth.tokens.accessToken);
+    const go = async () => {
+      try {
+        const data = await window.electronAPI?.outlook?.tasks();
+        if (Array.isArray(data) && data.length > 0) { setTasks(data); setDemo(false); }
+        else if (Array.isArray(data))                { setTasks([]); setDemo(false); }
+        else                                          { setTasks(MOCK_TASKS); setDemo(true); }
+      } catch { setTasks(MOCK_TASKS); setDemo(true); }
+    };
     go();
     const t = setInterval(go, 5 * 60 * 1000);
     return () => clearInterval(t);
-  }, [auth.step, auth.tokens?.accessToken]);
-
-  async function fetchTasks(token) {
-    setLoading(true);
-    try {
-      const listsRes = await window.electronAPI.msGraph.fetch(
-        'https://graph.microsoft.com/v1.0/me/todo/lists', token);
-      if (listsRes.status === 401) { auth.signOut(); return; }
-      const lists = listsRes.body?.value || [];
-      const list  = lists.find(l => l.wellknownListName === 'defaultList') || lists[0];
-      if (!list) { setLoading(false); return; }
-      setListId(list.id);
-      const tasksRes = await window.electronAPI.msGraph.fetch(
-        `https://graph.microsoft.com/v1.0/me/todo/lists/${list.id}/tasks`
-        + `?$filter=status ne 'completed'&$orderby=importance desc,createdDateTime&$top=20`, token);
-      if (tasksRes.body?.value) { setTasks(tasksRes.body.value); setDemo(false); }
-      else { setTasks(MOCK_TASKS); setDemo(true); }
-    } catch { setTasks(MOCK_TASKS); setDemo(true); }
-    setLoading(false);
-  }
+  }, []);
 
   async function complete(taskId) {
     setTasks(p => p.filter(t => t.id !== taskId));
-    if (!demo && listId && auth.tokens) {
-      await window.electronAPI.msGraph.patch(
-        `https://graph.microsoft.com/v1.0/me/todo/lists/${listId}/tasks/${taskId}`,
-        auth.tokens.accessToken, { status: 'completed' });
+    if (!demo) {
+      try { await window.electronAPI?.outlook?.completeTask(taskId); } catch {}
     }
   }
 
   const importanceColor = i => i === 'high' ? '#f74f7e' : i === 'normal' ? '#555' : '#333';
 
-  const showAuth = ['loading','setup','devicecode','polling','error'].includes(auth.step);
-
   return { color:"#2564cf", title:"Microsoft To-Do",
     content:(
       <div>
-        {showAuth && <MsSetupPane {...auth}/>}
-        {auth.step === 'ok' && (
+        {tasks === null && <Skel n={3}/>}
+        {tasks !== null && (
           <div>
-            {loading && <Skel n={3}/>}
-            {!loading && (
-              <div>
-                {demo && <DemoBadge/>}
-                {tasks.length === 0 && (
-                  <div style={{paddingTop:10,fontSize:11,color:"#2a2a34",textAlign:"center"}}>Aucune tâche en cours ✓</div>
-                )}
-                {tasks.map((task, i) => (
-                  <div key={task.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",
-                    borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none"}}>
-                    <button onClick={()=>complete(task.id)} title="Mark complete"
-                      style={{width:16,height:16,borderRadius:"50%",border:"1.5px solid #333",background:"none",
-                        cursor:"pointer",flexShrink:0,padding:0,display:"flex",alignItems:"center",justifyContent:"center",
-                        transition:"border-color 0.15s,background 0.15s"}}
-                      onMouseEnter={e=>{e.currentTarget.style.borderColor="#2564cf";e.currentTarget.style.background="rgba(37,100,207,0.15)";}}
-                      onMouseLeave={e=>{e.currentTarget.style.borderColor="#333";e.currentTarget.style.background="none";}}>
-                    </button>
-                    <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12,color:"#bbb",lineHeight:1.35}}>{task.title}</div>
-                    </div>
-                    <div style={{width:5,height:5,borderRadius:"50%",background:importanceColor(task.importance),flexShrink:0}}/>
-                  </div>
-                ))}
-                {tasks.length > 0 && <div style={{fontSize:9,color:"#222228",marginTop:10}}>{tasks.length} tâche{tasks.length>1?"s":""} · Liste principale</div>}
-                <button onClick={auth.signOut} style={{marginTop:6,background:"none",border:"none",fontSize:9,color:"#222228",cursor:"pointer",padding:0,display:"block"}}>Déconnecter</button>
-              </div>
+            {demo && <DemoBadge/>}
+            {tasks.length === 0 && (
+              <div style={{paddingTop:10,fontSize:11,color:"#2a2a34",textAlign:"center"}}>Aucune tâche en cours ✓</div>
             )}
+            {tasks.map((task, i) => (
+              <div key={task.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",
+                borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none"}}>
+                <button onClick={()=>complete(task.id)} title="Mark complete"
+                  style={{width:16,height:16,borderRadius:"50%",border:"1.5px solid #333",background:"none",
+                    cursor:"pointer",flexShrink:0,padding:0,display:"flex",alignItems:"center",justifyContent:"center",
+                    transition:"border-color 0.15s,background 0.15s"}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor="#2564cf";e.currentTarget.style.background="rgba(37,100,207,0.15)";}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor="#333";e.currentTarget.style.background="none";}}>
+                </button>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:12,color:"#bbb",lineHeight:1.35}}>{task.title}</div>
+                </div>
+                <div style={{width:5,height:5,borderRadius:"50%",background:importanceColor(task.importance),flexShrink:0}}/>
+              </div>
+            ))}
+            {tasks.length > 0 && <div style={{fontSize:9,color:"#222228",marginTop:10}}>{tasks.length} tâche{tasks.length>1?"s":""} · Outlook Tasks</div>}
           </div>
         )}
       </div>

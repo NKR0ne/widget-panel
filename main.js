@@ -649,6 +649,107 @@ ipcMain.handle('ms-token-refresh', async (_e, clientId, refreshToken) => {
   }, body)
 })
 
+// ── Outlook COM automation (PowerShell via local Outlook install) ─────────────
+function runPowerShell(script) {
+  return new Promise((resolve) => {
+    const child = spawn('powershell', ['-NoProfile', '-NonInteractive', '-Command', '-'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let out = ''
+    child.stdout.on('data', d => { out += d })
+    child.on('close', () => {
+      const trimmed = out.trim()
+      if (!trimmed || trimmed === 'null') { resolve([]); return }
+      try { resolve(JSON.parse(trimmed)) }
+      catch { resolve([]) }
+    })
+    child.on('error', () => resolve([]))
+    child.stdin.write(script)
+    child.stdin.end()
+  })
+}
+
+const PS_CALENDAR = `
+$ErrorActionPreference = 'Stop'
+try {
+  $ol = New-Object -ComObject Outlook.Application
+  $ns = $ol.GetNamespace('MAPI')
+  $cal = $ns.GetDefaultFolder(9)
+  $items = $cal.Items
+  $items.IncludeRecurrences = $true
+  $items.Sort('[Start]')
+  $today = (Get-Date).Date
+  $cutoff = $today.AddDays(2)
+  $filter = "[Start] >= '" + $today.ToString('g') + "' AND [Start] < '" + $cutoff.ToString('g') + "'"
+  $filtered = $items.Restrict($filter)
+  $arr = @()
+  foreach ($item in $filtered) {
+    if ($item.Class -ne 26) { continue }
+    $arr += [PSCustomObject]@{
+      id       = $item.EntryID
+      subject  = $item.Subject
+      start    = $item.Start.ToString('o')
+      end      = $item.End.ToString('o')
+      location = $item.Location
+      allDay   = $item.AllDayEvent
+    }
+  }
+  if ($arr.Count -eq 0) { '[]' } else { @($arr) | ConvertTo-Json -Compress -Depth 2 }
+} catch { '[]' }
+`
+
+const PS_TASKS = `
+$ErrorActionPreference = 'Stop'
+try {
+  $ol = New-Object -ComObject Outlook.Application
+  $ns = $ol.GetNamespace('MAPI')
+  $folder = $ns.GetDefaultFolder(13)
+  $items = $folder.Items
+  $arr = @()
+  foreach ($item in $items) {
+    if ($item.Class -ne 48) { continue }
+    if ($item.Complete) { continue }
+    $imp = switch ($item.Importance) { 0 { 'low' } 1 { 'normal' } 2 { 'high' } default { 'normal' } }
+    $due = $null
+    try { if ($item.DueDate -and $item.DueDate.Year -gt 4000) { $due = $null } elseif ($item.DueDate -and $item.DueDate.Year -gt 1970) { $due = $item.DueDate.ToString('o') } } catch {}
+    $arr += [PSCustomObject]@{
+      id         = $item.EntryID
+      title      = $item.Subject
+      importance = $imp
+      dueDate    = $due
+    }
+  }
+  if ($arr.Count -eq 0) { '[]' } else { @($arr) | ConvertTo-Json -Compress -Depth 2 }
+} catch { '[]' }
+`
+
+ipcMain.handle('outlook-calendar', async () => {
+  try { return await runPowerShell(PS_CALENDAR) }
+  catch { return [] }
+})
+
+ipcMain.handle('outlook-tasks', async () => {
+  try { return await runPowerShell(PS_TASKS) }
+  catch { return [] }
+})
+
+ipcMain.handle('outlook-complete-task', async (_e, entryId) => {
+  // EntryIDs are hex strings — safe to embed directly
+  const safe = String(entryId).replace(/'/g, '')
+  const script = `
+try {
+  $ol = New-Object -ComObject Outlook.Application
+  $ns = $ol.GetNamespace('MAPI')
+  $item = $ns.GetItemFromID('${safe}')
+  $item.Complete = $true
+  $item.Save()
+  'ok'
+} catch { 'error' }
+`
+  try { await runPowerShell(script) } catch {}
+  return true
+})
+
 app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   if (pipeServer) pipeServer.close()
