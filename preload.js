@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   msGraph: {
     fetch:        (url, token)        => ipcRenderer.invoke('ms-graph-fetch',  url, token),
     patch:        (url, token, body)  => ipcRenderer.invoke('ms-graph-patch',  url, token, body),
+    post:         (url, token, body)  => ipcRenderer.invoke('ms-graph-post',   url, token, body),
     authPkce:     (clientId, scopes)  => ipcRenderer.invoke('ms-auth-pkce',    clientId, scopes),
     tokenRefresh: (clientId, rt)      => ipcRenderer.invoke('ms-token-refresh', clientId, rt),
   },

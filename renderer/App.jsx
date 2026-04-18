@@ -881,6 +881,23 @@ function TodoWidget() {
     }
   }
 
+  const [newTitle, setNewTitle] = useState('');
+
+  async function addTask(e) {
+    e.preventDefault();
+    const title = newTitle.trim();
+    if (!title || !activeListId || !auth.tokens) return;
+    setNewTitle('');
+    const tmp = { id: 'tmp-' + Date.now(), title, importance: 'normal', status: 'notStarted' };
+    setTasks(p => [tmp, ...p]);
+    try {
+      const res = await window.electronAPI.msGraph.post(
+        `https://graph.microsoft.com/v1.0/me/todo/lists/${activeListId}/tasks`,
+        auth.tokens.accessToken, { title });
+      if (res.body?.id) setTasks(p => p.map(t => t.id === tmp.id ? res.body : t));
+    } catch { setTasks(p => p.filter(t => t.id !== tmp.id)); }
+  }
+
   const importanceColor = i => i === 'high' ? '#f74f7e' : i === 'normal' ? '#555' : '#333';
   const showAuth = ['loading','setup','authenticating','error'].includes(auth.step);
   const activeList = lists.find(l => l.id === activeListId);
@@ -924,7 +941,13 @@ function TodoWidget() {
                   </div>
                 ))}
                 {tasks.length > 0 && <div style={{fontSize:9,color:"#222228",marginTop:10}}>{tasks.length} tâche{tasks.length>1?"s":""} · {activeList?.displayName||''}</div>}
-                <button onClick={auth.signOut} style={{marginTop:6,background:"none",border:"none",fontSize:9,color:"#222228",cursor:"pointer",padding:0,display:"block"}}>Déconnecter</button>
+                <form onSubmit={addTask} style={{display:"flex",gap:6,marginTop:10}}>
+                  <input value={newTitle} onChange={e=>setNewTitle(e.target.value)}
+                    placeholder="Nouvelle tâche…"
+                    style={{...C.inp,flex:1,fontSize:11,padding:"5px 8px"}}/>
+                  {newTitle.trim() && <button type="submit" style={{...C.btn,padding:"5px 10px",fontSize:13,lineHeight:1}}>+</button>}
+                </form>
+                <button onClick={auth.signOut} style={{marginTop:8,background:"none",border:"none",fontSize:9,color:"#222228",cursor:"pointer",padding:0,display:"block"}}>Déconnecter</button>
               </div>
             )}
           </div>

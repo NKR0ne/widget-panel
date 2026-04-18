@@ -576,6 +576,16 @@ ipcMain.handle('ms-graph-patch', async (_e, url, accessToken, patchBody) => {
   }, body)
 })
 
+ipcMain.handle('ms-graph-post', async (_e, url, accessToken, postBody) => {
+  const u = new URL(url)
+  const body = JSON.stringify(postBody)
+  return httpsRequest({
+    hostname: u.hostname, path: u.pathname + u.search, method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json',
+               'Content-Length': Buffer.byteLength(body) }
+  }, body)
+})
+
 // Auth code + PKCE flow — opens the real browser so MFA / conditional access work.
 // Fixed callback port so the redirect URI is predictable (register it in Azure once).
 const MS_AUTH_PORT = 47340
