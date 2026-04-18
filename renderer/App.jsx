@@ -671,31 +671,62 @@ function MsSetupPane({ step, cidDraft, setCidDraft, startAuth }) {
 // ── Outlook Agenda widget ─────────────────────────────────────────────────────
 function AgendaWidget() {
   const auth = useMsAuth();
-  const [events,  setEvents]  = useState([]);
-  const [demo,    setDemo]    = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [events,      setEvents]      = useState([]);
+  const [calendars,   setCalendars]   = useState([]);
+  const [selCals,     setSelCals]     = useState(null); // null = all
+  const [showSettings,setShowSettings]= useState(false);
+  const [demo,        setDemo]        = useState(false);
+  const [loading,     setLoading]     = useState(false);
+
+  useEffect(() => {
+    api.store.get('wp-agenda-cal-ids').then(v => {
+      if (v) try { setSelCals(new Set(JSON.parse(v))); } catch {}
+    });
+  }, []);
 
   useEffect(() => {
     if (auth.step !== 'ok' || !auth.tokens) return;
-    const go = () => fetchEvents(auth.tokens.accessToken);
+    const go = () => fetchAll(auth.tokens.accessToken);
     go();
     const t = setInterval(go, 5 * 60 * 1000);
     return () => clearInterval(t);
   }, [auth.step, auth.tokens?.accessToken]);
 
-  async function fetchEvents(token) {
+  async function fetchAll(token) {
     setLoading(true);
     try {
-      const now = new Date(), end = new Date(now.getTime() + 2 * 86400000);
-      const url = `https://graph.microsoft.com/v1.0/me/calendar/events`
-        + `?$filter=start/dateTime ge '${now.toISOString()}' and start/dateTime le '${end.toISOString()}'`
-        + `&$orderby=start/dateTime&$select=subject,start,end,location,isAllDay&$top=10`;
+      const calsRes = await window.electronAPI.msGraph.fetch(
+        'https://graph.microsoft.com/v1.0/me/calendars?$select=id,name,hexColor,color&$top=50', token);
+      if (calsRes.status === 401) { auth.signOut(); return; }
+      setCalendars(calsRes.body?.value || []);
+
+      const today = new Date(); today.setHours(0,0,0,0);
+      const cutoff = new Date(today.getTime() + 2 * 86400000);
+      const url = `https://graph.microsoft.com/v1.0/me/calendarView`
+        + `?startDateTime=${today.toISOString()}&endDateTime=${cutoff.toISOString()}`
+        + `&$select=subject,start,end,location,isAllDay,calendarId&$orderby=start/dateTime&$top=50`;
       const res = await window.electronAPI.msGraph.fetch(url, token);
       if (res.status === 401) { auth.signOut(); return; }
       if (res.body?.value) { setEvents(res.body.value); setDemo(false); }
       else { setEvents(MOCK_EVENTS); setDemo(true); }
     } catch { setEvents(MOCK_EVENTS); setDemo(true); }
     setLoading(false);
+  }
+
+  function toggleCal(id) {
+    setSelCals(prev => {
+      const base = prev || new Set(calendars.map(c => c.id));
+      const next = new Set(base);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      const isAll = next.size === calendars.length;
+      api.store.set('wp-agenda-cal-ids', isAll ? null : JSON.stringify([...next]));
+      return isAll ? null : next;
+    });
+  }
+
+  function calColor(calId) {
+    const cal = calendars.find(c => c.id === calId);
+    return cal?.hexColor || '#0078d4';
   }
 
   function fmtTime(dt) {
@@ -710,17 +741,40 @@ function AgendaWidget() {
     if (d.getTime() === tomorrow.getTime()) return "Demain";
     return d.toLocaleDateString("fr-CA", { weekday:"long", month:"short", day:"numeric" });
   }
+
+  const visible = selCals ? events.filter(ev => selCals.has(ev.calendarId)) : events;
   const groups = {};
-  events.forEach(ev => { const k = dayKey(ev); (groups[k] = groups[k]||[]).push(ev); });
+  visible.forEach(ev => { const k = dayKey(ev); (groups[k] = groups[k]||[]).push(ev); });
 
   const showAuth = ['loading','setup','authenticating','error'].includes(auth.step);
 
-  return { color:"#0078d4", title:"Outlook Agenda",
+  const settingsBtn = auth.step === 'ok' && calendars.length > 0
+    ? <button onClick={e=>{e.stopPropagation();setShowSettings(p=>!p);}}
+        style={{background:"none",border:"none",color:showSettings?"#0078d4":"#333",fontSize:12,cursor:"pointer",padding:"0 2px",lineHeight:1}}>⚙</button>
+    : null;
+
+  return { color:"#0078d4", title:"Outlook Agenda", badge: settingsBtn,
     content:(
       <div>
         {showAuth && <MsSetupPane {...auth}/>}
         {auth.step === 'ok' && (
           <div>
+            {showSettings && calendars.length > 0 && (
+              <div style={{paddingBottom:10,marginBottom:10,borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
+                {calendars.map(cal => {
+                  const checked = !selCals || selCals.has(cal.id);
+                  const color = cal.hexColor || '#0078d4';
+                  return (
+                    <div key={cal.id} onClick={()=>toggleCal(cal.id)}
+                      style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0",cursor:"pointer"}}>
+                      <div style={{width:10,height:10,borderRadius:2,background:checked?color:"transparent",
+                        border:`1.5px solid ${color}`,flexShrink:0,transition:"background 0.15s"}}/>
+                      <span style={{fontSize:11,color:checked?"#bbb":"#444"}}>{cal.name}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
             {loading && <Skel n={2}/>}
             {!loading && (
               <div>
@@ -733,6 +787,7 @@ function AgendaWidget() {
                     <div style={{fontSize:9,color:"#2564cf",textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:6}}>{day}</div>
                     {evs.map((ev,i) => {
                       const hasLoc = ev.location?.displayName;
+                      const barColor = calColor(ev.calendarId);
                       return (
                         <div key={ev.id} style={{display:"flex",gap:10,padding:"6px 0",
                           borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none",alignItems:"flex-start"}}>
@@ -740,7 +795,7 @@ function AgendaWidget() {
                             <div style={{fontSize:10,color:"#0078d4",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.start.dateTime)}</div>
                             <div style={{fontSize:9,color:"#2a2a34",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.end.dateTime)}</div>
                           </div>
-                          <div style={{width:2,alignSelf:"stretch",background:"#0078d422",borderRadius:1,flexShrink:0}}/>
+                          <div style={{width:2,alignSelf:"stretch",background:barColor+"44",borderRadius:1,flexShrink:0}}/>
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{fontSize:12,color:"#ccc",lineHeight:1.35}}>{ev.subject}</div>
                             {hasLoc && <div style={{fontSize:10,color:"#2a2a34",marginTop:2}}>{ev.location.displayName}</div>}
@@ -762,51 +817,73 @@ function AgendaWidget() {
 
 // ── Microsoft To-Do widget ────────────────────────────────────────────────────
 function TodoWidget() {
-  const auth   = useMsAuth();
-  const [tasks,  setTasks]   = useState([]);
-  const [listId, setListId]  = useState(null);
-  const [demo,   setDemo]    = useState(false);
-  const [loading,setLoading] = useState(false);
+  const auth = useMsAuth();
+  const [tasks,        setTasks]       = useState([]);
+  const [lists,        setLists]       = useState([]);
+  const [activeListId, setActiveListId]= useState(null);
+  const [demo,         setDemo]        = useState(false);
+  const [loading,      setLoading]     = useState(false);
+
+  useEffect(() => {
+    api.store.get('wp-todo-list-id').then(id => { if (id) setActiveListId(id); });
+  }, []);
 
   useEffect(() => {
     if (auth.step !== 'ok' || !auth.tokens) return;
-    const go = () => fetchTasks(auth.tokens.accessToken);
+    const go = () => fetchLists(auth.tokens.accessToken);
     go();
     const t = setInterval(go, 5 * 60 * 1000);
     return () => clearInterval(t);
   }, [auth.step, auth.tokens?.accessToken]);
 
-  async function fetchTasks(token) {
+  async function fetchLists(token) {
     setLoading(true);
     try {
-      const listsRes = await window.electronAPI.msGraph.fetch(
+      const res = await window.electronAPI.msGraph.fetch(
         'https://graph.microsoft.com/v1.0/me/todo/lists', token);
-      if (listsRes.status === 401) { auth.signOut(); return; }
-      const lists = listsRes.body?.value || [];
-      const list  = lists.find(l => l.wellknownListName === 'defaultList') || lists[0];
-      if (!list) { setLoading(false); return; }
-      setListId(list.id);
-      const tasksRes = await window.electronAPI.msGraph.fetch(
-        `https://graph.microsoft.com/v1.0/me/todo/lists/${list.id}/tasks`
-        + `?$filter=status ne 'completed'&$orderby=importance desc,createdDateTime&$top=20`, token);
-      if (tasksRes.body?.value) { setTasks(tasksRes.body.value); setDemo(false); }
-      else { setTasks(MOCK_TASKS); setDemo(true); }
+      if (res.status === 401) { auth.signOut(); return; }
+      const all = res.body?.value || [];
+      setLists(all);
+      const targetId = activeListId
+        || all.find(l => l.wellknownListName === 'defaultList')?.id
+        || all[0]?.id;
+      if (targetId) {
+        if (!activeListId) { setActiveListId(targetId); api.store.set('wp-todo-list-id', targetId); }
+        await loadTasks(token, targetId);
+      }
     } catch { setTasks(MOCK_TASKS); setDemo(true); }
+    setLoading(false);
+  }
+
+  async function loadTasks(token, lid) {
+    const res = await window.electronAPI.msGraph.fetch(
+      `https://graph.microsoft.com/v1.0/me/todo/lists/${lid}/tasks`
+      + `?$filter=status ne 'completed'&$orderby=importance desc,createdDateTime&$top=20`, token);
+    if (res.body?.value) { setTasks(res.body.value); setDemo(false); }
+    else { setTasks(MOCK_TASKS); setDemo(true); }
+  }
+
+  async function switchList(id) {
+    setActiveListId(id);
+    api.store.set('wp-todo-list-id', id);
+    if (!auth.tokens) return;
+    setLoading(true);
+    try { await loadTasks(auth.tokens.accessToken, id); } catch {}
     setLoading(false);
   }
 
   async function complete(taskId) {
     setTasks(p => p.filter(t => t.id !== taskId));
-    if (!demo && listId && auth.tokens) {
+    if (!demo && activeListId && auth.tokens) {
       await window.electronAPI.msGraph.patch(
-        `https://graph.microsoft.com/v1.0/me/todo/lists/${listId}/tasks/${taskId}`,
+        `https://graph.microsoft.com/v1.0/me/todo/lists/${activeListId}/tasks/${taskId}`,
         auth.tokens.accessToken, { status: 'completed' });
     }
   }
 
   const importanceColor = i => i === 'high' ? '#f74f7e' : i === 'normal' ? '#555' : '#333';
-
   const showAuth = ['loading','setup','authenticating','error'].includes(auth.step);
+  const activeList = lists.find(l => l.id === activeListId);
 
   return { color:"#2564cf", title:"Microsoft To-Do",
     content:(
@@ -814,6 +891,15 @@ function TodoWidget() {
         {showAuth && <MsSetupPane {...auth}/>}
         {auth.step === 'ok' && (
           <div>
+            {lists.length > 1 && (
+              <select value={activeListId||''} onChange={e=>switchList(e.target.value)}
+                style={{width:"100%",marginBottom:10,background:"rgba(255,255,255,0.05)",
+                  border:"1px solid rgba(255,255,255,0.08)",borderRadius:6,
+                  color:"#888",fontSize:11,padding:"5px 8px",cursor:"pointer",
+                  fontFamily:"'DM Sans',sans-serif",outline:"none"}}>
+                {lists.map(l => <option key={l.id} value={l.id} style={{background:"#18181c"}}>{l.displayName}</option>)}
+              </select>
+            )}
             {loading && <Skel n={3}/>}
             {!loading && (
               <div>
@@ -837,7 +923,7 @@ function TodoWidget() {
                     <div style={{width:5,height:5,borderRadius:"50%",background:importanceColor(task.importance),flexShrink:0}}/>
                   </div>
                 ))}
-                {tasks.length > 0 && <div style={{fontSize:9,color:"#222228",marginTop:10}}>{tasks.length} tâche{tasks.length>1?"s":""} · Liste principale</div>}
+                {tasks.length > 0 && <div style={{fontSize:9,color:"#222228",marginTop:10}}>{tasks.length} tâche{tasks.length>1?"s":""} · {activeList?.displayName||''}</div>}
                 <button onClick={auth.signOut} style={{marginTop:6,background:"none",border:"none",fontSize:9,color:"#222228",cursor:"pointer",padding:0,display:"block"}}>Déconnecter</button>
               </div>
             )}
