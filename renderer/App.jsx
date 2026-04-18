@@ -287,8 +287,8 @@ function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:12,color:"#a0a0a8",lineHeight:1.45,marginBottom:4}}>{item.title}</div>
                 <div style={{display:"flex",justifyContent:"space-between"}}>
-                  <span style={{fontSize:10,color:"#2e2e38"}}>{item.source}</span>
-                  <span style={{fontSize:10,color:"#242430",fontFamily:"DM Mono,monospace"}}>{item.time}</span>
+                  <span style={{fontSize:10,color:"#666"}}>{item.source}</span>
+                  <span style={{fontSize:10,color:"#666",fontFamily:"DM Mono,monospace"}}>{item.time}</span>
                 </div>
               </div>
             </div>
@@ -704,9 +704,10 @@ function AgendaWidget() {
       const today = new Date(); today.setHours(0,0,0,0);
       const cutoff = new Date(today.getTime() + 2 * 86400000);
       // calendarView doesn't support $orderby — sort client-side after fetch
+      // calendarId is not selectable via $select in v1.0; use $expand=calendar instead
       const url = `https://graph.microsoft.com/v1.0/me/calendarView`
         + `?startDateTime=${today.toISOString()}&endDateTime=${cutoff.toISOString()}`
-        + `&$select=subject,start,end,location,isAllDay,calendarId&$top=50`;
+        + `&$select=subject,start,end,location,isAllDay&$expand=calendar($select=id)&$top=50`;
       const res = await window.electronAPI.msGraph.fetch(url, token);
       if (res.status === 401) { auth.signOut(); setLoading(false); return; }
       if (res.body?.value) {
@@ -747,7 +748,7 @@ function AgendaWidget() {
     return d.toLocaleDateString("fr-CA", { weekday:"long", month:"short", day:"numeric" });
   }
 
-  const visible = selCals ? events.filter(ev => selCals.has(ev.calendarId)) : events;
+  const visible = selCals ? events.filter(ev => selCals.has(ev.calendar?.id)) : events;
   const groups = {};
   visible.forEach(ev => { const k = dayKey(ev); (groups[k] = groups[k]||[]).push(ev); });
 
@@ -785,14 +786,14 @@ function AgendaWidget() {
               <div>
                 {demo && <DemoBadge/>}
                 {Object.keys(groups).length === 0 && (
-                  <div style={{paddingTop:10,fontSize:11,color:"#2a2a34",textAlign:"center"}}>Aucun événement à venir</div>
+                  <div style={{paddingTop:10,fontSize:11,color:"#666",textAlign:"center"}}>Aucun événement à venir</div>
                 )}
                 {Object.entries(groups).map(([day, evs]) => (
                   <div key={day} style={{marginTop:10}}>
                     <div style={{fontSize:9,color:"#2564cf",textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:6}}>{day}</div>
                     {evs.map((ev,i) => {
                       const hasLoc = ev.location?.displayName;
-                      const barColor = calColor(ev.calendarId);
+                      const barColor = calColor(ev.calendar?.id);
                       return (
                         <div key={ev.id} style={{display:"flex",gap:10,padding:"6px 0",
                           borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none",alignItems:"flex-start"}}>

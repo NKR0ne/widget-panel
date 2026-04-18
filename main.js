@@ -576,16 +576,33 @@ ipcMain.handle('ms-graph-patch', async (_e, url, accessToken, patchBody) => {
   }, body)
 })
 
-ipcMain.handle('rss-fetch', async (_e, url) => {
-  try {
+function rssFetch(url, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirects > 5) { reject(new Error('too many redirects')); return }
     const u = new URL(url)
-    const result = await httpsRequest({
+    const mod = u.protocol === 'http:' ? require('http') : require('https')
+    const req = mod.request({
       hostname: u.hostname, path: u.pathname + u.search,
       headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/rss+xml, application/xml, text/xml, */*',
                  'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
+    }, res => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume()
+        resolve(rssFetch(new URL(res.headers.location, url).href, redirects + 1))
+        return
+      }
+      let data = ''
+      res.on('data', chunk => data += chunk)
+      res.on('end', () => resolve({ ok: true, text: data }))
     })
-    return { ok: true, text: typeof result.body === 'string' ? result.body : JSON.stringify(result.body) }
-  } catch (e) { return { ok: false, error: e.message } }
+    req.on('error', reject)
+    req.end()
+  })
+}
+
+ipcMain.handle('rss-fetch', async (_e, url) => {
+  try { return await rssFetch(url) }
+  catch (e) { return { ok: false, error: e.message } }
 })
 
 ipcMain.handle('ms-graph-post', async (_e, url, accessToken, postBody) => {
