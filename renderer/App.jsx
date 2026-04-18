@@ -578,8 +578,7 @@ function useMsAuth() {
   const [clientId,   setCid]    = useState('');
   const [tokens,     setTokens] = useState(null);
   const [step,       setStep]   = useState('loading');
-  // step: loading | setup | devicecode | polling | ok | error
-  const [deviceInfo, setDevice] = useState(null);
+  // step: loading | setup | authenticating | ok | error
   const [cidDraft,   setCidDraft] = useState('');
   const msApi = window.electronAPI?.msGraph;
 
@@ -624,29 +623,14 @@ function useMsAuth() {
     const scopes = ['Calendars.Read', 'Tasks.ReadWrite', 'offline_access', 'User.Read'];
     setCid(cid);
     api.store.set(SK_MS_CLIENT, cid);
-    setStep('devicecode');
+    setStep('authenticating');
     try {
-      const res = await msApi?.deviceCodeStart(cid, scopes);
-      if (res?.body?.error || !res?.body?.user_code) { setStep('error'); return; }
-      setDevice(res.body);
-      setStep('polling');
-      poll(cid, res.body.device_code, res.body.interval || 5);
+      const res = await msApi?.authPkce(cid, scopes);
+      if (res?.body?.access_token) {
+        saveTok({ accessToken: res.body.access_token, refreshToken: res.body.refresh_token,
+                  expiry: Date.now() + (res.body.expires_in || 3600) * 1000 });
+      } else { setStep('error'); }
     } catch { setStep('error'); }
-  }
-
-  function poll(cid, code, interval) {
-    setTimeout(async () => {
-      try {
-        const res = await msApi?.deviceCodePoll(cid, code);
-        const b = res?.body;
-        if (b?.access_token) {
-          saveTok({ accessToken: b.access_token, refreshToken: b.refresh_token,
-                    expiry: Date.now() + (b.expires_in || 3600) * 1000 });
-        } else if (b?.error === 'authorization_pending') { poll(cid, code, interval); }
-        else if (b?.error === 'slow_down')               { poll(cid, code, interval + 5); }
-        else { setStep('error'); }
-      } catch { setStep('error'); }
-    }, interval * 1000);
   }
 
   function signOut() {
@@ -654,11 +638,11 @@ function useMsAuth() {
     api.store.delete(SK_MS_TOKENS);
   }
 
-  return { clientId, tokens, step, deviceInfo, cidDraft, setCidDraft, startAuth, signOut };
+  return { clientId, tokens, step, cidDraft, setCidDraft, startAuth, signOut };
 }
 
 // Shared setup UI used by both MS widgets
-function MsSetupPane({ step, deviceInfo, cidDraft, setCidDraft, startAuth, accentColor }) {
+function MsSetupPane({ step, cidDraft, setCidDraft, startAuth }) {
   if (step === 'setup' || step === 'error') return (
     <div style={{paddingTop:6}}>
       <div style={{fontSize:11,color:"#3a3a44",lineHeight:1.7,marginBottom:8}}>
@@ -675,19 +659,10 @@ function MsSetupPane({ step, deviceInfo, cidDraft, setCidDraft, startAuth, accen
       </div>
     </div>
   );
-  if (step === 'devicecode' || step === 'polling') return (
-    <div style={{paddingTop:6}}>
-      <div style={{fontSize:11,color:"#555",marginBottom:8}}>
-        Open <span style={{color:"var(--accent)"}}>{deviceInfo?.verification_uri || "microsoft.com/devicelogin"}</span> and enter:
-      </div>
-      <div style={{fontFamily:"DM Mono,monospace",fontSize:22,letterSpacing:5,color:"#e0e0e0",
-        background:"rgba(255,255,255,0.06)",borderRadius:8,padding:"8px 12px",textAlign:"center",marginBottom:8}}>
-        {deviceInfo?.user_code || "···"}
-      </div>
-      <div style={{fontSize:10,color:"#333",display:"flex",alignItems:"center",gap:6}}>
-        <div style={{width:8,height:8,border:"1.5px solid #333",borderTop:"1.5px solid #888",borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>
-        Waiting for authorization…
-      </div>
+  if (step === 'authenticating') return (
+    <div style={{paddingTop:6,display:"flex",alignItems:"center",gap:8}}>
+      <div style={{width:8,height:8,border:"1.5px solid #333",borderTop:"1.5px solid #888",borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>
+      <span style={{fontSize:11,color:"#444"}}>Signing in… complete the browser window.</span>
     </div>
   );
   return null;
@@ -738,7 +713,7 @@ function AgendaWidget() {
   const groups = {};
   events.forEach(ev => { const k = dayKey(ev); (groups[k] = groups[k]||[]).push(ev); });
 
-  const showAuth = ['loading','setup','devicecode','polling','error'].includes(auth.step);
+  const showAuth = ['loading','setup','authenticating','error'].includes(auth.step);
 
   return { color:"#0078d4", title:"Outlook Agenda",
     content:(
@@ -831,7 +806,7 @@ function TodoWidget() {
 
   const importanceColor = i => i === 'high' ? '#f74f7e' : i === 'normal' ? '#555' : '#333';
 
-  const showAuth = ['loading','setup','devicecode','polling','error'].includes(auth.step);
+  const showAuth = ['loading','setup','authenticating','error'].includes(auth.step);
 
   return { color:"#2564cf", title:"Microsoft To-Do",
     content:(
