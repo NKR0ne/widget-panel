@@ -155,11 +155,13 @@ function parseXML(xml) {
   }).filter(it=>it.title&&it.link);
 }
 async function fetchRSS(url) {
-  const cb = `&_cb=${Math.floor(Date.now()/300000)}`; // 5-min bucket cache buster
+  // Cache-buster injected into the TARGET url so proxies are forced to re-fetch
+  const bucket = Math.floor(Date.now() / 300000); // rotates every 5 min
+  const cbUrl = url + (url.includes('?') ? '&' : '?') + `_cb=${bucket}`;
   try { const res=await window.electronAPI.rss.fetch(url); if(res?.ok){const items=parseXML(res.text).slice(0,7);if(items.length)return items;} } catch {}
-  try { const r=await fetch(PROXY1+encodeURIComponent(url)+cb); if(r.ok){const items=parseXML(await r.text()).slice(0,7);if(items.length)return items;} } catch {}
-  try { const r=await fetch(PROXY2+encodeURIComponent(url)+"&count=6"+cb); const d=await r.json(); if(d.status==="ok") return d.items.map(it=>({id:it.guid||it.link,title:it.title,link:it.link,image:it.thumbnail||it.enclosure?.link||null,source:(()=>{try{return new URL(it.link).hostname.replace("www.","");}catch{return "";}})(),time:relTime(it.pubDate)})); } catch {}
-  try { const r=await fetch("https://corsproxy.io/?"+encodeURIComponent(url)+cb); if(r.ok){const items=parseXML(await r.text()).slice(0,7);if(items.length)return items;} } catch {}
+  try { const r=await fetch(PROXY1+encodeURIComponent(cbUrl)); if(r.ok){const items=parseXML(await r.text()).slice(0,7);if(items.length)return items;} } catch {}
+  try { const r=await fetch(PROXY2+encodeURIComponent(cbUrl)+"&count=6"); const d=await r.json(); if(d.status==="ok") return d.items.map(it=>({id:it.guid||it.link,title:it.title,link:it.link,image:it.thumbnail||it.enclosure?.link||null,source:(()=>{try{return new URL(it.link).hostname.replace("www.","");}catch{return "";}})(),time:relTime(it.pubDate)})); } catch {}
+  try { const r=await fetch("https://corsproxy.io/?"+encodeURIComponent(cbUrl)); if(r.ok){const items=parseXML(await r.text()).slice(0,7);if(items.length)return items;} } catch {}
   return null;
 }
 
@@ -735,7 +737,12 @@ function AgendaWidget() {
 
   function calColor(calId) {
     const cal = calendars.find(c => c.id === calId);
-    return cal?.hexColor || '#0078d4';
+    if (!cal) return '#0078d4';
+    if (cal.hexColor) return cal.hexColor;
+    const MAP = { lightBlue:'#4fc3f7', lightGreen:'#7bc67a', lightOrange:'#ffba57',
+                  lightGray:'#868686', lightYellow:'#f7d57e', lightTeal:'#4ec7c2',
+                  lightPink:'#f0808e', lightBrown:'#a47858', lightRed:'#e36d6d' };
+    return MAP[cal.color] || '#0078d4';
   }
 
   function fmtTime(dt) {
@@ -772,7 +779,7 @@ function AgendaWidget() {
               <div style={{paddingBottom:10,marginBottom:10,borderBottom:"1px solid rgba(255,255,255,0.06)"}}>
                 {calendars.map(cal => {
                   const checked = !selCals || selCals.has(cal.id);
-                  const color = cal.hexColor || '#0078d4';
+                  const color = calColor(cal.id);
                   return (
                     <div key={cal.id} onClick={()=>toggleCal(cal.id)}
                       style={{display:"flex",alignItems:"center",gap:8,padding:"4px 0",cursor:"pointer"}}>
