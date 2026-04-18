@@ -697,18 +697,22 @@ function AgendaWidget() {
     try {
       const calsRes = await window.electronAPI.msGraph.fetch(
         'https://graph.microsoft.com/v1.0/me/calendars?$select=id,name,hexColor,color&$top=50', token);
-      if (calsRes.status === 401) { auth.signOut(); return; }
+      if (calsRes.status === 401) { auth.signOut(); setLoading(false); return; }
       setCalendars(calsRes.body?.value || []);
 
       const today = new Date(); today.setHours(0,0,0,0);
       const cutoff = new Date(today.getTime() + 2 * 86400000);
+      // calendarView doesn't support $orderby — sort client-side after fetch
       const url = `https://graph.microsoft.com/v1.0/me/calendarView`
         + `?startDateTime=${today.toISOString()}&endDateTime=${cutoff.toISOString()}`
-        + `&$select=subject,start,end,location,isAllDay,calendarId&$orderby=start/dateTime&$top=50`;
+        + `&$select=subject,start,end,location,isAllDay,calendarId&$top=50`;
       const res = await window.electronAPI.msGraph.fetch(url, token);
-      if (res.status === 401) { auth.signOut(); return; }
-      if (res.body?.value) { setEvents(res.body.value); setDemo(false); }
-      else { setEvents(MOCK_EVENTS); setDemo(true); }
+      if (res.status === 401) { auth.signOut(); setLoading(false); return; }
+      if (res.body?.value) {
+        const sorted = res.body.value.slice().sort((a, b) =>
+          new Date(a.start.dateTime || a.start.date) - new Date(b.start.dateTime || b.start.date));
+        setEvents(sorted); setDemo(false);
+      } else { setEvents(MOCK_EVENTS); setDemo(true); }
     } catch { setEvents(MOCK_EVENTS); setDemo(true); }
     setLoading(false);
   }
