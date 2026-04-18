@@ -705,10 +705,10 @@ function AgendaWidget() {
       const cals = calsRes.body?.value || [];
       setCalendars(cals);
 
-      const today = new Date(); today.setHours(0,0,0,0);
-      const cutoff = new Date(today.getTime() + 2 * 86400000);
-      const timeQ = `startDateTime=${today.toISOString()}&endDateTime=${cutoff.toISOString()}`
-        + `&$select=subject,start,end,location,isAllDay&$top=20`;
+      const now = new Date();
+      const cutoff = new Date(now.getTime() + 7 * 86400000);
+      const timeQ = `startDateTime=${now.toISOString()}&endDateTime=${cutoff.toISOString()}`
+        + `&$select=subject,start,end,location,isAllDay&$top=50`;
 
       // Fetch per calendar so we know which calendar each event belongs to
       const chunks = await Promise.all(cals.map(async cal => {
@@ -798,6 +798,7 @@ function AgendaWidget() {
                 {Object.keys(groups).length === 0 && (
                   <div style={{paddingTop:10,fontSize:11,color:"#666",textAlign:"center"}}>Aucun événement à venir</div>
                 )}
+                <div style={{maxHeight:320,overflowY:"auto",paddingRight:2}}>
                 {Object.entries(groups).map(([day, evs]) => (
                   <div key={day} style={{marginTop:10}}>
                     <div style={{fontSize:9,color:"#2564cf",textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:6}}>{day}</div>
@@ -809,18 +810,19 @@ function AgendaWidget() {
                           borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none",alignItems:"flex-start"}}>
                           <div style={{flexShrink:0,textAlign:"right",width:42}}>
                             <div style={{fontSize:10,color:"#0078d4",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.start.dateTime)}</div>
-                            <div style={{fontSize:9,color:"#2a2a34",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.end.dateTime)}</div>
+                            <div style={{fontSize:9,color:"#666",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.end.dateTime)}</div>
                           </div>
-                          <div style={{width:2,alignSelf:"stretch",background:barColor+"44",borderRadius:1,flexShrink:0}}/>
+                          <div style={{width:4,alignSelf:"stretch",background:barColor,borderRadius:2,flexShrink:0,opacity:0.85}}/>
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{fontSize:12,color:"#ccc",lineHeight:1.35}}>{ev.subject}</div>
-                            {hasLoc && <div style={{fontSize:10,color:"#2a2a34",marginTop:2}}>{ev.location.displayName}</div>}
+                            {hasLoc && <div style={{fontSize:10,color:"#888",marginTop:2}}>{ev.location.displayName}</div>}
                           </div>
                         </div>
                       );
                     })}
                   </div>
                 ))}
+                </div>
                 <button onClick={auth.signOut} style={{marginTop:14,background:"none",border:"none",fontSize:9,color:"#222228",cursor:"pointer",padding:0}}>Déconnecter</button>
               </div>
             )}
