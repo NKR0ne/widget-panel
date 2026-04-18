@@ -593,7 +593,10 @@ function rssFetch(url, redirects = 0) {
       }
       let data = ''
       res.on('data', chunk => data += chunk)
-      res.on('end', () => resolve({ ok: true, text: data }))
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) resolve({ ok: true, text: data })
+        else resolve({ ok: false, error: `HTTP ${res.statusCode}` })
+      })
     })
     req.on('error', reject)
     req.end()

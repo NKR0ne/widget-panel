@@ -155,10 +155,11 @@ function parseXML(xml) {
   }).filter(it=>it.title&&it.link);
 }
 async function fetchRSS(url) {
+  const cb = `&_cb=${Math.floor(Date.now()/300000)}`; // 5-min bucket cache buster
   try { const res=await window.electronAPI.rss.fetch(url); if(res?.ok){const items=parseXML(res.text).slice(0,7);if(items.length)return items;} } catch {}
-  try { const r=await fetch(PROXY1+encodeURIComponent(url)); if(r.ok){const items=parseXML(await r.text()).slice(0,7);if(items.length)return items;} } catch {}
-  try { const r=await fetch(PROXY2+encodeURIComponent(url)+"&count=6"); const d=await r.json(); if(d.status==="ok") return d.items.map(it=>({id:it.guid||it.link,title:it.title,link:it.link,image:it.thumbnail||it.enclosure?.link||null,source:(()=>{try{return new URL(it.link).hostname.replace("www.","");}catch{return "";}})(),time:relTime(it.pubDate)})); } catch {}
-  try { const r=await fetch("https://corsproxy.io/?"+encodeURIComponent(url)); if(r.ok){const items=parseXML(await r.text()).slice(0,7);if(items.length)return items;} } catch {}
+  try { const r=await fetch(PROXY1+encodeURIComponent(url)+cb); if(r.ok){const items=parseXML(await r.text()).slice(0,7);if(items.length)return items;} } catch {}
+  try { const r=await fetch(PROXY2+encodeURIComponent(url)+"&count=6"+cb); const d=await r.json(); if(d.status==="ok") return d.items.map(it=>({id:it.guid||it.link,title:it.title,link:it.link,image:it.thumbnail||it.enclosure?.link||null,source:(()=>{try{return new URL(it.link).hostname.replace("www.","");}catch{return "";}})(),time:relTime(it.pubDate)})); } catch {}
+  try { const r=await fetch("https://corsproxy.io/?"+encodeURIComponent(url)+cb); if(r.ok){const items=parseXML(await r.text()).slice(0,7);if(items.length)return items;} } catch {}
   return null;
 }
 
@@ -699,22 +700,24 @@ function AgendaWidget() {
       const calsRes = await window.electronAPI.msGraph.fetch(
         'https://graph.microsoft.com/v1.0/me/calendars?$select=id,name,hexColor,color&$top=50', token);
       if (calsRes.status === 401) { auth.signOut(); setLoading(false); return; }
-      setCalendars(calsRes.body?.value || []);
+      const cals = calsRes.body?.value || [];
+      setCalendars(cals);
 
       const today = new Date(); today.setHours(0,0,0,0);
       const cutoff = new Date(today.getTime() + 2 * 86400000);
-      // calendarView doesn't support $orderby — sort client-side after fetch
-      // calendarId is not selectable via $select in v1.0; use $expand=calendar instead
-      const url = `https://graph.microsoft.com/v1.0/me/calendarView`
-        + `?startDateTime=${today.toISOString()}&endDateTime=${cutoff.toISOString()}`
-        + `&$select=subject,start,end,location,isAllDay&$expand=calendar($select=id)&$top=50`;
-      const res = await window.electronAPI.msGraph.fetch(url, token);
-      if (res.status === 401) { auth.signOut(); setLoading(false); return; }
-      if (res.body?.value) {
-        const sorted = res.body.value.slice().sort((a, b) =>
-          new Date(a.start.dateTime || a.start.date) - new Date(b.start.dateTime || b.start.date));
-        setEvents(sorted); setDemo(false);
-      } else { setEvents(MOCK_EVENTS); setDemo(true); }
+      const timeQ = `startDateTime=${today.toISOString()}&endDateTime=${cutoff.toISOString()}`
+        + `&$select=subject,start,end,location,isAllDay&$top=20`;
+
+      // Fetch per calendar so we know which calendar each event belongs to
+      const chunks = await Promise.all(cals.map(async cal => {
+        const res = await window.electronAPI.msGraph.fetch(
+          `https://graph.microsoft.com/v1.0/me/calendars/${cal.id}/calendarView?${timeQ}`, token);
+        if (res.status !== 200 || !res.body?.value) return [];
+        return res.body.value.map(ev => ({ ...ev, _calId: cal.id }));
+      }));
+      const sorted = chunks.flat().sort((a, b) =>
+        new Date(a.start.dateTime || a.start.date) - new Date(b.start.dateTime || b.start.date));
+      setEvents(sorted); setDemo(false);
     } catch { setEvents(MOCK_EVENTS); setDemo(true); }
     setLoading(false);
   }
@@ -748,7 +751,7 @@ function AgendaWidget() {
     return d.toLocaleDateString("fr-CA", { weekday:"long", month:"short", day:"numeric" });
   }
 
-  const visible = selCals ? events.filter(ev => selCals.has(ev.calendar?.id)) : events;
+  const visible = selCals ? events.filter(ev => selCals.has(ev._calId)) : events;
   const groups = {};
   visible.forEach(ev => { const k = dayKey(ev); (groups[k] = groups[k]||[]).push(ev); });
 
@@ -793,7 +796,7 @@ function AgendaWidget() {
                     <div style={{fontSize:9,color:"#2564cf",textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:6}}>{day}</div>
                     {evs.map((ev,i) => {
                       const hasLoc = ev.location?.displayName;
-                      const barColor = calColor(ev.calendar?.id);
+                      const barColor = calColor(ev._calId);
                       return (
                         <div key={ev.id} style={{display:"flex",gap:10,padding:"6px 0",
                           borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none",alignItems:"flex-start"}}>
