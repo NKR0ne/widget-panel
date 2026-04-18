@@ -576,6 +576,18 @@ ipcMain.handle('ms-graph-patch', async (_e, url, accessToken, patchBody) => {
   }, body)
 })
 
+ipcMain.handle('rss-fetch', async (_e, url) => {
+  try {
+    const u = new URL(url)
+    const result = await httpsRequest({
+      hostname: u.hostname, path: u.pathname + u.search,
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/rss+xml, application/xml, text/xml, */*',
+                 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }
+    })
+    return { ok: true, text: typeof result.body === 'string' ? result.body : JSON.stringify(result.body) }
+  } catch (e) { return { ok: false, error: e.message } }
+})
+
 ipcMain.handle('ms-graph-post', async (_e, url, accessToken, postBody) => {
   const u = new URL(url)
   const body = JSON.stringify(postBody)

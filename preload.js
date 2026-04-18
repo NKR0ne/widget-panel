@@ -36,6 +36,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     tokenRefresh: (clientId, rt)      => ipcRenderer.invoke('ms-token-refresh', clientId, rt),
   },
 
+  rss: {
+    fetch: (url) => ipcRenderer.invoke('rss-fetch', url),
+  },
+
   browser: {
     open:         (url) => ipcRenderer.send('browser-open',       url),
     navigate:     (url) => ipcRenderer.send('browser-navigate',   url),

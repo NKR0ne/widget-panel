@@ -155,6 +155,7 @@ function parseXML(xml) {
   }).filter(it=>it.title&&it.link);
 }
 async function fetchRSS(url) {
+  try { const res=await window.electronAPI.rss.fetch(url); if(res?.ok){const items=parseXML(res.text).slice(0,7);if(items.length)return items;} } catch {}
   try { const r=await fetch(PROXY1+encodeURIComponent(url)); if(r.ok){const items=parseXML(await r.text()).slice(0,7);if(items.length)return items;} } catch {}
   try { const r=await fetch(PROXY2+encodeURIComponent(url)+"&count=6"); const d=await r.json(); if(d.status==="ok") return d.items.map(it=>({id:it.guid||it.link,title:it.title,link:it.link,image:it.thumbnail||it.enclosure?.link||null,source:(()=>{try{return new URL(it.link).hostname.replace("www.","");}catch{return "";}})(),time:relTime(it.pubDate)})); } catch {}
   try { const r=await fetch("https://corsproxy.io/?"+encodeURIComponent(url)); if(r.ok){const items=parseXML(await r.text()).slice(0,7);if(items.length)return items;} } catch {}
