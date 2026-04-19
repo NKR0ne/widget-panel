@@ -189,7 +189,7 @@ async function storageLoad() {
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 const C = {
-  card:  { background:"var(--card-bg,#18181c)", borderRadius:12, border:"1px solid rgba(255,255,255,0.06)", overflow:"hidden" },
+  card:  { background:"var(--card-bg,rgba(255,255,255,0.10))", borderRadius:12, border:"1px solid rgba(255,255,255,0.06)", overflow:"hidden" },
   title: { fontSize:11, fontWeight:500, color:"#aaa", textTransform:"uppercase", letterSpacing:0.9 },
   dot:   { width:6, height:6, borderRadius:"50%", flexShrink:0, display:"inline-block" },
   badge: { fontSize:10, padding:"1px 6px", borderRadius:4, fontWeight:500 },
@@ -817,7 +817,7 @@ function AgendaWidget() {
                   <div key={day} style={{marginTop: gi > 0 ? 12 : 0}}>
                     {day === "Aujourd'hui" ? (
                       <div style={{marginBottom:6}}>
-                        <div style={{fontSize:12,fontWeight:600,color:"#ddd"}}>{day}</div>
+                        <div style={{fontSize:11,fontWeight:600,color:"#aaa",textTransform:"uppercase",letterSpacing:0.9}}>{day}</div>
                         <div style={{fontSize:10,color:"#555",marginTop:1,textTransform:"capitalize"}}>
                           {today.toLocaleDateString("fr-CA",{weekday:"long",day:"numeric",month:"long"})}
                         </div>
@@ -838,14 +838,14 @@ function AgendaWidget() {
                           borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none"}}>
                           <div style={{width:7,height:7,borderRadius:"50%",background:dot,flexShrink:0}}/>
                           <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:12,color:"#ccc",lineHeight:1.35}}>{ev.subject}</div>
+                            <div style={{fontSize:12,color:"#a0a0a8",lineHeight:1.35}}>{ev.subject}</div>
                             {ev.location?.displayName && (
                               <div style={{fontSize:10,color:"#555",marginTop:1}}>{ev.location.displayName}</div>
                             )}
                           </div>
                           <div style={{textAlign:"right",flexShrink:0}}>
-                            <div style={{fontSize:10,color:"#888",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.start.dateTime)}</div>
-                            <div style={{fontSize:9,color:"#555"}}>{fmtDur(ev.start.dateTime, ev.end.dateTime)}</div>
+                            <div style={{fontSize:10,color:"#666",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.start.dateTime)}</div>
+                            <div style={{fontSize:9,color:"#444"}}>{fmtDur(ev.start.dateTime, ev.end.dateTime)}</div>
                           </div>
                         </div>
                       );
@@ -1352,7 +1352,7 @@ export default function App() {
     api.store.get('wp-card-opacity').then(v=>{
       const val = v ? parseFloat(v) : 1;
       setCardOpacity(val);
-      document.documentElement.style.setProperty('--card-bg', `rgba(24,24,28,${val})`);
+      document.documentElement.style.setProperty('--card-bg', `rgba(255,255,255,${val * 0.10})`);
     });
     api.store.get(SK_COLW).then(v=>{
       if (v) try {
