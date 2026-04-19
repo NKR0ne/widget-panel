@@ -1574,7 +1574,7 @@ export default function App() {
       </div>
 
       {showMgr&&loaded&&<CategoryManager categories={categories} activeIds={activeIds} setActiveIds={setActiveIds} onClose={()=>setShowMgr(false)} onReset={reset}/>}
-      {showSettings&&<SettingsModal onClose={()=>setShowSettings(false)} opacity={opacity} onOpacityChange={v=>{ setOpacity(v); api.store.set('wp-opacity', String(v)); }}/>}
+      {showSettings&&<SettingsModal onClose={()=>setShowSettings(false)} opacity={opacity} onOpacityChange={v=>{ setOpacity(v); api.panel?.setOpacity(v); }}/>}
 
       {/* ── Browser toolbar (overlays the native Brave child window area) ── */}
       {browserPane.open && (
