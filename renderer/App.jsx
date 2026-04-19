@@ -189,7 +189,7 @@ async function storageLoad() {
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 const C = {
-  card:  { background:"#18181c", borderRadius:12, border:"1px solid rgba(255,255,255,0.06)", overflow:"hidden" },
+  card:  { background:"var(--card-bg,#18181c)", borderRadius:12, border:"1px solid rgba(255,255,255,0.06)", overflow:"hidden" },
   title: { fontSize:11, fontWeight:500, color:"#aaa", textTransform:"uppercase", letterSpacing:0.9 },
   dot:   { width:6, height:6, borderRadius:"50%", flexShrink:0, display:"inline-block" },
   badge: { fontSize:10, padding:"1px 6px", borderRadius:4, fontWeight:500 },
@@ -814,40 +814,38 @@ function AgendaWidget() {
                 )}
                 <div style={{maxHeight:360,overflowY:"auto",paddingRight:2}}>
                 {Object.entries(groups).map(([day, evs], gi) => (
-                  <div key={day} style={{marginTop: gi > 0 ? 16 : 0}}>
+                  <div key={day} style={{marginTop: gi > 0 ? 12 : 0}}>
                     {day === "Aujourd'hui" ? (
-                      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:10}}>
-                        <div>
-                          <div style={{fontSize:17,fontWeight:700,color:"#f0f0f0",lineHeight:1.1}}>{day}</div>
-                          <div style={{fontSize:11,color:"#555",marginTop:3,textTransform:"capitalize"}}>
-                            {today.toLocaleDateString("fr-CA",{weekday:"long",day:"numeric",month:"long"})}
-                          </div>
+                      <div style={{marginBottom:6}}>
+                        <div style={{fontSize:12,fontWeight:600,color:"#ddd"}}>{day}</div>
+                        <div style={{fontSize:10,color:"#555",marginTop:1,textTransform:"capitalize"}}>
+                          {today.toLocaleDateString("fr-CA",{weekday:"long",day:"numeric",month:"long"})}
                         </div>
                       </div>
                     ) : (
-                      <div style={{fontSize:11,color:"#888",fontWeight:500,marginBottom:8,textTransform:"capitalize"}}>{day}</div>
+                      <div style={{...C.title,marginBottom:6}}>{day}</div>
                     )}
                     {evs.map((ev, i) => {
                       const dot = calColor(ev._calId);
                       if (ev.isAllDay) return (
-                        <div key={ev.id} style={{fontSize:11,color:"#777",padding:"6px 0",
-                          borderTop:i>0?"1px solid rgba(255,255,255,0.05)":"none"}}>
+                        <div key={ev.id} style={{fontSize:10,color:"#666",padding:"5px 0",
+                          borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none"}}>
                           Toute la journée: {ev.subject}
                         </div>
                       );
                       return (
-                        <div key={ev.id} style={{display:"flex",alignItems:"center",gap:12,padding:"9px 0",
-                          borderTop:i>0?"1px solid rgba(255,255,255,0.05)":"none"}}>
-                          <div style={{width:9,height:9,borderRadius:"50%",background:dot,flexShrink:0}}/>
+                        <div key={ev.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",
+                          borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none"}}>
+                          <div style={{width:7,height:7,borderRadius:"50%",background:dot,flexShrink:0}}/>
                           <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:13,color:"#e8e8ee",fontWeight:500,lineHeight:1.3}}>{ev.subject}</div>
+                            <div style={{fontSize:12,color:"#ccc",lineHeight:1.35}}>{ev.subject}</div>
                             {ev.location?.displayName && (
-                              <div style={{fontSize:10,color:"#666",marginTop:2}}>{ev.location.displayName}</div>
+                              <div style={{fontSize:10,color:"#555",marginTop:1}}>{ev.location.displayName}</div>
                             )}
                           </div>
                           <div style={{textAlign:"right",flexShrink:0}}>
-                            <div style={{fontSize:12,color:"#bbb"}}>{fmtTime(ev.start.dateTime)}</div>
-                            <div style={{fontSize:10,color:"#555"}}>{fmtDur(ev.start.dateTime, ev.end.dateTime)}</div>
+                            <div style={{fontSize:10,color:"#888",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.start.dateTime)}</div>
+                            <div style={{fontSize:9,color:"#555"}}>{fmtDur(ev.start.dateTime, ev.end.dateTime)}</div>
                           </div>
                         </div>
                       );
@@ -1120,7 +1118,7 @@ function CategoryManager({ categories, activeIds, setActiveIds, onClose, onReset
 }
 
 // ── Settings modal ────────────────────────────────────────────────────────────
-function SettingsModal({ onClose, opacity, onOpacityChange }) {
+function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardOpacityChange }) {
   const [autostart, setAutostart] = useState(false);
   useEffect(()=>{ api.autostart?.get().then(v=>setAutostart(!!v)); },[]);
   function toggleAutostart() {
@@ -1150,11 +1148,20 @@ function SettingsModal({ onClose, opacity, onOpacityChange }) {
         </div>
         <div style={{padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <div style={{fontSize:13,color:"#ccc"}}>Transparency</div>
+            <div style={{fontSize:13,color:"#ccc"}}>Transparence</div>
             <div style={{fontSize:11,color:"#555",fontFamily:"DM Mono,monospace"}}>{Math.round((1-opacity)*100)}%</div>
           </div>
           <input type="range" min="0.2" max="1" step="0.01" value={opacity}
             onChange={e=>onOpacityChange(parseFloat(e.target.value))}
+            style={{width:"100%",accentColor:"var(--accent)",cursor:"pointer"}}/>
+        </div>
+        <div style={{padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+            <div style={{fontSize:13,color:"#ccc"}}>Opacité des cartes</div>
+            <div style={{fontSize:11,color:"#555",fontFamily:"DM Mono,monospace"}}>{Math.round(cardOpacity*100)}%</div>
+          </div>
+          <input type="range" min="0" max="1" step="0.01" value={cardOpacity}
+            onChange={e=>onCardOpacityChange(parseFloat(e.target.value))}
             style={{width:"100%",accentColor:"var(--accent)",cursor:"pointer"}}/>
         </div>
         <div style={{fontSize:10,color:"#282830",marginTop:16,lineHeight:1.5}}>
@@ -1195,6 +1202,7 @@ export default function App() {
   const [time,         setTime]         = useState(new Date());
   const [visible,      setVisible]      = useState(false);
   const [opacity,      setOpacity]      = useState(1);
+  const [cardOpacity,  setCardOpacity]  = useState(1);
   const [accentColor,  setAccentColor]  = useState('#202020');
   const [browserPane,  setBrowserPane]  = useState({ open: false, url: '', loading: false, braveX: 0 });
 
@@ -1341,6 +1349,11 @@ export default function App() {
     api.pin?.get().then(p=>setPinned(!!p));
     api.pin?.onChange(p=>setPinned(!!p));
     api.store.get('wp-opacity').then(v=>{ if (v) setOpacity(parseFloat(v)); });
+    api.store.get('wp-card-opacity').then(v=>{
+      const val = v ? parseFloat(v) : 1;
+      setCardOpacity(val);
+      document.documentElement.style.setProperty('--card-bg', `rgba(24,24,28,${val})`);
+    });
     api.store.get(SK_COLW).then(v=>{
       if (v) try {
         const p = JSON.parse(v);
@@ -1599,7 +1612,13 @@ export default function App() {
       </div>
 
       {showMgr&&loaded&&<CategoryManager categories={categories} activeIds={activeIds} setActiveIds={setActiveIds} onClose={()=>setShowMgr(false)} onReset={reset}/>}
-      {showSettings&&<SettingsModal onClose={()=>setShowSettings(false)} opacity={opacity} onOpacityChange={v=>{ setOpacity(v); api.panel?.setOpacity(v); }}/>}
+      {showSettings&&<SettingsModal onClose={()=>setShowSettings(false)}
+        opacity={opacity} onOpacityChange={v=>{ setOpacity(v); api.panel?.setOpacity(v); }}
+        cardOpacity={cardOpacity} onCardOpacityChange={v=>{
+          setCardOpacity(v);
+          document.documentElement.style.setProperty('--card-bg', `rgba(24,24,28,${v})`);
+          api.store.set('wp-card-opacity', String(v));
+        }}/>}
 
       {/* ── Browser toolbar (overlays the native Brave child window area) ── */}
       {browserPane.open && (
