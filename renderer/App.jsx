@@ -834,9 +834,9 @@ function AgendaWidget() {
                         </div>
                       );
                       return (
-                        <div key={ev.id} style={{display:"flex",alignItems:"center",gap:10,padding:"7px 0",
-                          borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none"}}>
-                          <div style={{width:7,height:7,borderRadius:"50%",background:dot,flexShrink:0}}/>
+                        <div key={ev.id} style={{display:"flex",gap:10,padding:"4px 0",
+                          borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none",alignItems:"flex-start"}}>
+                          <div style={{width:7,height:7,borderRadius:"50%",background:dot,flexShrink:0,marginTop:3}}/>
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{fontSize:12,color:"#a0a0a8",lineHeight:1.35}}>{ev.subject}</div>
                             {ev.location?.displayName && (
@@ -1520,8 +1520,8 @@ export default function App() {
         {/* ── Panel content ── */}
         <div style={{flex:"0 0 auto",width: browserPane.open ? browserPane.braveX : '100vw',display:"flex",flexDirection:"row",
           background:`color-mix(in srgb, ${accentColor} 8%, rgba(20,20,24,${opacity}))`,
-          backdropFilter:opacity<1?`blur(${Math.round((1-opacity)*40)}px)`:"none",
-          WebkitBackdropFilter:opacity<1?`blur(${Math.round((1-opacity)*40)}px)`:"none",
+          backdropFilter:`blur(${Math.round((1-opacity)*40+2)}px)`,
+          WebkitBackdropFilter:`blur(${Math.round((1-opacity)*40+2)}px)`,
           transition:"width 280ms cubic-bezier(0.32,0,0.16,1)"}}>
 
           <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -1613,7 +1613,7 @@ export default function App() {
 
       {showMgr&&loaded&&<CategoryManager categories={categories} activeIds={activeIds} setActiveIds={setActiveIds} onClose={()=>setShowMgr(false)} onReset={reset}/>}
       {showSettings&&<SettingsModal onClose={()=>setShowSettings(false)}
-        opacity={opacity} onOpacityChange={v=>{ setOpacity(v); api.panel?.setOpacity(v); }}
+        opacity={opacity} onOpacityChange={v=>{ setOpacity(v); api.store.set('wp-opacity', String(v)); }}
         cardOpacity={cardOpacity} onCardOpacityChange={v=>{
           setCardOpacity(v);
           document.documentElement.style.setProperty('--card-bg', `rgba(24,24,28,${v})`);

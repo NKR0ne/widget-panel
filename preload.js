@@ -59,6 +59,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
     hideDone:    ()               => ipcRenderer.send('panel-hide-done'),
     resizeStart: (startX, startW) => ipcRenderer.send('panel-resize-start', startX, startW),
     resizeEnd:   ()               => ipcRenderer.send('panel-resize-end'),
-    setOpacity:  (v)              => ipcRenderer.invoke('set-window-opacity', v),
   },
 })
