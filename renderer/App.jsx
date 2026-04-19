@@ -755,6 +755,13 @@ function AgendaWidget() {
   function fmtTime(dt) {
     return new Date(dt).toLocaleTimeString("fr-CA", { hour:"2-digit", minute:"2-digit" });
   }
+  function fmtDur(start, end) {
+    if (!start || !end) return '';
+    const m = Math.round((new Date(end) - new Date(start)) / 60000);
+    const h = Math.floor(m / 60), rm = m % 60;
+    if (h === 0) return `${m}min`;
+    return rm ? `${h}h${rm}` : `${h}h`;
+  }
 
   const today = new Date(); today.setHours(0,0,0,0);
   const tomorrow = new Date(today.getTime() + 86400000);
@@ -805,24 +812,42 @@ function AgendaWidget() {
                 {Object.keys(groups).length === 0 && (
                   <div style={{paddingTop:10,fontSize:11,color:"#666",textAlign:"center"}}>Aucun événement à venir</div>
                 )}
-                <div style={{maxHeight:320,overflowY:"auto",paddingRight:2}}>
-                {Object.entries(groups).map(([day, evs]) => (
-                  <div key={day} style={{marginTop:10}}>
-                    <div style={{fontSize:9,color:"#2564cf",textTransform:"uppercase",letterSpacing:1,fontWeight:600,marginBottom:6}}>{day}</div>
-                    {evs.map((ev,i) => {
-                      const hasLoc = ev.location?.displayName;
-                      const barColor = calColor(ev._calId);
-                      return (
-                        <div key={ev.id} style={{display:"flex",gap:10,padding:"6px 0",
-                          borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none",alignItems:"flex-start"}}>
-                          <div style={{flexShrink:0,textAlign:"right",width:42}}>
-                            <div style={{fontSize:10,color:"#0078d4",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.start.dateTime)}</div>
-                            <div style={{fontSize:9,color:"#666",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.end.dateTime)}</div>
+                <div style={{maxHeight:360,overflowY:"auto",paddingRight:2}}>
+                {Object.entries(groups).map(([day, evs], gi) => (
+                  <div key={day} style={{marginTop: gi > 0 ? 16 : 0}}>
+                    {day === "Aujourd'hui" ? (
+                      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:10}}>
+                        <div>
+                          <div style={{fontSize:17,fontWeight:700,color:"#f0f0f0",lineHeight:1.1}}>{day}</div>
+                          <div style={{fontSize:11,color:"#555",marginTop:3,textTransform:"capitalize"}}>
+                            {today.toLocaleDateString("fr-CA",{weekday:"long",day:"numeric",month:"long"})}
                           </div>
-                          <div style={{width:4,alignSelf:"stretch",background:barColor,borderRadius:2,flexShrink:0,opacity:0.85}}/>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{fontSize:11,color:"#888",fontWeight:500,marginBottom:8,textTransform:"capitalize"}}>{day}</div>
+                    )}
+                    {evs.map((ev, i) => {
+                      const dot = calColor(ev._calId);
+                      if (ev.isAllDay) return (
+                        <div key={ev.id} style={{fontSize:11,color:"#777",padding:"6px 0",
+                          borderTop:i>0?"1px solid rgba(255,255,255,0.05)":"none"}}>
+                          Toute la journée: {ev.subject}
+                        </div>
+                      );
+                      return (
+                        <div key={ev.id} style={{display:"flex",alignItems:"center",gap:12,padding:"9px 0",
+                          borderTop:i>0?"1px solid rgba(255,255,255,0.05)":"none"}}>
+                          <div style={{width:9,height:9,borderRadius:"50%",background:dot,flexShrink:0}}/>
                           <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:12,color:"#ccc",lineHeight:1.35}}>{ev.subject}</div>
-                            {hasLoc && <div style={{fontSize:10,color:"#888",marginTop:2}}>{ev.location.displayName}</div>}
+                            <div style={{fontSize:13,color:"#e8e8ee",fontWeight:500,lineHeight:1.3}}>{ev.subject}</div>
+                            {ev.location?.displayName && (
+                              <div style={{fontSize:10,color:"#666",marginTop:2}}>{ev.location.displayName}</div>
+                            )}
+                          </div>
+                          <div style={{textAlign:"right",flexShrink:0}}>
+                            <div style={{fontSize:12,color:"#bbb"}}>{fmtTime(ev.start.dateTime)}</div>
+                            <div style={{fontSize:10,color:"#555"}}>{fmtDur(ev.start.dateTime, ev.end.dateTime)}</div>
                           </div>
                         </div>
                       );
