@@ -149,9 +149,10 @@ function parseXML(xml) {
     const get=tag=>it.querySelector(tag)?.textContent?.trim()||"";
     const link=it.querySelector("link[href]")?.getAttribute("href")||it.querySelector("link")?.textContent?.trim()||get("guid");
     const image = extractImage(it);
+    const pubDate = get("pubDate")||get("published")||get("updated");
     return { id:get("guid")||link, title:get("title"), link, image,
       source:(()=>{try{return new URL(link).hostname.replace("www.","");}catch{return "";}})(),
-      time:relTime(get("pubDate")||get("published")||get("updated")) };
+      time:relTime(pubDate), _pubDate:pubDate };
   }).filter(it=>it.title&&it.link);
 }
 async function fetchRSS(url) {
@@ -255,9 +256,15 @@ function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
     if (!category.feeds?.length){setItems(mockForCategory(category.label));setDemo(true);setStatus("ok");return;}
     const doFetch = () => {
       setStatus("loading");
-      Promise.all(category.feeds.slice(0,2).map(f=>fetchRSS(f.url)))
+      // Try all feeds in parallel; filter to articles <30 days old; sort newest first
+      Promise.all(category.feeds.map(f=>fetchRSS(f.url)))
         .then(results=>{
-          const live=results.flat().filter(Boolean).filter((v,i,a)=>a.findIndex(x=>x.id===v.id)===i).slice(0,7);
+          const cutoff = Date.now() - 30 * 86400000;
+          const live = results.flat().filter(Boolean)
+            .filter((v,i,a)=>a.findIndex(x=>x.id===v.id)===i)
+            .filter(v=>{ const d=new Date(v._pubDate); return !v._pubDate||isNaN(d)||d.getTime()>cutoff; })
+            .sort((a,b)=>new Date(b._pubDate||0)-new Date(a._pubDate||0))
+            .slice(0,7);
           if(live.length){setItems(live);setDemo(false);setStatus("ok");}
           else{setItems(mockForCategory(category.label));setDemo(true);setStatus("ok");}
         }).catch(()=>{setItems(mockForCategory(category.label));setDemo(true);setStatus("ok");});
