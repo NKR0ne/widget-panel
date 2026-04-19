@@ -124,7 +124,7 @@ function hidePanel(opts = {}) {
     win.webContents.send('browser-pane-hide')
     const { workArea } = screen.getPrimaryDisplay()
     win.setBounds({ x: 0, y: workArea.y, width: panelOnlyWidth, height: workArea.height })
-
+    applyOpacity()
   }
   win.webContents.send('panel-hide')
   // Fallback: if renderer doesn't respond in 600ms, hide anyway
@@ -138,6 +138,14 @@ function sendBadge(count) {
   setTaskbarOverlay(count)
 }
 
+// ── Window opacity (transparency) ─────────────────────────────────────────────
+// Transparency uses win.setOpacity() — works without transparent:true.
+// Disabled while Brave is embedded (SetParent + DWM compositing conflict).
+let savedOpacity = parseFloat(getStore('wp-opacity') || '1')
+function applyOpacity() {
+  if (!win || browserEmbedded) return
+  win.setOpacity(savedOpacity)
+}
 
 // Send visibility state to the C++ helper button
 function notifyHelperState(visible) {
@@ -181,8 +189,8 @@ function createWindow() {
     x:               -panelW,            // start off-screen; animation slides it in
     y:               workArea.y,
     frame:           false,
-    transparent:     true,
-    backgroundColor: '#00000000',
+    transparent:     false,             // must be false — WS_EX_LAYERED is incompatible with SetParent + DXGI
+    backgroundColor: '#0a0a0c',
     alwaysOnTop:     true,
     skipTaskbar:     true,
     resizable:       false,            // we handle resize ourselves via drag handle
@@ -244,7 +252,7 @@ function createWindow() {
     // Otherwise restore to panel-only size.
     const targetW = browserEmbedded ? win.getSize()[0] : (panelOnlyWidth || win.getSize()[0])
     win.setBounds({ x: 0, y: workArea.y, width: targetW, height: workArea.height })
-
+    applyOpacity()
     // Delay so the strip WM_LBUTTONDOWN passes through the hook before g_panelOn=true.
     setTimeout(() => { notifyHelperState(true); notifyHelperHwnds() }, 350)
     log('[win] show — rendererReady=', rendererReady)
@@ -295,6 +303,11 @@ ipcMain.handle('store-get',    (_e, key)       => getStore(key))
 ipcMain.handle('store-set',    (_e, key, value) => setStore(key, value))
 ipcMain.handle('store-delete', (_e, key)       => deleteStore(key))
 
+ipcMain.handle('set-window-opacity', (_e, value) => {
+  savedOpacity = Math.max(0.1, Math.min(1, value))
+  setStore('wp-opacity', String(savedOpacity))
+  applyOpacity()
+})
 
 ipcMain.handle('pin-toggle', () => { togglePin(); return isPinned })
 ipcMain.handle('pin-get',    () => isPinned)
@@ -426,6 +439,8 @@ function openBraveInPanel(url) {
   currentUrl = url
   lastBrowserOpenTime = Date.now()
 
+  // Must be fully opaque before SetParent — WS_EX_LAYERED conflicts with DXGI child
+  win.setOpacity(1.0)
   // Expand win to cover full screen width (panel + browser area)
   win.setBounds({ x: 0, y: workArea.y, width: totalW, height: braveH })
   browserEmbedded = true
