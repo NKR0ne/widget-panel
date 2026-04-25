@@ -1535,7 +1535,8 @@ export default function App() {
         html,body{background:transparent;margin:0;padding:0}
         *{box-sizing:border-box;margin:0;padding:0}
         ::-webkit-scrollbar{width:3px}
-        ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:2px}
+        ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.18);border-radius:2px}
+        ::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,0.28)}
         @keyframes fadeIn{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
         @keyframes pulse{0%,100%{opacity:.18}50%{opacity:.44}}
         @keyframes ticker{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
@@ -1543,6 +1544,8 @@ export default function App() {
         .wi{animation:fadeIn 0.2s ease both}
         input{color-scheme:dark}
         a{color:var(--accent)}
+        /* Global text vibrancy — dim labels read clearly on frosted bg */
+        body{color:#c8c8d4}
         .panel-wrap{
           transform: translateX(-100%);
           transition: transform 260ms cubic-bezier(0.32,0,0.16,1);
@@ -1576,10 +1579,17 @@ export default function App() {
                    width: browserPane.open ? browserPane.braveX : '100vw'}}>
 
         {/* ── Panel content ── */}
-        <div ref={panelBgRef} style={{flex:"0 0 auto",width: browserPane.open ? browserPane.braveX : '100vw',display:"flex",flexDirection:"row",
-          background:`color-mix(in srgb, ${accentColor} 8%, rgba(20,20,24,${opacity}))`,
-          backdropFilter:opacity<1?`blur(${Math.round((1-opacity)*40)}px)`:"none",
-          WebkitBackdropFilter:opacity<1?`blur(${Math.round((1-opacity)*40)}px)`:"none",
+        <div ref={panelBgRef} style={{
+          flex:"0 0 auto",
+          width: browserPane.open ? browserPane.braveX : 'calc(100vw - 10px)',
+          margin:"10px 10px 10px 0",
+          borderRadius:12,
+          overflow:"hidden",
+          display:"flex",flexDirection:"row",
+          background:`color-mix(in srgb, ${accentColor} 10%, rgba(16,16,20,${Math.max(opacity,0.72)}))`,
+          backdropFilter:`blur(48px) saturate(180%)`,
+          WebkitBackdropFilter:`blur(48px) saturate(180%)`,
+          boxShadow:"0 8px 40px rgba(0,0,0,0.55), 0 0 0 0.5px rgba(255,255,255,0.06)",
           transition:"width 280ms cubic-bezier(0.32,0,0.16,1)"}}>
 
           <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -1587,27 +1597,27 @@ export default function App() {
             {/* ── Header ── */}
             <div style={{padding:"18px 20px 10px",borderBottom:"1px solid rgba(255,255,255,0.05)",display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexShrink:0}}>
               <div>
-                <div style={{fontSize:13,fontWeight:600,color:"#e0e0e8",letterSpacing:0.2,textTransform:"capitalize"}}>
+                <div style={{fontSize:13,fontWeight:600,color:"#f2f2ff",letterSpacing:0.2,textTransform:"capitalize"}}>
                   {time.toLocaleDateString("fr-CA",{weekday:"long"})}
                 </div>
-                <div style={{fontSize:11,color:"#555",marginTop:2,textTransform:"capitalize"}}>
+                <div style={{fontSize:11,color:"#aaa",marginTop:2,textTransform:"capitalize"}}>
                   {time.toLocaleDateString("fr-CA",{month:"long",day:"numeric"})}
                 </div>
               </div>
               <div style={{display:"flex",gap:4,alignItems:"center",marginTop:2}}>
                 <button onClick={togglePin} title={pinned?"Unpin":"Pin to desktop"}
                   style={{background:pinned?"color-mix(in srgb, var(--accent) 15%, transparent)":"none",border:pinned?"1px solid color-mix(in srgb, var(--accent) 30%, transparent)":"1px solid transparent",
-                    borderRadius:6,color:pinned?"var(--accent)":"#2a2a30",fontSize:14,cursor:"pointer",padding:"3px 6px",lineHeight:1,transition:"all 0.15s"}}>
+                    borderRadius:6,color:pinned?"var(--accent)":"#aaa",fontSize:14,cursor:"pointer",padding:"3px 6px",lineHeight:1,transition:"all 0.15s"}}>
                   📌
                 </button>
                 {loaded&&<button onClick={()=>setShowMgr(true)} title="Manage widgets"
-                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#777",fontSize:15,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⚙</button>}
+                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#bbb",fontSize:15,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⚙</button>}
                 {loaded&&<button onClick={resetColumns} title="Reset column layout"
-                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#777",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⇄</button>}
+                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#bbb",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⇄</button>}
                 <button onClick={()=>setShowSettings(true)} title="Settings"
-                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#777",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>≡</button>
+                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#bbb",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>≡</button>
                 {loaded&&<button onClick={reset} title="Reset / new OPML"
-                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#777",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>↺</button>}
+                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#bbb",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>↺</button>}
               </div>
             </div>
 
@@ -1662,8 +1672,8 @@ export default function App() {
             {/* ── Footer ── */}
             {loaded&&(
               <div style={{padding:"8px 16px",borderTop:"1px solid rgba(255,255,255,0.04)",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
-                <span style={{fontSize:9,color:"#555",fontFamily:"DM Mono,monospace"}}>{categories.length} categories · OPML</span>
-                <button onClick={()=>setShowMgr(true)} style={{background:"none",border:"1px solid rgba(255,255,255,0.1)",color:"#888",fontSize:10,padding:"3px 8px",borderRadius:5,cursor:"pointer"}}>+ Add widget</button>
+                <span style={{fontSize:9,color:"#999",fontFamily:"DM Mono,monospace"}}>{categories.length} categories · OPML</span>
+                <button onClick={()=>setShowMgr(true)} style={{background:"none",border:"1px solid rgba(255,255,255,0.2)",color:"#ccc",fontSize:10,padding:"3px 8px",borderRadius:5,cursor:"pointer"}}>+ Add widget</button>
               </div>
             )}
           </div>
