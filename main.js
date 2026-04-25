@@ -20,7 +20,7 @@ let lastToggleTime   = 0
 let isHiding         = false  // prevents double-hide (blur + toggle arriving together)
 let coldStart        = true   // true until first successful IPC connection
 let rendererReady    = false  // true once renderer has registered its panel listeners
-let panelOnlyWidth   = 0      // panel width before browser was embedded
+let panelOnlyWidth   = parseInt(getStore('wp-width')) || 720  // panel width before browser was embedded
 let browserEmbedded  = false  // whether brave window is currently embedded in win
 
 // ── Single instance lock ──────────────────────────────────────────────────────
@@ -116,15 +116,14 @@ function createPipeServer() {
 // Initiate slide-out: renderer animates then calls panel-hide-done → win.hide()
 function hidePanel(opts = {}) {
   if (!win || !win.isVisible() || isHiding) return
+  log('[hidePanel] called, browserEmbedded=', browserEmbedded, new Error().stack.split('\n')[2]?.trim())
   isHiding = true
   if (browserEmbedded) {
-    // Kill brave immediately so the native child doesn't linger during the slide animation
     sendToBrave({ type: 'close' })
     browserEmbedded = false
     win.webContents.send('browser-pane-hide')
     const { workArea } = screen.getPrimaryDisplay()
     win.setBounds({ x: 0, y: workArea.y, width: panelOnlyWidth, height: workArea.height })
-    applyOpacity()
   }
   win.webContents.send('panel-hide')
   // Fallback: if renderer doesn't respond in 600ms, hide anyway
@@ -138,14 +137,6 @@ function sendBadge(count) {
   setTaskbarOverlay(count)
 }
 
-// ── Window opacity (transparency) ─────────────────────────────────────────────
-// Transparency uses win.setOpacity() — works without transparent:true.
-// Disabled while Brave is embedded (SetParent + DWM compositing conflict).
-let savedOpacity = parseFloat(getStore('wp-opacity') || '1')
-function applyOpacity() {
-  if (!win || browserEmbedded) return
-  win.setOpacity(savedOpacity)
-}
 
 // Send visibility state to the C++ helper button
 function notifyHelperState(visible) {
@@ -189,8 +180,8 @@ function createWindow() {
     x:               -panelW,            // start off-screen; animation slides it in
     y:               workArea.y,
     frame:           false,
-    transparent:     false,             // must be false — WS_EX_LAYERED is incompatible with SetParent + DXGI
-    backgroundColor: '#0a0a0c',
+    transparent:     true,
+    backgroundMaterial: 'acrylic',      // DWM acrylic for real frosted-glass; disabled while Brave is embedded
     alwaysOnTop:     true,
     skipTaskbar:     true,
     resizable:       false,            // we handle resize ourselves via drag handle
@@ -250,15 +241,15 @@ function createWindow() {
     const { workArea } = screen.getPrimaryDisplay()
     // When browser is embedded, win is already at full width — preserve it.
     // Otherwise restore to panel-only size.
-    const targetW = browserEmbedded ? win.getSize()[0] : (panelOnlyWidth || win.getSize()[0])
+    const targetW = browserEmbedded ? win.getSize()[0] : panelOnlyWidth
     win.setBounds({ x: 0, y: workArea.y, width: targetW, height: workArea.height })
-    applyOpacity()
     // Delay so the strip WM_LBUTTONDOWN passes through the hook before g_panelOn=true.
     setTimeout(() => { notifyHelperState(true); notifyHelperHwnds() }, 350)
     log('[win] show — rendererReady=', rendererReady)
     if (rendererReady) {
       setTimeout(() => { log('[win] sending panel-show'); win.webContents.send('panel-show') }, 50)
     }
+    sendToBrave({ type: 'taskbar-hide' })
   })
   win.on('hide', () => {
     // Move off-screen left of the strip so next show starts slide-in from translateX(-100%)
@@ -266,6 +257,7 @@ function createWindow() {
     win.setPosition(-w, win.getPosition()[1])
     notifyHelperState(false)
     isHiding = false
+    sendToBrave({ type: 'taskbar-show' })
   })
 }
 
@@ -300,13 +292,13 @@ ipcMain.handle('system-accent-color', () => {
 })
 
 ipcMain.handle('store-get',    (_e, key)       => getStore(key))
-ipcMain.handle('store-set',    (_e, key, value) => setStore(key, value))
+ipcMain.handle('store-set',    (_e, key, value) => { log('[store-set]', key, '=', JSON.stringify(value)); setStore(key, value) })
 ipcMain.handle('store-delete', (_e, key)       => deleteStore(key))
+ipcMain.on('renderer-log',     (_e, ...args)   => log('[renderer]', ...args))
 
 ipcMain.handle('set-window-opacity', (_e, value) => {
-  savedOpacity = Math.max(0.1, Math.min(1, value))
-  setStore('wp-opacity', String(savedOpacity))
-  applyOpacity()
+  setStore('wp-opacity', String(Math.max(0.1, Math.min(1, value))))
+  // Transparency is now CSS-based (body/panel background rgba); no win.setOpacity() needed.
 })
 
 ipcMain.handle('pin-toggle', () => { togglePin(); return isPinned })
@@ -342,7 +334,11 @@ ipcMain.on('panel-resize-start', (_e, startX, startW) => {
 
 ipcMain.on('panel-resize-end', () => {
   if (resizeInterval) { clearInterval(resizeInterval); resizeInterval = null }
-  if (win) setStore('wp-width', win.getSize()[0])
+  if (win) {
+    const w = win.getSize()[0]
+    setStore('wp-width', w)
+    if (!browserEmbedded) panelOnlyWidth = w
+  }
 })
 
 // Renderer signals it has registered listeners — send panel-show if window is already visible
@@ -400,8 +396,9 @@ function createBraveServer() {
             if (navLoadTimer) { clearTimeout(navLoadTimer); navLoadTimer = null }
             win.webContents.send('brave-loading', false)
             win.webContents.send('brave-url', currentUrl)
-            // Brave may steal focus when reparented — restore focus to panel
-            if (win && win.isVisible()) setTimeout(() => win.focus(), 150)
+            // brave-host's plain Win32 shell owns keyboard focus — no Chromium competing.
+            // Ensure win (toolbar) remains Z-top above the shell window.
+            win.moveTop()
           }
         } catch {}
       })
@@ -439,19 +436,27 @@ function openBraveInPanel(url) {
   currentUrl = url
   lastBrowserOpenTime = Date.now()
 
-  // Must be fully opaque before SetParent — WS_EX_LAYERED conflicts with DXGI child
-  win.setOpacity(1.0)
-  // Expand win to cover full screen width (panel + browser area)
+  // Expand win to cover full screen width (panel + transparent browser area for toolbar rendering).
+  // Per-pixel alpha hit-testing on the transparent area passes clicks through to brave-host's shell window.
   win.setBounds({ x: 0, y: workArea.y, width: totalW, height: braveH })
   browserEmbedded = true
 
+  win.setBackgroundMaterial('none')   // disable acrylic so Brave shows through the transparent area
   win.webContents.send('browser-pane-show', { url, braveX: panelW })
   win.webContents.send('brave-loading', true)
   win.webContents.send('brave-url', url)
 
-  // Tell brave-host to launch/reparent Brave as a child of win at offset (panelW, TOOLBAR_H)
-  const panelHwnd = Number(win.getNativeWindowHandle().readBigInt64LE(0))
-  sendToBrave({ type: 'open', hwnd: panelHwnd, x: panelW, y: TOOLBAR_H, w: braveW, h: braveH, url })
+  // Tell brave-host to create a plain Win32 shell window at screen coords and embed Brave in it.
+  // hwnd:0 = create own shell (no WS_EX_LAYERED conflict, no Chromium competing for keyboard focus).
+  // x,y,w,h are PHYSICAL pixels — brave-host passes them directly to CreateWindowExW.
+  // Shell sits inside the card margin (8px) and below the card header (TOOLBAR_H=41)
+  const CARD_M = 8
+  sendToBrave({ type: 'open', hwnd: 0,
+    x: Math.round((panelW + CARD_M) * sf),
+    y: Math.round((workArea.y + TOOLBAR_H + CARD_M) * sf),
+    w: Math.round((braveW - CARD_M * 2) * sf),
+    h: Math.round((braveH - TOOLBAR_H - CARD_M * 2) * sf),
+    url })
   notifyHelperHwnds()
 }
 
@@ -459,10 +464,10 @@ function closeBraveInPanel() {
   sendToBrave({ type: 'close' })
   browserEmbedded = false
   currentUrl = ''
+  win.setBackgroundMaterial('acrylic')  // re-enable frosted glass
   win.webContents.send('browser-pane-hide')
   const { workArea } = screen.getPrimaryDisplay()
   if (panelOnlyWidth > 0) win.setBounds({ x: 0, y: workArea.y, width: panelOnlyWidth, height: workArea.height })
-  applyOpacity()
   notifyHelperHwnds()
 }
 
@@ -489,7 +494,14 @@ ipcMain.on('browser-navigate', (_e, url) => {
   armNavLoadTimer()
 })
 
-ipcMain.on('browser-close', () => { closeBraveInPanel() })
+ipcMain.on('browser-close', () => { log('[ipc] browser-close received'); closeBraveInPanel() })
+
+// Renderer requests click-through when mouse is over the Brave content area.
+// forward:true still delivers synthetic mousemove events so we can detect when
+// the cursor leaves the content area and restore normal input.
+ipcMain.on('set-ignore-mouse-events', (_, ignore) => {
+  win.setIgnoreMouseEvents(ignore, { forward: true })
+})
 
 // Toolbar buttons (from preload.js browser object)
 ipcMain.on('brave-close',         () => { closeBraveInPanel() })
@@ -500,11 +512,11 @@ ipcMain.on('brave-open-external', () => {
   // process handle WITHOUT killing Brave — the externally-opened tab lives on.
   sendToBrave({ type: 'detach' })
   browserEmbedded = false
+  win.setBackgroundMaterial('acrylic')
   win.webContents.send('browser-pane-hide')
   const { workArea } = screen.getPrimaryDisplay()
   if (panelOnlyWidth > 0) win.setBounds({ x: 0, y: workArea.y, width: panelOnlyWidth, height: workArea.height })
   currentUrl = ''
-  applyOpacity()
   notifyHelperHwnds()
   // Slide the panel away after detaching
   setTimeout(() => hidePanel(), 300)

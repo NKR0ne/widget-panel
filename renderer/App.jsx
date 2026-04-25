@@ -193,14 +193,14 @@ const C = {
   title: { fontSize:11, fontWeight:500, color:"#aaa", textTransform:"uppercase", letterSpacing:0.9 },
   dot:   { width:6, height:6, borderRadius:"50%", flexShrink:0, display:"inline-block" },
   badge: { fontSize:10, padding:"1px 6px", borderRadius:4, fontWeight:500 },
-  chev:  { color:"#666", fontSize:16, lineHeight:1, display:"inline-block", flexShrink:0, transition:"transform 0.2s" },
+  chev:  { color:"#bbb", fontSize:16, lineHeight:1, display:"inline-block", flexShrink:0, transition:"transform 0.2s" },
   inp:   { background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.09)", borderRadius:8, padding:"7px 10px", color:"#ccc", fontSize:12, outline:"none", fontFamily:"'DM Sans',sans-serif" },
   btn:   { background:"color-mix(in srgb, var(--accent) 15%, transparent)", border:"1px solid color-mix(in srgb, var(--accent) 30%, transparent)", borderRadius:8, color:"var(--accent)", fontSize:12, padding:"7px 14px", cursor:"pointer", fontWeight:500, fontFamily:"'DM Sans',sans-serif" },
   skel:  w=>({ height:10, borderRadius:4, background:"rgba(255,255,255,0.05)", width:w+"%", animation:"pulse 1.5s ease infinite", marginBottom:8 }),
 };
 
 function DemoBadge() {
-  return <span style={{ fontSize:9, padding:"1px 5px", borderRadius:3, background:"rgba(255,255,255,0.06)", color:"#333", fontFamily:"DM Mono,monospace", marginLeft:4 }}>demo</span>;
+  return <span style={{ fontSize:9, padding:"1px 5px", borderRadius:3, background:"rgba(255,255,255,0.06)", color:"#999", fontFamily:"DM Mono,monospace", marginLeft:4 }}>demo</span>;
 }
 
 
@@ -227,10 +227,10 @@ function Shell({ color, title, sub, badge, expanded, onToggle, isDragging, onDra
             onDragEnd={()=>onDragEnd?.()}
             onClick={e=>e.stopPropagation()}
             title="Drag to reorder"
-            style={{ color:"#3a3a50", fontSize:11, cursor:"grab", userSelect:"none", flexShrink:0, lineHeight:1, padding:"0 4px 0 0" }}>⠿</span>
+            style={{ color:"#999", fontSize:11, cursor:"grab", userSelect:"none", flexShrink:0, lineHeight:1, padding:"0 4px 0 0" }}>⠿</span>
           <span style={{ ...C.dot, background:color }} />
           <span style={C.title}>{title}</span>
-          {sub && <span style={{ fontSize:10, color:"#333", fontFamily:"DM Mono,monospace" }}>{sub}</span>}
+          {sub && <span style={{ fontSize:10, color:"#999", fontFamily:"DM Mono,monospace" }}>{sub}</span>}
           {badge}
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:5 }} onClick={e=>e.stopPropagation()}>
@@ -288,7 +288,7 @@ function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
   },[category.label]);
 
   const badgeEl=status==="loading"
-    ?<span style={{fontSize:10,color:"#333"}}>fetching…</span>
+    ?<span style={{fontSize:10,color:"#999"}}>fetching…</span>
     :(status==="ok"&&unread>0&&!demo)?<span style={{...C.badge,background:color+"22",color}}>{unread}</span>:null;
 
   return { color, title:category.label, lastUpdated, badge:badgeEl,
@@ -310,8 +310,8 @@ function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:12,color:"#a0a0a8",lineHeight:1.45,marginBottom:4}}>{item.title}</div>
                 <div style={{display:"flex",justifyContent:"space-between"}}>
-                  <span style={{fontSize:10,color:"#666"}}>{item.source}</span>
-                  <span style={{fontSize:10,color:"#666",fontFamily:"DM Mono,monospace"}}>{item.time}</span>
+                  <span style={{fontSize:10,color:"#bbb"}}>{item.source}</span>
+                  <span style={{fontSize:10,color:"#bbb",fontFamily:"DM Mono,monospace"}}>{item.time}</span>
                 </div>
               </div>
             </div>
@@ -359,11 +359,11 @@ function WeatherWidget() {
               <span style={{fontSize:36,lineHeight:1}}>{icon}</span>
               <div>
                 <div style={{fontSize:32,fontWeight:300,color:"#f0f0f0",letterSpacing:-1,lineHeight:1}}>{Math.round(cur.temperature_2m)}°</div>
-                <div style={{fontSize:11,color:"#444",marginTop:2}}>{cond} · feels {Math.round(cur.apparent_temperature)}°</div>
+                <div style={{fontSize:11,color:"#aaa",marginTop:2}}>{cond} · feels {Math.round(cur.apparent_temperature)}°</div>
               </div>
               <div style={{marginLeft:"auto",textAlign:"right"}}>
-                <div style={{fontSize:11,color:"#333"}}>Humidity <span style={{color:"#777"}}>{cur.relative_humidity_2m}%</span></div>
-                <div style={{fontSize:11,color:"#333",marginTop:2}}>Wind <span style={{color:"#777"}}>{Math.round(cur.wind_speed_10m)} km/h</span></div>
+                <div style={{fontSize:11,color:"#999"}}>Humidity <span style={{color:"#777"}}>{cur.relative_humidity_2m}%</span></div>
+                <div style={{fontSize:11,color:"#999",marginTop:2}}>Wind <span style={{color:"#777"}}>{Math.round(cur.wind_speed_10m)} km/h</span></div>
               </div>
             </div>
             {hourly&&(
@@ -387,10 +387,10 @@ function WeatherWidget() {
                   const lbl=i===0?"Today":new Date(t+"T12:00").toLocaleDateString("fr-CA",{weekday:"short"});
                   return(
                     <div key={t} style={{display:"flex",alignItems:"center",padding:"4px 0",borderBottom:i<daily.time.length-1?"1px solid rgba(255,255,255,0.04)":"none"}}>
-                      <span style={{fontSize:12,color:"#444",width:44,textTransform:"capitalize"}}>{lbl}</span>
+                      <span style={{fontSize:12,color:"#aaa",width:44,textTransform:"capitalize"}}>{lbl}</span>
                       <span style={{fontSize:13,marginRight:8}}>{ic}</span>
                       <div style={{flex:1,display:"flex",alignItems:"center",gap:6,justifyContent:"flex-end"}}>
-                        <span style={{fontSize:12,color:"#333"}}>{Math.round(daily.temperature_2m_min[i])}°</span>
+                        <span style={{fontSize:12,color:"#999"}}>{Math.round(daily.temperature_2m_min[i])}°</span>
                         <div style={{height:3,borderRadius:2,background:"linear-gradient(90deg,#4f8ef7,#f7c94f)",width:38,opacity:0.3}}/>
                         <span style={{fontSize:12,color:"#bbb"}}>{Math.round(daily.temperature_2m_max[i])}°</span>
                       </div>
@@ -517,12 +517,12 @@ function TrafficWidget({ apiKey, onSaveKey }) {
       <div>
         {status==="nokey"&&(
           <div style={{paddingTop:8}}>
-            <div style={{fontSize:11,color:"#3a3a44",lineHeight:1.6,marginBottom:8}}>Free key at <a href="https://developer.tomtom.com" target="_blank" rel="noreferrer">developer.tomtom.com</a></div>
+            <div style={{fontSize:11,color:"#999",lineHeight:1.6,marginBottom:8}}>Free key at <a href="https://developer.tomtom.com" target="_blank" rel="noreferrer">developer.tomtom.com</a></div>
             <div style={{display:"flex",gap:6}}>
               <input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Paste TomTom key…" style={{...C.inp,flex:1,fontSize:11,fontFamily:"DM Mono,monospace"}}/>
               {draft&&<button onClick={()=>onSaveKey("tomtom",draft)} style={C.btn}>✓</button>}
             </div>
-            <button onClick={()=>{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");}} style={{marginTop:8,background:"none",border:"none",fontSize:11,color:"#333",cursor:"pointer",padding:0}}>Preview with demo data →</button>
+            <button onClick={()=>{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");}} style={{marginTop:8,background:"none",border:"none",fontSize:11,color:"#999",cursor:"pointer",padding:0}}>Preview with demo data →</button>
           </div>
         )}
         {status==="loading"&&<Skel n={2}/>}
@@ -531,8 +531,8 @@ function TrafficWidget({ apiKey, onSaveKey }) {
             {demo&&<DemoBadge/>}
             <div style={{background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"10px 12px"}}>
               <div style={{display:"flex",alignItems:"baseline",gap:10}}>
-                <span style={{fontSize:26,fontWeight:300,color:tColor,letterSpacing:-1}}>{Math.round(flow.currentSpeed)}<span style={{fontSize:11,color:"#444",marginLeft:2}}>km/h</span></span>
-                <span style={{fontSize:11,color:"#333"}}>free flow {Math.round(flow.freeFlowSpeed)} km/h</span>
+                <span style={{fontSize:26,fontWeight:300,color:tColor,letterSpacing:-1}}>{Math.round(flow.currentSpeed)}<span style={{fontSize:11,color:"#aaa",marginLeft:2}}>km/h</span></span>
+                <span style={{fontSize:11,color:"#999"}}>free flow {Math.round(flow.freeFlowSpeed)} km/h</span>
                 <span style={{...C.badge,background:tColor+"22",color:tColor,marginLeft:"auto"}}>{tLabel}</span>
               </div>
               <div style={{marginTop:10,height:3,borderRadius:2,background:"rgba(255,255,255,0.06)",overflow:"hidden"}}>
@@ -588,7 +588,7 @@ function ClockWidget() {
           <circle cx={cx} cy={cy} r={3.5} fill="#f74f7e"/>
           <circle cx={cx} cy={cy} r={1.5} fill="rgba(20,20,24,0.8)"/>
         </svg>
-        <div style={{fontSize:11,color:"#444",fontFamily:"DM Mono,monospace",letterSpacing:2,marginTop:4}}>
+        <div style={{fontSize:11,color:"#aaa",fontFamily:"DM Mono,monospace",letterSpacing:2,marginTop:4}}>
           {String(t.getHours()).padStart(2,"0")}:{String(m).padStart(2,"0")}:{String(s).padStart(2,"0")}
           <span style={{fontSize:9,color:"#2a2a34",marginLeft:5}}>{t.getHours()<12?"AM":"PM"}</span>
         </div>
@@ -672,8 +672,8 @@ function useMsAuth() {
 function MsSetupPane({ step, cidDraft, setCidDraft, startAuth }) {
   if (step === 'setup' || step === 'error') return (
     <div style={{paddingTop:6}}>
-      <div style={{fontSize:11,color:"#3a3a44",lineHeight:1.7,marginBottom:8}}>
-        {step === 'error' ? "Auth failed. " : ""}Enter your <span style={{color:"#666"}}>Azure app client ID</span> to connect Microsoft.
+      <div style={{fontSize:11,color:"#999",lineHeight:1.7,marginBottom:8}}>
+        {step === 'error' ? "Auth failed. " : ""}Enter your <span style={{color:"#bbb"}}>Azure app client ID</span> to connect Microsoft.
       </div>
       <div style={{display:"flex",gap:6}}>
         <input value={cidDraft} onChange={e=>setCidDraft(e.target.value)}
@@ -689,7 +689,7 @@ function MsSetupPane({ step, cidDraft, setCidDraft, startAuth }) {
   if (step === 'authenticating') return (
     <div style={{paddingTop:6,display:"flex",alignItems:"center",gap:8}}>
       <div style={{width:8,height:8,border:"1.5px solid #333",borderTop:"1.5px solid #888",borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>
-      <span style={{fontSize:11,color:"#444"}}>Signing in… complete the browser window.</span>
+      <span style={{fontSize:11,color:"#aaa"}}>Signing in… complete the browser window.</span>
     </div>
   );
   return null;
@@ -827,7 +827,7 @@ function AgendaWidget() {
               <div>
                 {demo && <DemoBadge/>}
                 {Object.keys(groups).length === 0 && (
-                  <div style={{paddingTop:10,fontSize:11,color:"#666",textAlign:"center"}}>Aucun événement à venir</div>
+                  <div style={{paddingTop:10,fontSize:11,color:"#bbb",textAlign:"center"}}>Aucun événement à venir</div>
                 )}
                 <div style={{maxHeight:360,overflowY:"auto",paddingRight:2}}>
                 {Object.entries(groups).map(([day, evs], gi) => (
@@ -835,7 +835,7 @@ function AgendaWidget() {
                     {day === "Aujourd'hui" ? (
                       <div style={{marginBottom:6}}>
                         <div style={{fontSize:11,fontWeight:600,color:"#aaa",textTransform:"uppercase",letterSpacing:0.9}}>{day}</div>
-                        <div style={{fontSize:10,color:"#555",marginTop:1,textTransform:"capitalize"}}>
+                        <div style={{fontSize:10,color:"#aaa",marginTop:1,textTransform:"capitalize"}}>
                           {today.toLocaleDateString("fr-CA",{weekday:"long",day:"numeric",month:"long"})}
                         </div>
                       </div>
@@ -845,7 +845,7 @@ function AgendaWidget() {
                     {evs.map((ev, i) => {
                       const dot = calColor(ev._calId);
                       if (ev.isAllDay) return (
-                        <div key={ev.id} style={{fontSize:10,color:"#666",padding:"5px 0",
+                        <div key={ev.id} style={{fontSize:10,color:"#bbb",padding:"5px 0",
                           borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none"}}>
                           Toute la journée: {ev.subject}
                         </div>
@@ -857,12 +857,12 @@ function AgendaWidget() {
                           <div style={{flex:1,minWidth:0}}>
                             <div style={{fontSize:12,color:"#a0a0a8",lineHeight:1.35}}>{ev.subject}</div>
                             {ev.location?.displayName && (
-                              <div style={{fontSize:10,color:"#555",marginTop:1}}>{ev.location.displayName}</div>
+                              <div style={{fontSize:10,color:"#aaa",marginTop:1}}>{ev.location.displayName}</div>
                             )}
                           </div>
                           <div style={{textAlign:"right",flexShrink:0}}>
-                            <div style={{fontSize:10,color:"#666",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.start.dateTime)}</div>
-                            <div style={{fontSize:9,color:"#444"}}>{fmtDur(ev.start.dateTime, ev.end.dateTime)}</div>
+                            <div style={{fontSize:10,color:"#bbb",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.start.dateTime)}</div>
+                            <div style={{fontSize:9,color:"#aaa"}}>{fmtDur(ev.start.dateTime, ev.end.dateTime)}</div>
                           </div>
                         </div>
                       );
@@ -1069,16 +1069,16 @@ function OPMLDrop({ onLoaded }) {
         style={{border:"1px dashed "+(dragging?"var(--accent)":"rgba(255,255,255,0.1)"),borderRadius:12,padding:"28px 20px",textAlign:"center",cursor:"pointer",background:dragging?"color-mix(in srgb, var(--accent) 6%, transparent)":"rgba(255,255,255,0.02)",transition:"all 0.15s",marginBottom:16}}>
         <div style={{fontSize:26,marginBottom:10,opacity:0.45}}>📰</div>
         <div style={{fontSize:13,color:"#999",fontWeight:500,marginBottom:5}}>Drop your Feedly OPML here</div>
-        <div style={{fontSize:11,color:"#333"}}>or click to browse</div>
+        <div style={{fontSize:11,color:"#999"}}>or click to browse</div>
         <input ref={fileRef} type="file" accept=".opml,.xml" style={{display:"none"}} onChange={e=>processFile(e.target.files[0])}/>
       </div>
       {error&&<div style={{fontSize:11,color:"#f77f4f",marginBottom:12}}>{error}</div>}
       <div style={{background:"rgba(255,255,255,0.03)",borderRadius:10,padding:"12px 14px"}}>
-        <div style={{fontSize:10,color:"#444",fontWeight:500,textTransform:"uppercase",letterSpacing:0.8,marginBottom:8}}>How to export from Feedly</div>
+        <div style={{fontSize:10,color:"#aaa",fontWeight:500,textTransform:"uppercase",letterSpacing:0.8,marginBottom:8}}>How to export from Feedly</div>
         {[["1","Go to","feedly.com"],["2","Click avatar →","Organize"],["3","Scroll down →","Export OPML"]].map(([n,a,b])=>(
           <div key={n} style={{display:"flex",gap:8,marginBottom:5}}>
             <span style={{fontSize:10,color:"#2a2a34",width:14,fontFamily:"DM Mono,monospace",flexShrink:0}}>{n}</span>
-            <span style={{fontSize:11,color:"#3a3a44"}}>{a} <span style={{color:"#666"}}>{b}</span></span>
+            <span style={{fontSize:11,color:"#999"}}>{a} <span style={{color:"#bbb"}}>{b}</span></span>
           </div>
         ))}
         <div style={{marginTop:10,fontSize:10,color:"#282830",lineHeight:1.5}}>Also works with Inoreader, NewsBlur, or any OPML file.</div>
@@ -1094,7 +1094,7 @@ function CategoryManager({ categories, activeIds, setActiveIds, onClose, onReset
       <div style={{background:"#18181c",border:"1px solid rgba(255,255,255,0.08)",borderRadius:16,padding:20,width:300,maxHeight:"82vh",overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <span style={{fontSize:14,fontWeight:500,color:"#e0e0e0"}}>Manage widgets</span>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#444",fontSize:13,cursor:"pointer",padding:4}}>✕</button>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#aaa",fontSize:13,cursor:"pointer",padding:4}}>✕</button>
         </div>
         <div style={{fontSize:10,color:"#2a2a34",textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>News categories</div>
         {categories.map((cat,i)=>{
@@ -1104,7 +1104,7 @@ function CategoryManager({ categories, activeIds, setActiveIds, onClose, onReset
               <span style={{...C.dot,background:col}}/>
               <div style={{flex:1}}>
                 <div style={{fontSize:13,color:"#ccc"}}>{cat.label}</div>
-                <div style={{fontSize:10,color:"#333"}}>{cat.feeds.length} feed{cat.feeds.length!==1?"s":""}</div>
+                <div style={{fontSize:10,color:"#999"}}>{cat.feeds.length} feed{cat.feeds.length!==1?"s":""}</div>
               </div>
               <button onClick={()=>setActiveIds(p=>on?p.filter(x=>x!==id):[...p,id])}
                 style={{border:"1px solid",borderRadius:6,fontSize:11,padding:"3px 10px",cursor:"pointer",fontWeight:500,fontFamily:"'DM Sans',sans-serif",background:on?col+"22":"rgba(255,255,255,0.05)",color:on?col:"#444",borderColor:on?col+"44":"rgba(255,255,255,0.08)"}}>
@@ -1121,10 +1121,10 @@ function CategoryManager({ categories, activeIds, setActiveIds, onClose, onReset
               <span style={{...C.dot,background:w.color}}/>
               <div style={{flex:1}}>
                 <div style={{fontSize:13,color:"#ccc"}}>{w.label}</div>
-                <div style={{fontSize:10,color:"#333"}}>{w.note}</div>
+                <div style={{fontSize:10,color:"#999"}}>{w.note}</div>
               </div>
               <button onClick={()=>setActiveIds(p=>on?p.filter(x=>x!==w.id):[...p,w.id])}
-                style={{border:"1px solid",borderRadius:6,fontSize:11,padding:"3px 10px",cursor:"pointer",fontWeight:500,fontFamily:"'DM Sans',sans-serif",background:on?w.color+"22":"rgba(255,255,255,0.05)",color:on?w.color:"#444",borderColor:on?w.color+"44":"rgba(255,255,255,0.08)"}}>
+                style={{border:"1px solid",borderRadius:6,fontSize:11,padding:"3px 10px",cursor:"pointer",fontWeight:500,fontFamily:"'DM Sans',sans-serif",background:on?w.color+"22":"rgba(255,255,255,0.05)",color:on?w.color:"#aaa",borderColor:on?w.color+"44":"rgba(255,255,255,0.08)"}}>
                 {on?"Pinned":"Add"}
               </button>
             </div>
@@ -1151,12 +1151,12 @@ function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardO
       <div style={{background:"#18181c",border:"1px solid rgba(255,255,255,0.08)",borderRadius:16,padding:20,width:280}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <span style={{fontSize:14,fontWeight:500,color:"#e0e0e0"}}>Settings</span>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#444",fontSize:13,cursor:"pointer",padding:4}}>✕</button>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#aaa",fontSize:13,cursor:"pointer",padding:4}}>✕</button>
         </div>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
           <div>
             <div style={{fontSize:13,color:"#ccc"}}>Start with Windows</div>
-            <div style={{fontSize:10,color:"#333",marginTop:2}}>Launch panel on login</div>
+            <div style={{fontSize:10,color:"#999",marginTop:2}}>Launch panel on login</div>
           </div>
           <button onClick={toggleAutostart} style={{
             width:36,height:20,borderRadius:10,border:"none",cursor:"pointer",transition:"background 0.2s",position:"relative",
@@ -1168,7 +1168,7 @@ function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardO
         <div style={{padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
             <div style={{fontSize:13,color:"#ccc"}}>Opacité du panneau</div>
-            <div style={{fontSize:11,color:"#555",fontFamily:"DM Mono,monospace"}}>{Math.round(opacity*100)}%</div>
+            <div style={{fontSize:11,color:"#aaa",fontFamily:"DM Mono,monospace"}}>{Math.round(opacity*100)}%</div>
           </div>
           <input type="range" min="0.2" max="1" step="0.01" value={opacity}
             onChange={e=>onOpacityChange(parseFloat(e.target.value))}
@@ -1177,7 +1177,7 @@ function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardO
         <div style={{padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
             <div style={{fontSize:13,color:"#ccc"}}>Opacité des cartes</div>
-            <div style={{fontSize:11,color:"#555",fontFamily:"DM Mono,monospace"}}>{Math.round(cardOpacity*100)}%</div>
+            <div style={{fontSize:11,color:"#aaa",fontFamily:"DM Mono,monospace"}}>{Math.round(cardOpacity*100)}%</div>
           </div>
           <input type="range" min="0" max="1" step="0.01" value={cardOpacity}
             onChange={e=>onCardOpacityChange(parseFloat(e.target.value))}
@@ -1482,7 +1482,7 @@ export default function App() {
 
   if (!storageReady) return (
     <div style={{display:"flex",height:"100vh",alignItems:"center",justifyContent:"center",background:"rgba(10,10,12,0.95)",fontFamily:"'DM Sans',sans-serif"}}>
-      <div style={{fontSize:11,color:"#333"}}>Loading…</div>
+      <div style={{fontSize:11,color:"#999"}}>Loading…</div>
     </div>
   );
 
@@ -1544,8 +1544,8 @@ export default function App() {
         .wi{animation:fadeIn 0.2s ease both}
         input{color-scheme:dark}
         a{color:var(--accent)}
-        /* Global text vibrancy — dim labels read clearly on frosted bg */
-        body{color:#c8c8d4}
+        /* Global text vibrancy */
+        body{color:#dcdce8}
         .panel-wrap{
           transform: translateX(-100%);
           transition: transform 260ms cubic-bezier(0.32,0,0.16,1);
@@ -1555,12 +1555,12 @@ export default function App() {
         }
         .resize-handle{
           width:5px;flex-shrink:0;cursor:ew-resize;
-          background:#18181c;
+          background:rgba(255,255,255,0.04);
           transition:background 0.15s;
           position:relative;z-index:10;
         }
         .resize-handle:hover,.resize-handle:active{
-          background:color-mix(in srgb, var(--accent) 25%, transparent);
+          background:color-mix(in srgb, var(--accent) 30%, transparent);
         }
         .col-divider{
           width:4px;flex-shrink:0;cursor:col-resize;
@@ -1581,15 +1581,13 @@ export default function App() {
         {/* ── Panel content ── */}
         <div ref={panelBgRef} style={{
           flex:"0 0 auto",
-          width: browserPane.open ? browserPane.braveX : 'calc(100vw - 10px)',
-          margin:"10px 10px 10px 0",
+          width: browserPane.open ? browserPane.braveX : 'calc(100vw - 20px)',
+          margin:"10px",
           borderRadius:12,
           overflow:"hidden",
           display:"flex",flexDirection:"row",
-          background:`color-mix(in srgb, ${accentColor} 10%, rgba(16,16,20,${Math.max(opacity,0.72)}))`,
-          backdropFilter:`blur(48px) saturate(180%)`,
-          WebkitBackdropFilter:`blur(48px) saturate(180%)`,
-          boxShadow:"0 8px 40px rgba(0,0,0,0.55), 0 0 0 0.5px rgba(255,255,255,0.06)",
+          background:`color-mix(in srgb, ${accentColor} 6%, rgba(14,14,20,${Math.max(opacity,0.38)}))`,
+          boxShadow:"0 8px 48px rgba(0,0,0,0.5), 0 0 0 0.5px rgba(255,255,255,0.07)",
           transition:"width 280ms cubic-bezier(0.32,0,0.16,1)"}}>
 
           <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -1631,7 +1629,7 @@ export default function App() {
                   onDragOver={e=>{e.preventDefault();setDropTarget({col:"left",beforeId:null});}}
                   onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
                   {renderCol(leftIds, "left")}
-                  {leftIds.length===0&&<div style={{textAlign:"center",color:"#555",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
+                  {leftIds.length===0&&<div style={{textAlign:"center",color:"#aaa",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
                 </div>
 
                 {/* Divider col 1 | col 2 */}
@@ -1642,7 +1640,7 @@ export default function App() {
                   onDragOver={e=>{e.preventDefault();setDropTarget({col:"mid",beforeId:null});}}
                   onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
                   {renderCol(midIds, "mid")}
-                  {midIds.length===0&&<div style={{textAlign:"center",color:"#555",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
+                  {midIds.length===0&&<div style={{textAlign:"center",color:"#aaa",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
                 </div>
 
                 {/* Divider col 2 | col 3 (feed) */}
@@ -1653,7 +1651,7 @@ export default function App() {
                   onDragOver={e=>{e.preventDefault();setDropTarget({col:"feed",beforeId:null});}}
                   onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
                   {renderCol(feedIds, "feed")}
-                  {feedIds.length===0&&<div style={{textAlign:"center",color:"#555",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
+                  {feedIds.length===0&&<div style={{textAlign:"center",color:"#aaa",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
                 </div>
 
                 {/* Divider col 3 | col 4 */}
@@ -1664,7 +1662,7 @@ export default function App() {
                   onDragOver={e=>{e.preventDefault();setDropTarget({col:"right",beforeId:null});}}
                   onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
                   {renderCol(rightIds, "right")}
-                  {rightIds.length===0&&<div style={{textAlign:"center",color:"#555",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
+                  {rightIds.length===0&&<div style={{textAlign:"center",color:"#aaa",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
                 </div>
               </div>
             )}
