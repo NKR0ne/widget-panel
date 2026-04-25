@@ -1586,7 +1586,7 @@ export default function App() {
           borderRadius:12,
           overflow:"hidden",
           display:"flex",flexDirection:"row",
-          background:`color-mix(in srgb, ${accentColor} 6%, rgba(14,14,20,${Math.max(opacity,0.38)}))`,
+          background:`color-mix(in srgb, ${accentColor} 4%, rgba(14,14,22,${Math.max(opacity,0.74)}))`,
           boxShadow:"0 8px 48px rgba(0,0,0,0.5), 0 0 0 0.5px rgba(255,255,255,0.07)",
           transition:"width 280ms cubic-bezier(0.32,0,0.16,1)"}}>
 

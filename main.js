@@ -249,7 +249,6 @@ function createWindow() {
     if (rendererReady) {
       setTimeout(() => { log('[win] sending panel-show'); win.webContents.send('panel-show') }, 50)
     }
-    sendToBrave({ type: 'taskbar-hide' })
   })
   win.on('hide', () => {
     // Move off-screen left of the strip so next show starts slide-in from translateX(-100%)
@@ -257,7 +256,6 @@ function createWindow() {
     win.setPosition(-w, win.getPosition()[1])
     notifyHelperState(false)
     isHiding = false
-    sendToBrave({ type: 'taskbar-show' })
   })
 }
 
