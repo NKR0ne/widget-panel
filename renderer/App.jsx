@@ -189,7 +189,7 @@ async function storageLoad() {
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 const C = {
-  card:  { background:"var(--card-bg,rgba(255,255,255,0.10))", borderRadius:12, border:"1px solid rgba(255,255,255,0.06)", overflow:"hidden" },
+  card:  { background:"var(--card-bg,rgba(24,24,28,1))", borderRadius:12, border:"1px solid rgba(255,255,255,0.06)", overflow:"hidden" },
   title: { fontSize:11, fontWeight:500, color:"#aaa", textTransform:"uppercase", letterSpacing:0.9 },
   dot:   { width:6, height:6, borderRadius:"50%", flexShrink:0, display:"inline-block" },
   badge: { fontSize:10, padding:"1px 6px", borderRadius:4, fontWeight:500 },
@@ -205,7 +205,18 @@ function DemoBadge() {
 
 
 // ── Card shell ───────────────────────────────────────────────────────────────
-function Shell({ color, title, sub, badge, expanded, onToggle, isDragging, onDragStart, onDragEnd, children }) {
+function Shell({ color, title, sub, badge, expanded, onToggle, isDragging, onDragStart, onDragEnd, lastUpdated, children }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => { const id = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(id); }, []);
+
+  const ageLabel = (() => {
+    if (!lastUpdated) return null;
+    const mins = Math.floor((now - lastUpdated) / 60000);
+    if (mins < 1) return '<1m';
+    if (mins < 60) return `${mins}m`;
+    return `${Math.floor(mins / 60)}h`;
+  })();
+
   return (
     <div style={{ ...C.card, opacity: isDragging ? 0.35 : 1, transition:"opacity 0.1s" }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 14px", cursor:"pointer", userSelect:"none" }} onClick={onToggle}>
@@ -223,6 +234,7 @@ function Shell({ color, title, sub, badge, expanded, onToggle, isDragging, onDra
           {badge}
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:5 }} onClick={e=>e.stopPropagation()}>
+          {ageLabel && <span style={{ fontSize:9, color:"#2a2a38", fontFamily:"DM Mono,monospace" }}>{ageLabel}</span>}
           <span style={{ ...C.chev, transform:expanded?"rotate(90deg)":"rotate(0deg)" }} onClick={onToggle}>›</span>
         </div>
       </div>
@@ -248,12 +260,13 @@ function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
   const [demo,setDemo]=useState(false);
   const [status,setStatus]=useState("loading");
   const [readIds,setReadIds]=useState(new Set());
+  const [lastUpdated,setLastUpdated]=useState(null);
   const unread=items.filter(i=>!readIds.has(i.id)).length;
 
   useEffect(()=>{ onUnreadChange?.(unread); },[unread]);
 
   useEffect(()=>{
-    if (!category.feeds?.length){setItems(mockForCategory(category.label));setDemo(true);setStatus("ok");return;}
+    if (!category.feeds?.length){setItems(mockForCategory(category.label));setDemo(true);setStatus("ok");setLastUpdated(Date.now());return;}
     const doFetch = () => {
       setStatus("loading");
       // Try all feeds in parallel; filter to articles <30 days old; sort newest first
@@ -265,9 +278,9 @@ function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
             .filter(v=>{ const d=new Date(v._pubDate); return !v._pubDate||isNaN(d)||d.getTime()>cutoff; })
             .sort((a,b)=>new Date(b._pubDate||0)-new Date(a._pubDate||0))
             .slice(0,7);
-          if(live.length){setItems(live);setDemo(false);setStatus("ok");}
-          else{setItems(mockForCategory(category.label));setDemo(true);setStatus("ok");}
-        }).catch(()=>{setItems(mockForCategory(category.label));setDemo(true);setStatus("ok");});
+          if(live.length){setItems(live);setDemo(false);setStatus("ok");setLastUpdated(Date.now());}
+          else{setItems(mockForCategory(category.label));setDemo(true);setStatus("ok");setLastUpdated(Date.now());}
+        }).catch(()=>{setItems(mockForCategory(category.label));setDemo(true);setStatus("ok");setLastUpdated(Date.now());});
     };
     doFetch();
     const t = setInterval(doFetch, 30 * 60 * 1000); // refresh every 30 min
@@ -278,7 +291,7 @@ function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
     ?<span style={{fontSize:10,color:"#333"}}>fetching…</span>
     :(status==="ok"&&unread>0&&!demo)?<span style={{...C.badge,background:color+"22",color}}>{unread}</span>:null;
 
-  return { color, title:category.label, badge:badgeEl,
+  return { color, title:category.label, lastUpdated, badge:badgeEl,
     content:(
       <div>
         {status==="loading"&&<Skel/>}
@@ -314,6 +327,7 @@ function WeatherWidget() {
   const [wx,setWx]=useState(null);
   const [demo,setDemo]=useState(false);
   const [status,setStatus]=useState("loading");
+  const [lastUpdated,setLastUpdated]=useState(null);
 
   useEffect(()=>{
     const url=METEO+"?latitude=46.8123&longitude=-71.1756"
@@ -321,9 +335,9 @@ function WeatherWidget() {
       +"&hourly=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min"
       +"&timezone=America%2FToronto&forecast_days=5";
     const doFetch = () => {
-      fetch(url).then(r=>r.ok?r.json():Promise.reject()).then(d=>{setWx(d);setDemo(false);setStatus("ok");})
-        .catch(()=>fetch(PROXY1+encodeURIComponent(url)).then(r=>r.json()).then(d=>{setWx(d);setDemo(false);setStatus("ok");})
-          .catch(()=>{setWx(MOCK_WX);setDemo(true);setStatus("ok");}));
+      fetch(url).then(r=>r.ok?r.json():Promise.reject()).then(d=>{setWx(d);setDemo(false);setStatus("ok");setLastUpdated(Date.now());})
+        .catch(()=>fetch(PROXY1+encodeURIComponent(url)).then(r=>r.json()).then(d=>{setWx(d);setDemo(false);setStatus("ok");setLastUpdated(Date.now());})
+          .catch(()=>{setWx(MOCK_WX);setDemo(true);setStatus("ok");setLastUpdated(Date.now());}));
     };
     doFetch();
     const t = setInterval(doFetch, 30 * 60 * 1000); // refresh every 30 min
@@ -334,7 +348,7 @@ function WeatherWidget() {
   const nowIdx=hourly?Math.max(0,hourly.time.findIndex(t=>new Date(t)>new Date())-1):0;
   const [cond,icon]=cur?wmo(cur.weather_code):["","⛅"];
 
-  return { color:"#f7c94f", title:"Weather", sub:"Lévis, QC",
+  return { color:"#f7c94f", title:"Weather", sub:"Lévis, QC", lastUpdated,
     content:(
       <div>
         {status==="loading"&&<Skel n={2}/>}
@@ -400,6 +414,7 @@ function StocksWidget({ apiKey, onSaveKey }) {
   const [source,setSource]=useState("");
   const [status,setStatus]=useState(apiKey?"loading":"yahoo");
   const [draft,setDraft]=useState("");
+  const [lastUpdated,setLastUpdated]=useState(null);
 
   useEffect(()=>{
     const doFetch = () => {
@@ -408,7 +423,7 @@ function StocksWidget({ apiKey, onSaveKey }) {
         Promise.all(TICKERS.map(sym=>fetch(FINNHUB+"/quote?symbol="+sym+"&token="+apiKey).then(r=>r.json()).then(d=>[sym,d]).catch(()=>[sym,null])))
           .then(res=>{
             const m={};res.forEach(([sym,d])=>{if(d?.c)m[sym]=d;});
-            if(Object.keys(m).length){setQuotes(m);setSource("finnhub");setStatus("ok");return;}
+            if(Object.keys(m).length){setQuotes(m);setSource("finnhub");setStatus("ok");setLastUpdated(Date.now());return;}
             return fetchYahoo();
           }).catch(fetchYahoo);
       } else {
@@ -425,14 +440,14 @@ function StocksWidget({ apiKey, onSaveKey }) {
     Promise.all(TICKERS.map(sym=>fetchYahooQuote(sym).then(d=>[sym,d])))
       .then(res=>{
         const m={};res.forEach(([sym,d])=>{if(d?.c)m[sym]=d;});
-        if(Object.keys(m).length){setQuotes(m);setSource("yahoo");setStatus("ok");}
-        else{setQuotes(MOCK_STOCKS);setSource("demo");setDemo(true);setStatus("ok");}
-      }).catch(()=>{setQuotes(MOCK_STOCKS);setSource("demo");setDemo(true);setStatus("ok");});
+        if(Object.keys(m).length){setQuotes(m);setSource("yahoo");setStatus("ok");setLastUpdated(Date.now());}
+        else{setQuotes(MOCK_STOCKS);setSource("demo");setDemo(true);setStatus("ok");setLastUpdated(Date.now());}
+      }).catch(()=>{setQuotes(MOCK_STOCKS);setSource("demo");setDemo(true);setStatus("ok");setLastUpdated(Date.now());});
   }
 
   const subLabel = source==="finnhub"?"Finnhub":source==="yahoo"?"Yahoo Finance · no key":"demo";
 
-  return { color:"#5cc8a8", title:"Stocks", sub:subLabel,
+  return { color:"#5cc8a8", title:"Stocks", sub:subLabel, lastUpdated,
     content:(
       <div>
         {!apiKey&&status==="ok"&&source!=="demo"&&(
@@ -478,14 +493,15 @@ function TrafficWidget({ apiKey, onSaveKey }) {
   const [demo,setDemo]=useState(false);
   const [status,setStatus]=useState(apiKey?"loading":"nokey");
   const [draft,setDraft]=useState("");
+  const [lastUpdated,setLastUpdated]=useState(null);
 
   useEffect(()=>{
     if(!apiKey){setStatus("nokey");return;}
     const doFetch = () => {
       setStatus("loading");
       fetch(TOMTOM+"?point=46.7900,-71.2900&key="+apiKey).then(r=>r.json())
-        .then(d=>{if(d.flowSegmentData){setFlow(d.flowSegmentData);setDemo(false);setStatus("ok");}else{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");}})
-        .catch(()=>{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");});
+        .then(d=>{if(d.flowSegmentData){setFlow(d.flowSegmentData);setDemo(false);setStatus("ok");setLastUpdated(Date.now());}else{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");setLastUpdated(Date.now());}})
+        .catch(()=>{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");setLastUpdated(Date.now());});
     };
     doFetch();
     const t = setInterval(doFetch, 5 * 60 * 1000); // refresh every 5 min
@@ -496,7 +512,7 @@ function TrafficWidget({ apiKey, onSaveKey }) {
   const tColor=ratio>0.8?"#5cc8a8":ratio>0.5?"#f7c94f":"#f77f4f";
   const tLabel=ratio>0.8?"Free flow":ratio>0.5?"Moderate":"Heavy";
 
-  return { color:"#f77f4f", title:"Traffic", sub:"TomTom · A-20 Lévis",
+  return { color:"#f77f4f", title:"Traffic", sub:"TomTom · A-20 Lévis", lastUpdated,
     content:(
       <div>
         {status==="nokey"&&(
@@ -688,6 +704,7 @@ function AgendaWidget() {
   const [showSettings,setShowSettings]= useState(false);
   const [demo,        setDemo]        = useState(false);
   const [loading,     setLoading]     = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
 
   useEffect(() => {
     api.store.get('wp-agenda-cal-ids').then(v => {
@@ -728,7 +745,7 @@ function AgendaWidget() {
         new Date(a.start.dateTime || a.start.date) - new Date(b.start.dateTime || b.start.date));
       setEvents(sorted); setDemo(false);
     } catch { setEvents(MOCK_EVENTS); setDemo(true); }
-    setLoading(false);
+    setLoading(false); setLastUpdated(Date.now());
   }
 
   function toggleCal(id) {
@@ -783,7 +800,7 @@ function AgendaWidget() {
         style={{background:"none",border:"none",color:showSettings?"#0078d4":"#333",fontSize:12,cursor:"pointer",padding:"0 2px",lineHeight:1}}>⚙</button>
     : null;
 
-  return { color:"#0078d4", title:"Outlook Agenda", badge: settingsBtn,
+  return { color:"#0078d4", title:"Outlook Agenda", lastUpdated, badge: settingsBtn,
     content:(
       <div>
         {showAuth && <MsSetupPane {...auth}/>}
@@ -871,6 +888,7 @@ function TodoWidget() {
   const [activeListId, setActiveListId]= useState(null);
   const [demo,         setDemo]        = useState(false);
   const [loading,      setLoading]     = useState(false);
+  const [lastUpdated,  setLastUpdated] = useState(null);
 
   useEffect(() => {
     api.store.get('wp-todo-list-id').then(id => { if (id) setActiveListId(id); });
@@ -900,7 +918,7 @@ function TodoWidget() {
         await loadTasks(token, targetId);
       }
     } catch { setTasks(MOCK_TASKS); setDemo(true); }
-    setLoading(false);
+    setLoading(false); setLastUpdated(Date.now());
   }
 
   async function loadTasks(token, lid) {
@@ -909,6 +927,7 @@ function TodoWidget() {
       + `?$filter=status ne 'completed'&$orderby=importance desc,createdDateTime&$top=20`, token);
     if (res.body?.value) { setTasks(res.body.value); setDemo(false); }
     else { setTasks(MOCK_TASKS); setDemo(true); }
+    setLastUpdated(Date.now());
   }
 
   async function switchList(id) {
@@ -950,7 +969,7 @@ function TodoWidget() {
   const showAuth = ['loading','setup','authenticating','error'].includes(auth.step);
   const activeList = lists.find(l => l.id === activeListId);
 
-  return { color:"#2564cf", title:"Microsoft To-Do",
+  return { color:"#2564cf", title:"Microsoft To-Do", lastUpdated,
     content:(
       <div>
         {showAuth && <MsSetupPane {...auth}/>}
@@ -1020,7 +1039,7 @@ function WidgetCard({ id, categories, apiKeys, onSaveKey, colorIdx, onUnreadChan
   const d = newsData || weatherData || stocksData || trafficData || clockData || agendaData || todoData;
   if (!d) return null;
   return (
-    <Shell color={d.color} title={d.title} sub={d.sub} badge={d.badge}
+    <Shell color={d.color} title={d.title} sub={d.sub} badge={d.badge} lastUpdated={d.lastUpdated}
       expanded={expanded} onToggle={onToggle}
       isDragging={isDragging} onDragStart={onDragStart} onDragEnd={onDragEnd}>
       {d.content}
@@ -1148,8 +1167,8 @@ function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardO
         </div>
         <div style={{padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <div style={{fontSize:13,color:"#ccc"}}>Transparence</div>
-            <div style={{fontSize:11,color:"#555",fontFamily:"DM Mono,monospace"}}>{Math.round((1-opacity)*100)}%</div>
+            <div style={{fontSize:13,color:"#ccc"}}>Opacité du panneau</div>
+            <div style={{fontSize:11,color:"#555",fontFamily:"DM Mono,monospace"}}>{Math.round(opacity*100)}%</div>
           </div>
           <input type="range" min="0.2" max="1" step="0.01" value={opacity}
             onChange={e=>onOpacityChange(parseFloat(e.target.value))}
@@ -1206,9 +1225,10 @@ export default function App() {
   const [accentColor,  setAccentColor]  = useState('#202020');
   const [browserPane,  setBrowserPane]  = useState({ open: false, url: '', loading: false, braveX: 0 });
 
-  // Column widths: left + mid are fixed; right column is flex
-  const [colWidths, setColWidths] = useState({ left: 220, mid: 240 });
-  const colWidthsRef = useRef({ left: 220, mid: 240 });
+  // Column widths: left + mid + feed are fixed; right column is flex
+  const [colWidths, setColWidths] = useState({ left: 220, mid: 240, feed: 260 });
+  const colWidthsRef = useRef({ left: 220, mid: 240, feed: 260 });
+  const panelBgRef = useRef(null);
   useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
 
   // Expand/collapse state per widget id — persisted
@@ -1283,7 +1303,10 @@ export default function App() {
     const bApi = window.electronAPI?.browser;
     if (!bApi) return;
     bApi.onPaneShow(({ url, braveX }) => setBrowserPane({ open: true, url, loading: false, braveX }));
-    bApi.onPaneHide(() => setBrowserPane(p => ({ ...p, open: false })));
+    bApi.onPaneHide(() => {
+      setBrowserPane(p => ({ ...p, open: false }));
+      bApi.setIgnoreMouseEvents(false);
+    });
     bApi.onLoading(v => setBrowserPane(p => ({ ...p, loading: v })));
     bApi.onUrl(u => setBrowserPane(p => ({ ...p, url: u })));
   }, []);
@@ -1302,7 +1325,7 @@ export default function App() {
   // ── Default column assignment ────────────────────────────────────────────
   function defaultColumns(cats) {
     const cols = {};
-    (cats||[]).forEach(c => { cols["cat:" + c.label] = "mid"; });
+    (cats||[]).forEach(c => { cols["cat:" + c.label] = "feed"; });
     cols.weather = "left";
     cols.stocks  = "left";
     cols.traffic = "left";
@@ -1312,22 +1335,26 @@ export default function App() {
     return cols;
   }
 
-  // Column resolver — falls back to "left" for system, "mid" for news
+  // Column resolver — falls back to "left" for system, "feed" for news
   function getColFor(id) {
     if (columns[id]) return columns[id];
-    return id.startsWith("cat:") ? "mid" : "left";
+    return id.startsWith("cat:") ? "feed" : "left";
   }
 
   // ── Load persisted config ────────────────────────────────────────────────
   useEffect(()=>{
-    storageLoad().then(saved=>{
+    // Load visual settings first so panel renders at correct opacity/card-opacity immediately
+    Promise.all([
+      storageLoad(),
+      api.store.get('wp-opacity'),
+      api.store.get('wp-card-opacity'),
+    ]).then(([saved, opv, cardv]) => {
+      api.log?.('opacity from store:', opv, '→ parsed:', opv ? parseFloat(opv) : '(default 1)');
       if (saved?.categories?.length) {
         setCategories(saved.categories);
         setActiveIds(saved.activeIds||[]);
         const cols = saved.columns || {};
-        // Stale check: system widgets landed on "right" (pre-v2)
         const stale = cols.weather==="right" || cols.stocks==="right" || cols.traffic==="right";
-        // Migration: no "mid" assignments → old 2-col layout, move news from "right" → "mid"
         const hasMid = Object.values(cols).some(v => v === "mid");
         let finalCols;
         if (stale) {
@@ -1340,20 +1367,25 @@ export default function App() {
         } else {
           finalCols = cols;
         }
+        // Migrate: cat:* widgets in "mid" from pre-feed-column saves → "feed"
+        const hasFeed = Object.values(finalCols).some(v => v === "feed");
+        if (!hasFeed) {
+          for (const id of Object.keys(finalCols)) {
+            if (id.startsWith("cat:") && finalCols[id] === "mid") finalCols[id] = "feed";
+          }
+        }
         setColumns(finalCols);
         setApiKeys(saved.apiKeys||{});
       }
+      if (opv) setOpacity(parseFloat(opv));
+      const cardVal = cardv ? parseFloat(cardv) : 1;
+      setCardOpacity(cardVal);
+      document.documentElement.style.setProperty('--card-bg', `rgba(24,24,28,${cardVal})`);
       setStorageReady(true);
     });
 
     api.pin?.get().then(p=>setPinned(!!p));
     api.pin?.onChange(p=>setPinned(!!p));
-    api.store.get('wp-opacity').then(v=>{ if (v) setOpacity(parseFloat(v)); });
-    api.store.get('wp-card-opacity').then(v=>{
-      const val = v ? parseFloat(v) : 1;
-      setCardOpacity(val);
-      document.documentElement.style.setProperty('--card-bg', `rgba(255,255,255,${val * 0.10})`);
-    });
     api.store.get(SK_COLW).then(v=>{
       if (v) try {
         const p = JSON.parse(v);
@@ -1378,6 +1410,31 @@ export default function App() {
     if (!storageReady) return;
     api.store.set(SK_EXPANDED, JSON.stringify(expandedMap));
   },[expandedMap, storageReady]);
+
+  // Persist opacity changes (useEffect guarantees saves even if inline save fails)
+  useEffect(()=>{
+    if (!storageReady) return;
+    api.store.set('wp-opacity', String(opacity));
+  },[opacity, storageReady]);
+
+  // Log and force repaint when panel becomes visible
+  useEffect(() => {
+    if (!visible || !storageReady) return;
+    const el = panelBgRef.current;
+    const computedBg = el ? window.getComputedStyle(el).backgroundColor : 'n/a';
+    api.log?.(`panel visible: opacity=${opacity} storageReady=${storageReady} computedBg=${computedBg} el=${!!el}`);
+    if (!el) return;
+    requestAnimationFrame(() => {
+      const bg2 = window.getComputedStyle(el).backgroundColor;
+      api.log?.(`rAF1: computedBg=${bg2}`);
+      el.style.outline = '1px solid transparent';
+      requestAnimationFrame(() => {
+        const bg3 = window.getComputedStyle(el).backgroundColor;
+        api.log?.(`rAF2: computedBg=${bg3}`);
+        el.style.outline = '';
+      });
+    });
+  }, [visible, storageReady]);
 
   // Build notification snippets
   useEffect(()=>{
@@ -1415,6 +1472,7 @@ export default function App() {
   const loaded = !!categories;
   const leftIds  = activeIds.filter(id => getColFor(id) === "left");
   const midIds   = activeIds.filter(id => getColFor(id) === "mid");
+  const feedIds  = activeIds.filter(id => getColFor(id) === "feed");
   const rightIds = activeIds.filter(id => getColFor(id) === "right");
   const newsIds  = activeIds.filter(id => id.startsWith("cat:"));
 
@@ -1423,7 +1481,7 @@ export default function App() {
   },[]);
 
   if (!storageReady) return (
-    <div style={{display:"flex",height:"100vh",alignItems:"center",justifyContent:"center",background:"#0a0a0c",fontFamily:"'DM Sans',sans-serif"}}>
+    <div style={{display:"flex",height:"100vh",alignItems:"center",justifyContent:"center",background:"rgba(10,10,12,0.95)",fontFamily:"'DM Sans',sans-serif"}}>
       <div style={{fontSize:11,color:"#333"}}>Loading…</div>
     </div>
   );
@@ -1474,6 +1532,7 @@ export default function App() {
     <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans',sans-serif",background:"transparent",overflow:"hidden","--accent":accentColor}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@300;400&display=swap');
+        html,body{background:transparent;margin:0;padding:0}
         *{box-sizing:border-box;margin:0;padding:0}
         ::-webkit-scrollbar{width:3px}
         ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.08);border-radius:2px}
@@ -1487,7 +1546,6 @@ export default function App() {
         .panel-wrap{
           transform: translateX(-100%);
           transition: transform 260ms cubic-bezier(0.32,0,0.16,1);
-          will-change: transform;
         }
         .panel-wrap.open{
           transform: translateX(0);
@@ -1518,7 +1576,7 @@ export default function App() {
                    width: browserPane.open ? browserPane.braveX : '100vw'}}>
 
         {/* ── Panel content ── */}
-        <div style={{flex:"0 0 auto",width: browserPane.open ? browserPane.braveX : '100vw',display:"flex",flexDirection:"row",
+        <div ref={panelBgRef} style={{flex:"0 0 auto",width: browserPane.open ? browserPane.braveX : '100vw',display:"flex",flexDirection:"row",
           background:`color-mix(in srgb, ${accentColor} 8%, rgba(20,20,24,${opacity}))`,
           backdropFilter:opacity<1?`blur(${Math.round((1-opacity)*40)}px)`:"none",
           WebkitBackdropFilter:opacity<1?`blur(${Math.round((1-opacity)*40)}px)`:"none",
@@ -1529,18 +1587,12 @@ export default function App() {
             {/* ── Header ── */}
             <div style={{padding:"18px 20px 10px",borderBottom:"1px solid rgba(255,255,255,0.05)",display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexShrink:0}}>
               <div>
-                <div style={{fontSize:28,fontWeight:300,color:"#f0f0f0",letterSpacing:-1,lineHeight:1,fontFamily:"'DM Mono',monospace",display:"flex",alignItems:"baseline",gap:2}}>
-                  <span>{String(time.getHours()).padStart(2,"0")}:{String(time.getMinutes()).padStart(2,"0")}</span>
-                  <span style={{fontSize:16,color:"#555",letterSpacing:0}}>{String(time.getSeconds()).padStart(2,"0")}</span>
+                <div style={{fontSize:13,fontWeight:600,color:"#e0e0e8",letterSpacing:0.2,textTransform:"capitalize"}}>
+                  {time.toLocaleDateString("fr-CA",{weekday:"long"})}
                 </div>
-                <div style={{fontSize:10,color:"#666",marginTop:4,textTransform:"capitalize"}}>
-                  {time.toLocaleDateString("fr-CA",{weekday:"long",month:"long",day:"numeric"})}
+                <div style={{fontSize:11,color:"#555",marginTop:2,textTransform:"capitalize"}}>
+                  {time.toLocaleDateString("fr-CA",{month:"long",day:"numeric"})}
                 </div>
-                {tickerVisible && snippet && (
-                  <div key={snippet} style={{fontSize:10,color:"#666",marginTop:6,fontFamily:"DM Mono,monospace",animation:"ticker 0.3s ease both"}}>
-                    {totalUnread > 0 && <span style={{color:"var(--accent)",marginRight:6}}>●</span>}{snippet}
-                  </div>
-                )}
               </div>
               <div style={{display:"flex",gap:4,alignItems:"center",marginTop:2}}>
                 <button onClick={togglePin} title={pinned?"Unpin":"Pin to desktop"}
@@ -1583,10 +1635,21 @@ export default function App() {
                   {midIds.length===0&&<div style={{textAlign:"center",color:"#555",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
                 </div>
 
-                {/* Divider col 2 | col 3 */}
+                {/* Divider col 2 | col 3 (feed) */}
                 <div className="col-divider" onMouseDown={onColDividerDown('mid')} />
 
-                {/* Column 3 */}
+                {/* Column 3 — Feeds */}
+                <div style={{flexShrink:0,width:colWidths.feed,overflowY:"auto",padding:"10px 6px 12px 6px",display:"flex",flexDirection:"column",gap:8}}
+                  onDragOver={e=>{e.preventDefault();setDropTarget({col:"feed",beforeId:null});}}
+                  onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
+                  {renderCol(feedIds, "feed")}
+                  {feedIds.length===0&&<div style={{textAlign:"center",color:"#555",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
+                </div>
+
+                {/* Divider col 3 | col 4 */}
+                <div className="col-divider" onMouseDown={onColDividerDown('feed')} />
+
+                {/* Column 4 — Personal (agenda, todo) */}
                 <div style={{flex:1,overflowY:"auto",padding:"10px 10px 12px 6px",display:"flex",flexDirection:"column",gap:8}}
                   onDragOver={e=>{e.preventDefault();setDropTarget({col:"right",beforeId:null});}}
                   onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
@@ -1613,41 +1676,62 @@ export default function App() {
 
       {showMgr&&loaded&&<CategoryManager categories={categories} activeIds={activeIds} setActiveIds={setActiveIds} onClose={()=>setShowMgr(false)} onReset={reset}/>}
       {showSettings&&<SettingsModal onClose={()=>setShowSettings(false)}
-        opacity={opacity} onOpacityChange={v=>{ setOpacity(v); api.panel?.setOpacity(v); }}
+        opacity={opacity} onOpacityChange={v=>{ setOpacity(v); api.store.set('wp-opacity', String(v)); }}
         cardOpacity={cardOpacity} onCardOpacityChange={v=>{
           setCardOpacity(v);
           document.documentElement.style.setProperty('--card-bg', `rgba(24,24,28,${v})`);
           api.store.set('wp-card-opacity', String(v));
         }}/>}
 
-      {/* ── Browser toolbar (overlays the native Brave child window area) ── */}
+      {/* ── Browser card (panel extension with Brave content rendered behind) ── */}
       {browserPane.open && (
         <div style={{
-          position: 'fixed', left: browserPane.braveX, top: 0, right: 0, height: 41,
-          background: '#18181c', borderBottom: '1px solid rgba(255,255,255,0.06)',
-          display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px',
+          position: 'fixed', left: browserPane.braveX + 8, top: 8, right: 8, bottom: 8,
+          border: '1px solid rgba(255,255,255,0.07)',
+          borderRadius: 10,
+          boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+          overflow: 'hidden',
           zIndex: 9999, userSelect: 'none',
-        }}>
-          {browserPane.loading && (
-            <div style={{width:13,height:13,border:'2px solid rgba(255,255,255,0.1)',borderTop:'2px solid #888',borderRadius:'50%',animation:'spin 0.7s linear infinite',flexShrink:0}}/>
-          )}
-          <div style={{flex:1,fontSize:11,color:'#666',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontFamily:'DM Mono,monospace'}}>
-            {browserPane.url}
+          // background transparent so Brave (in shell window behind) shows through
+          background: 'transparent',
+        }}
+          onMouseMove={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            // Header is 41px tall — only the content area below it is click-through
+            window.electronAPI.browser.setIgnoreMouseEvents(e.clientY > rect.top + 41);
+          }}
+          onMouseLeave={() => window.electronAPI.browser.setIgnoreMouseEvents(false)}
+        >
+          {/* Card header — opaque, captures clicks */}
+          <div style={{
+            position: 'absolute', top: 0, left: 0, right: 0, height: 41,
+            background: '#18181c',
+            borderBottom: '1px solid rgba(255,255,255,0.06)',
+            borderRadius: '9px 9px 0 0',
+            display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px',
+          }}>
+            {browserPane.loading && (
+              <div style={{width:13,height:13,border:'2px solid rgba(255,255,255,0.1)',borderTop:'2px solid #888',borderRadius:'50%',animation:'spin 0.7s linear infinite',flexShrink:0}}/>
+            )}
+            <div style={{flex:1,fontSize:11,color:'#555',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontFamily:'DM Mono,monospace'}}>
+              {browserPane.url}
+            </div>
+            <button
+              onClick={() => window.electronAPI?.browser?.openExternal()}
+              title="Open in Brave"
+              style={{background:'none',border:'none',color:'#444',fontSize:13,cursor:'pointer',padding:'4px 6px',lineHeight:1,borderRadius:4,transition:'color 0.1s'}}
+              onMouseEnter={e=>e.currentTarget.style.color='#aaa'} onMouseLeave={e=>e.currentTarget.style.color='#444'}>
+              ↗
+            </button>
+            <button
+              onClick={() => window.electronAPI?.browser?.close()}
+              title="Dismiss"
+              style={{background:'none',border:'none',color:'#444',fontSize:13,cursor:'pointer',padding:'4px 6px',lineHeight:1,borderRadius:4,transition:'color 0.1s'}}
+              onMouseEnter={e=>e.currentTarget.style.color='#aaa'} onMouseLeave={e=>e.currentTarget.style.color='#444'}>
+              ✕
+            </button>
           </div>
-          <button
-            onClick={() => window.electronAPI?.browser?.openExternal()}
-            title="Open in Brave"
-            style={{background:'none',border:'none',color:'#555',fontSize:13,cursor:'pointer',padding:'4px 6px',lineHeight:1,borderRadius:4,transition:'color 0.1s'}}
-            onMouseEnter={e=>e.currentTarget.style.color='#aaa'} onMouseLeave={e=>e.currentTarget.style.color='#555'}>
-            ↗
-          </button>
-          <button
-            onClick={() => window.electronAPI?.browser?.close()}
-            title="Close browser"
-            style={{background:'none',border:'none',color:'#555',fontSize:13,cursor:'pointer',padding:'4px 6px',lineHeight:1,borderRadius:4,transition:'color 0.1s'}}
-            onMouseEnter={e=>e.currentTarget.style.color='#aaa'} onMouseLeave={e=>e.currentTarget.style.color='#555'}>
-            ✕
-          </button>
+          {/* Content area transparent — Brave renders in shell window behind this */}
         </div>
       )}
     </div>
