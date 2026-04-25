@@ -5,6 +5,8 @@ const net    = require('net')
 const { exec, spawn } = require('child_process')
 const { getStore, setStore, deleteStore } = require('./store')
 
+const PANEL_GAP = 10   // px gap between window edge and screen; window is inset so the gap shows raw desktop
+
 const isDev  = !!process.env.VITE_DEV
 const LOG    = path.join(__dirname, 'native', 'bin', 'electron.log')
 function log(...args) {
@@ -123,7 +125,7 @@ function hidePanel(opts = {}) {
     browserEmbedded = false
     win.webContents.send('browser-pane-hide')
     const { workArea } = screen.getPrimaryDisplay()
-    win.setBounds({ x: 0, y: workArea.y, width: panelOnlyWidth, height: workArea.height })
+    win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: panelOnlyWidth, height: workArea.height - PANEL_GAP * 2 })
   }
   win.webContents.send('panel-hide')
   // Fallback: if renderer doesn't respond in 600ms, hide anyway
@@ -176,9 +178,9 @@ function createWindow() {
 
   win = new BrowserWindow({
     width:           panelW,
-    height:          workArea.height,
-    x:               -panelW,            // start off-screen; animation slides it in
-    y:               workArea.y,
+    height:          workArea.height - PANEL_GAP * 2,
+    x:               -(panelW + PANEL_GAP),  // start off-screen; animation slides it in
+    y:               workArea.y + PANEL_GAP,
     frame:           false,
     transparent:     true,
     backgroundMaterial: 'acrylic',      // DWM acrylic for real frosted-glass; disabled while Brave is embedded
@@ -242,7 +244,7 @@ function createWindow() {
     // When browser is embedded, win is already at full width — preserve it.
     // Otherwise restore to panel-only size.
     const targetW = browserEmbedded ? win.getSize()[0] : panelOnlyWidth
-    win.setBounds({ x: 0, y: workArea.y, width: targetW, height: workArea.height })
+    win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: targetW, height: workArea.height - PANEL_GAP * 2 })
     // Delay so the strip WM_LBUTTONDOWN passes through the hook before g_panelOn=true.
     setTimeout(() => { notifyHelperState(true); notifyHelperHwnds() }, 350)
     log('[win] show — rendererReady=', rendererReady)
@@ -326,7 +328,7 @@ ipcMain.on('panel-resize-start', (_e, startX, startW) => {
     const { x: curX } = screen.getCursorScreenPoint()
     const { workArea } = screen.getPrimaryDisplay()
     const newW = Math.max(320, Math.min(resizeStartW + (curX - resizeStartX), workArea.width - 40))
-    win.setBounds({ x: 0, y: workArea.y, width: newW, height: workArea.height })
+    win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: newW, height: workArea.height - PANEL_GAP * 2 })
   }, 16)
 })
 
@@ -424,19 +426,18 @@ function openBraveInPanel(url) {
   const panelW = win.getSize()[0]
   if (!browserEmbedded) panelOnlyWidth = panelW
 
-  // Compute brave width in physical pixels to avoid DPI rounding overflow on right edge
-  const physPanelRight  = Math.round(panelW * sf)
+  // Panel window is inset PANEL_GAP from the left; Brave starts right after the panel at screen x=PANEL_GAP+panelW
+  const panelScreenRight = PANEL_GAP + panelW   // screen x where panel ends (physical = *sf)
+  const physPanelRight  = Math.round(panelScreenRight * sf)
   const physScreenRight = Math.round(bounds.width * sf)
   const braveW = Math.floor((physScreenRight - physPanelRight - 2) / sf)
   const totalW = panelW + braveW
-  const braveH = workArea.height
+  const braveH = workArea.height - PANEL_GAP * 2
 
   currentUrl = url
   lastBrowserOpenTime = Date.now()
 
-  // Expand win to cover full screen width (panel + transparent browser area for toolbar rendering).
-  // Per-pixel alpha hit-testing on the transparent area passes clicks through to brave-host's shell window.
-  win.setBounds({ x: 0, y: workArea.y, width: totalW, height: braveH })
+  win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: totalW, height: braveH })
   browserEmbedded = true
 
   win.setBackgroundMaterial('none')   // disable acrylic so Brave shows through the transparent area
@@ -444,14 +445,10 @@ function openBraveInPanel(url) {
   win.webContents.send('brave-loading', true)
   win.webContents.send('brave-url', url)
 
-  // Tell brave-host to create a plain Win32 shell window at screen coords and embed Brave in it.
-  // hwnd:0 = create own shell (no WS_EX_LAYERED conflict, no Chromium competing for keyboard focus).
-  // x,y,w,h are PHYSICAL pixels — brave-host passes them directly to CreateWindowExW.
-  // Shell sits inside the card margin (8px) and below the card header (TOOLBAR_H=41)
   const CARD_M = 8
   sendToBrave({ type: 'open', hwnd: 0,
-    x: Math.round((panelW + CARD_M) * sf),
-    y: Math.round((workArea.y + TOOLBAR_H + CARD_M) * sf),
+    x: Math.round((panelScreenRight + CARD_M) * sf),
+    y: Math.round((workArea.y + PANEL_GAP + TOOLBAR_H + CARD_M) * sf),
     w: Math.round((braveW - CARD_M * 2) * sf),
     h: Math.round((braveH - TOOLBAR_H - CARD_M * 2) * sf),
     url })
@@ -465,7 +462,7 @@ function closeBraveInPanel() {
   win.setBackgroundMaterial('acrylic')  // re-enable frosted glass
   win.webContents.send('browser-pane-hide')
   const { workArea } = screen.getPrimaryDisplay()
-  if (panelOnlyWidth > 0) win.setBounds({ x: 0, y: workArea.y, width: panelOnlyWidth, height: workArea.height })
+  if (panelOnlyWidth > 0) win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: panelOnlyWidth, height: workArea.height - PANEL_GAP * 2 })
   notifyHelperHwnds()
 }
 
@@ -513,7 +510,7 @@ ipcMain.on('brave-open-external', () => {
   win.setBackgroundMaterial('acrylic')
   win.webContents.send('browser-pane-hide')
   const { workArea } = screen.getPrimaryDisplay()
-  if (panelOnlyWidth > 0) win.setBounds({ x: 0, y: workArea.y, width: panelOnlyWidth, height: workArea.height })
+  if (panelOnlyWidth > 0) win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: panelOnlyWidth, height: workArea.height - PANEL_GAP * 2 })
   currentUrl = ''
   notifyHelperHwnds()
   // Slide the panel away after detaching
