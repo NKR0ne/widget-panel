@@ -153,6 +153,7 @@ function notifyHelperHwnds() {
   const panelHwnd = Number(win.getNativeWindowHandle().readBigInt64LE(0))
   log('[notifyHelperHwnds] panel=', panelHwnd)
   broadcastToHelper({ type: 'hwnd', panel: panelHwnd, brave: 0 })
+  sendToBrave({ type: 'round-corners', hwnd: panelHwnd })
 }
 
 // ── Spawn taskbar-btn.exe ─────────────────────────────────────────────────────
@@ -251,6 +252,7 @@ function createWindow() {
     if (rendererReady) {
       setTimeout(() => { log('[win] sending panel-show'); win.webContents.send('panel-show') }, 50)
     }
+    sendToBrave({ type: 'taskbar-hide' })
   })
   win.on('hide', () => {
     // Move off-screen left of the strip so next show starts slide-in from translateX(-100%)
@@ -258,6 +260,7 @@ function createWindow() {
     win.setPosition(-w, win.getPosition()[1])
     notifyHelperState(false)
     isHiding = false
+    sendToBrave({ type: 'taskbar-show' })
   })
 }
 
@@ -720,6 +723,7 @@ ipcMain.handle('ms-token-refresh', async (_e, clientId, refreshToken) => {
 })
 
 app.on('will-quit', () => {
+  sendToBrave({ type: 'taskbar-show' })  // safety: always restore taskbar on quit
   globalShortcut.unregisterAll()
   if (pipeServer) pipeServer.close()
 })

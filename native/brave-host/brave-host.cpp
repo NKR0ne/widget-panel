@@ -9,11 +9,15 @@
 //   Electron → brave-host  {"type":"resize","w":W,"h":H}
 //   Electron → brave-host  {"type":"close"}
 //   Electron → brave-host  {"type":"detach"}
+//   Electron → brave-host  {"type":"round-corners","hwnd":N}
+//   Electron → brave-host  {"type":"taskbar-hide"}
+//   Electron → brave-host  {"type":"taskbar-show"}
 //   brave-host → Electron  {"type":"ready"}
 //   brave-host → Electron  {"type":"error","msg":"..."}
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <dwmapi.h>
 #include <winhttp.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -37,6 +41,7 @@
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "psapi.lib")
+#pragma comment(lib, "dwmapi.lib")
 
 // ── Logging ───────────────────────────────────────────────────────────────────
 static std::wstring g_logPath;
@@ -469,6 +474,14 @@ static void HandleMessage(const std::string& line) {
     else if (type == "close") {
         KillBrave();
         DestroyShell();
+    }
+    else if (type == "round-corners") {
+        HWND hwnd = (HWND)(uintptr_t)(unsigned long long)jnum(line, "hwnd");
+        if (hwnd && IsWindow(hwnd)) {
+            // DWMWCP_ROUND = 2  (Windows 11 rounded corners, ~8px radius)
+            DWORD pref = 2;
+            DwmSetWindowAttribute(hwnd, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/, &pref, sizeof(pref));
+        }
     }
     else if (type == "taskbar-hide") {
         HWND tray = FindWindowW(L"Shell_TrayWnd", NULL);
