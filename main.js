@@ -22,6 +22,8 @@ let lastToggleTime   = 0
 let isHiding         = false  // prevents double-hide (blur + toggle arriving together)
 let coldStart        = true   // true until first successful IPC connection
 let rendererReady    = false  // true once renderer has registered its panel listeners
+let _showAnimating   = false  // true while showPanel() pre-send is in flight
+let g_fadeIv         = null   // active opacity-fade interval — cancel before starting a new one
 let panelOnlyWidth   = parseInt(getStore('wp-width')) || 720  // panel width before browser was embedded
 let browserEmbedded  = false  // whether brave window is currently embedded in win
 
@@ -81,7 +83,7 @@ function createPipeServer() {
               coldStart = false
               lastToggleTime = Date.now()
               log('[tcp] coldStart → win.show(), isVisible=', win.isVisible())
-              if (!win.isVisible()) { win.show(); setTimeout(() => win.focus(), 150) }
+              if (!win.isVisible()) { showPanel() }
             }
             notifyHelperState(win.isVisible())
           }
@@ -94,7 +96,7 @@ function createPipeServer() {
             lastToggleTime = Date.now()
             log('[toggle] isVisible=', win.isVisible())
             if (win.isVisible()) { hidePanel() }
-            else { win.show(); setTimeout(() => win.focus(), 150) }
+            else { showPanel() }
             broadcastToHelper({ type: 'state', visible: win.isVisible() })
           }
         } catch {}
@@ -115,7 +117,32 @@ function createPipeServer() {
     console.log('[ipc] server listening on TCP 127.0.0.1:' + PORT))
 }
 
-// Initiate slide-out: renderer animates then calls panel-hide-done → win.hide()
+// Animate window-level opacity (DWM) — cancels any in-progress fade before starting
+function fadeOpacity(from, to, ms, onDone) {
+  if (g_fadeIv) { clearInterval(g_fadeIv); g_fadeIv = null }
+  win.setOpacity(from)
+  const steps = Math.round(ms / 16)
+  let i = 0
+  g_fadeIv = setInterval(() => {
+    i++
+    const t = i / steps
+    win.setOpacity(from + (to - from) * t)
+    if (i >= steps) { clearInterval(g_fadeIv); g_fadeIv = null; win.setOpacity(to); onDone?.() }
+  }, 16)
+}
+
+// Show panel: window starts invisible, fades in while CSS slides in — no DWM ghost
+function showPanel() {
+  if (!win || win.isVisible() || _showAnimating) return
+  _showAnimating = true
+  win.setOpacity(0)
+  win.show()
+  if (!isPinned) setTimeout(() => win.focus(), 150)
+  if (rendererReady) win.webContents.send('panel-show')
+  fadeOpacity(0, isPinned ? pinnedWinOpacity() : 1, 120, () => { _showAnimating = false })
+}
+
+// Initiate slide-out: fade window to invisible first so DWM ghost never shows
 function hidePanel(opts = {}) {
   if (!win || !win.isVisible() || isHiding) return
   log('[hidePanel] called, browserEmbedded=', browserEmbedded, new Error().stack.split('\n')[2]?.trim())
@@ -128,9 +155,12 @@ function hidePanel(opts = {}) {
     win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: panelOnlyWidth, height: workArea.height - PANEL_GAP * 2 })
   }
   win.webContents.send('panel-hide')
-  // Fallback: if renderer doesn't respond in 600ms, hide anyway
-  const t = setTimeout(() => { win.hide(); notifyHelperState(false); isHiding = false }, 600)
-  ipcMain.once('panel-hide-done', () => { clearTimeout(t); win.hide(); notifyHelperState(false); isHiding = false })
+  fadeOpacity(win.getOpacity(), 0, 260, () => {
+    win.hide()
+    win.setOpacity(1)
+    notifyHelperState(false)
+    isHiding = false
+  })
 }
 
 // Send badge count to C++ helper (and to Electron's own overlay icon)
@@ -145,15 +175,19 @@ function notifyHelperState(visible) {
   broadcastToHelper({ type: 'state', visible })
 }
 
+function getPanelHwnd() {
+  if (!win || win.isDestroyed()) return 0
+  return Number(win.getNativeWindowHandle().readBigInt64LE(0))
+}
+
 // Send panel HWND to the DLL so the mouse hook can call GetWindowRect directly.
-// Brave is now a child of win, so win's rect covers the full panel+browser area.
-// Win32 GetWindowRect always returns physical coords — no DPI math needed.
 function notifyHelperHwnds() {
   if (!win || win.isDestroyed()) return
-  const panelHwnd = Number(win.getNativeWindowHandle().readBigInt64LE(0))
-  log('[notifyHelperHwnds] panel=', panelHwnd)
+  const panelHwnd = getPanelHwnd()
+  log('[notifyHelperHwnds] panel=', panelHwnd, 'isPinned=', isPinned)
   broadcastToHelper({ type: 'hwnd', panel: panelHwnd, brave: 0 })
   sendToBrave({ type: 'round-corners', hwnd: panelHwnd })
+  sendToBrave({ type: isPinned ? 'z-bottom' : 'z-top', hwnd: panelHwnd })
 }
 
 // ── Spawn taskbar-btn.exe ─────────────────────────────────────────────────────
@@ -184,7 +218,7 @@ function createWindow() {
     y:               workArea.y + PANEL_GAP,
     frame:           false,
     transparent:     true,
-    backgroundMaterial: 'acrylic',      // DWM acrylic for real frosted-glass; disabled while Brave is embedded
+    backgroundMaterial: 'acrylic',
     alwaysOnTop:     true,
     skipTaskbar:     true,
     resizable:       false,            // we handle resize ourselves via drag handle
@@ -242,17 +276,15 @@ function createWindow() {
   win.on('show', () => {
     lastToggleTime = Date.now()
     const { workArea } = screen.getPrimaryDisplay()
-    // When browser is embedded, win is already at full width — preserve it.
-    // Otherwise restore to panel-only size.
     const targetW = browserEmbedded ? win.getSize()[0] : panelOnlyWidth
     win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: targetW, height: workArea.height - PANEL_GAP * 2 })
     // Delay so the strip WM_LBUTTONDOWN passes through the hook before g_panelOn=true.
     setTimeout(() => { notifyHelperState(true); notifyHelperHwnds() }, 350)
-    log('[win] show — rendererReady=', rendererReady)
-    if (rendererReady) {
-      setTimeout(() => { log('[win] sending panel-show'); win.webContents.send('panel-show') }, 50)
+    log('[win] show — rendererReady=', rendererReady, '_showAnimating=', _showAnimating)
+    if (rendererReady && !_showAnimating) {
+      // Fallback: if show wasn't triggered via showPanel() (e.g. second-instance), send now
+      win.webContents.send('panel-show')
     }
-    sendToBrave({ type: 'taskbar-hide' })
   })
   win.on('hide', () => {
     // Move off-screen left of the strip so next show starts slide-in from translateX(-100%)
@@ -260,14 +292,26 @@ function createWindow() {
     win.setPosition(-w, win.getPosition()[1])
     notifyHelperState(false)
     isHiding = false
-    sendToBrave({ type: 'taskbar-show' })
   })
 }
 
 // ── Pin / unpin ───────────────────────────────────────────────────────────────
+function pinnedWinOpacity() { return parseFloat(getStore('wp-pinned-opacity') || '0.25') }
+
 function togglePin(forceTo) {
   isPinned = forceTo !== undefined ? forceTo : !isPinned
-  win.setAlwaysOnTop(true, isPinned ? 'desktop' : 'floating')
+  if (isPinned) {
+    win.setAlwaysOnTop(false)
+  } else {
+    win.setAlwaysOnTop(true, 'floating')
+  }
+  if (win.isVisible()) {
+    const panelHwnd = getPanelHwnd()
+    sendToBrave({ type: isPinned ? 'z-bottom' : 'z-top', hwnd: panelHwnd })
+    fadeOpacity(win.getOpacity(), isPinned ? pinnedWinOpacity() : 1, 300)
+  } else if (isPinned) {
+    showPanel()
+  }
   win.webContents.send('pin-state', isPinned)
 }
 
@@ -594,7 +638,8 @@ function httpsRequest(options, body) {
 ipcMain.handle('ms-graph-fetch', async (_e, url, accessToken) => {
   const u = new URL(url)
   return httpsRequest({ hostname: u.hostname, path: u.pathname + u.search,
-    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' } })
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json',
+      Prefer: 'outlook.timezone="UTC"' } })
 })
 
 ipcMain.handle('ms-graph-patch', async (_e, url, accessToken, patchBody) => {
@@ -723,7 +768,6 @@ ipcMain.handle('ms-token-refresh', async (_e, clientId, refreshToken) => {
 })
 
 app.on('will-quit', () => {
-  sendToBrave({ type: 'taskbar-show' })  // safety: always restore taskbar on quit
   globalShortcut.unregisterAll()
   if (pipeServer) pipeServer.close()
 })

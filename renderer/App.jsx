@@ -190,22 +190,22 @@ async function storageLoad() {
 // ── Styles ───────────────────────────────────────────────────────────────────
 const C = {
   card:  { background:"var(--card-bg,rgba(24,24,28,1))", borderRadius:12, border:"1px solid rgba(255,255,255,0.06)", overflow:"hidden" },
-  title: { fontSize:11, fontWeight:500, color:"#aaa", textTransform:"uppercase", letterSpacing:0.9 },
+  title: { fontSize:11, fontWeight:500, color:"#d0d0e0", textTransform:"uppercase", letterSpacing:0.9 },
   dot:   { width:6, height:6, borderRadius:"50%", flexShrink:0, display:"inline-block" },
   badge: { fontSize:10, padding:"1px 6px", borderRadius:4, fontWeight:500 },
-  chev:  { color:"#bbb", fontSize:16, lineHeight:1, display:"inline-block", flexShrink:0, transition:"transform 0.2s" },
-  inp:   { background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.09)", borderRadius:8, padding:"7px 10px", color:"#ccc", fontSize:12, outline:"none", fontFamily:"'DM Sans',sans-serif" },
+  chev:  { color:"#dcdcec", fontSize:16, lineHeight:1, display:"inline-block", flexShrink:0, transition:"transform 0.2s" },
+  inp:   { background:"rgba(255,255,255,0.06)", border:"1px solid rgba(255,255,255,0.09)", borderRadius:8, padding:"7px 10px", color:"#e4e4f4", fontSize:12, outline:"none", fontFamily:"'DM Sans',sans-serif" },
   btn:   { background:"color-mix(in srgb, var(--accent) 15%, transparent)", border:"1px solid color-mix(in srgb, var(--accent) 30%, transparent)", borderRadius:8, color:"var(--accent)", fontSize:12, padding:"7px 14px", cursor:"pointer", fontWeight:500, fontFamily:"'DM Sans',sans-serif" },
   skel:  w=>({ height:10, borderRadius:4, background:"rgba(255,255,255,0.05)", width:w+"%", animation:"pulse 1.5s ease infinite", marginBottom:8 }),
 };
 
 function DemoBadge() {
-  return <span style={{ fontSize:9, padding:"1px 5px", borderRadius:3, background:"rgba(255,255,255,0.06)", color:"#999", fontFamily:"DM Mono,monospace", marginLeft:4 }}>demo</span>;
+  return <span style={{ fontSize:9, padding:"1px 5px", borderRadius:3, background:"rgba(255,255,255,0.06)", color:"#c4c4d4", fontFamily:"DM Mono,monospace", marginLeft:4 }}>demo</span>;
 }
 
 
 // ── Card shell ───────────────────────────────────────────────────────────────
-function Shell({ color, title, sub, badge, expanded, onToggle, isDragging, onDragStart, onDragEnd, lastUpdated, children }) {
+function Shell({ color, title, sub, badge, expanded, onToggle, isDragging, onDragStart, onDragEnd, lastUpdated, transparent, children }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const id = setInterval(() => setNow(Date.now()), 30000); return () => clearInterval(id); }, []);
 
@@ -218,7 +218,7 @@ function Shell({ color, title, sub, badge, expanded, onToggle, isDragging, onDra
   })();
 
   return (
-    <div style={{ ...C.card, opacity: isDragging ? 0.35 : 1, transition:"opacity 0.1s" }}>
+    <div style={{ ...C.card, ...(transparent ? { background:'transparent', border:'1px solid rgba(255,255,255,0.08)' } : {}), opacity: isDragging ? 0.35 : 1, transition:"opacity 0.1s" }}>
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 14px", cursor:"pointer", userSelect:"none" }} onClick={onToggle}>
         <div style={{ display:"flex", alignItems:"center", gap:8, minWidth:0 }}>
           <span
@@ -227,10 +227,10 @@ function Shell({ color, title, sub, badge, expanded, onToggle, isDragging, onDra
             onDragEnd={()=>onDragEnd?.()}
             onClick={e=>e.stopPropagation()}
             title="Drag to reorder"
-            style={{ color:"#999", fontSize:11, cursor:"grab", userSelect:"none", flexShrink:0, lineHeight:1, padding:"0 4px 0 0" }}>⠿</span>
+            style={{ color:"#c4c4d4", fontSize:11, cursor:"grab", userSelect:"none", flexShrink:0, lineHeight:1, padding:"0 4px 0 0" }}>⠿</span>
           <span style={{ ...C.dot, background:color }} />
           <span style={C.title}>{title}</span>
-          {sub && <span style={{ fontSize:10, color:"#999", fontFamily:"DM Mono,monospace" }}>{sub}</span>}
+          {sub && <span style={{ fontSize:10, color:"#c4c4d4", fontFamily:"DM Mono,monospace" }}>{sub}</span>}
           {badge}
         </div>
         <div style={{ display:"flex", alignItems:"center", gap:5 }} onClick={e=>e.stopPropagation()}>
@@ -288,7 +288,7 @@ function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
   },[category.label]);
 
   const badgeEl=status==="loading"
-    ?<span style={{fontSize:10,color:"#999"}}>fetching…</span>
+    ?<span style={{fontSize:10,color:"#c4c4d4"}}>fetching…</span>
     :(status==="ok"&&unread>0&&!demo)?<span style={{...C.badge,background:color+"22",color}}>{unread}</span>:null;
 
   return { color, title:category.label, lastUpdated, badge:badgeEl,
@@ -308,10 +308,10 @@ function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
                   onError={e=>{e.target.style.display="none";}}/>
               )}
               <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:12,color:"#a0a0a8",lineHeight:1.45,marginBottom:4}}>{item.title}</div>
+                <div style={{fontSize:12,color:"#d8d8e8",lineHeight:1.45,marginBottom:4}}>{item.title}</div>
                 <div style={{display:"flex",justifyContent:"space-between"}}>
-                  <span style={{fontSize:10,color:"#bbb"}}>{item.source}</span>
-                  <span style={{fontSize:10,color:"#bbb",fontFamily:"DM Mono,monospace"}}>{item.time}</span>
+                  <span style={{fontSize:10,color:"#dcdcec"}}>{item.source}</span>
+                  <span style={{fontSize:10,color:"#dcdcec",fontFamily:"DM Mono,monospace"}}>{item.time}</span>
                 </div>
               </div>
             </div>
@@ -323,32 +323,36 @@ function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
 }
 
 // ── Weather widget ───────────────────────────────────────────────────────────
-function WeatherWidget() {
+const DEFAULT_LOC = { name: "Lévis, QC", lat: 46.8123, lon: -71.1756, timezone: "America/Toronto" };
+
+function WeatherWidget({ location = DEFAULT_LOC }) {
   const [wx,setWx]=useState(null);
   const [demo,setDemo]=useState(false);
   const [status,setStatus]=useState("loading");
   const [lastUpdated,setLastUpdated]=useState(null);
 
   useEffect(()=>{
-    const url=METEO+"?latitude=46.8123&longitude=-71.1756"
+    const url=METEO+`?latitude=${location.lat}&longitude=${location.lon}`
       +"&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,relative_humidity_2m"
       +"&hourly=temperature_2m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min"
-      +"&timezone=America%2FToronto&forecast_days=5";
+      +`&timezone=${encodeURIComponent(location.timezone)}&forecast_days=5`;
+    setStatus("loading");
     const doFetch = () => {
       fetch(url).then(r=>r.ok?r.json():Promise.reject()).then(d=>{setWx(d);setDemo(false);setStatus("ok");setLastUpdated(Date.now());})
         .catch(()=>fetch(PROXY1+encodeURIComponent(url)).then(r=>r.json()).then(d=>{setWx(d);setDemo(false);setStatus("ok");setLastUpdated(Date.now());})
           .catch(()=>{setWx(MOCK_WX);setDemo(true);setStatus("ok");setLastUpdated(Date.now());}));
     };
     doFetch();
-    const t = setInterval(doFetch, 30 * 60 * 1000); // refresh every 30 min
+    const t = setInterval(doFetch, 30 * 60 * 1000);
     return () => clearInterval(t);
-  },[]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[location.lat, location.lon, location.timezone]);
 
   const cur=wx?.current, daily=wx?.daily, hourly=wx?.hourly;
   const nowIdx=hourly?Math.max(0,hourly.time.findIndex(t=>new Date(t)>new Date())-1):0;
   const [cond,icon]=cur?wmo(cur.weather_code):["","⛅"];
 
-  return { color:"#f7c94f", title:"Weather", sub:"Lévis, QC", lastUpdated,
+  return { color:"#f7c94f", title:"Weather", sub:location.name, lastUpdated,
     content:(
       <div>
         {status==="loading"&&<Skel n={2}/>}
@@ -359,11 +363,11 @@ function WeatherWidget() {
               <span style={{fontSize:36,lineHeight:1}}>{icon}</span>
               <div>
                 <div style={{fontSize:32,fontWeight:300,color:"#f0f0f0",letterSpacing:-1,lineHeight:1}}>{Math.round(cur.temperature_2m)}°</div>
-                <div style={{fontSize:11,color:"#aaa",marginTop:2}}>{cond} · feels {Math.round(cur.apparent_temperature)}°</div>
+                <div style={{fontSize:11,color:"#d0d0e0",marginTop:2}}>{cond} · feels {Math.round(cur.apparent_temperature)}°</div>
               </div>
               <div style={{marginLeft:"auto",textAlign:"right"}}>
-                <div style={{fontSize:11,color:"#999"}}>Humidity <span style={{color:"#777"}}>{cur.relative_humidity_2m}%</span></div>
-                <div style={{fontSize:11,color:"#999",marginTop:2}}>Wind <span style={{color:"#777"}}>{Math.round(cur.wind_speed_10m)} km/h</span></div>
+                <div style={{fontSize:11,color:"#c4c4d4"}}>Humidity <span style={{color:"#777"}}>{cur.relative_humidity_2m}%</span></div>
+                <div style={{fontSize:11,color:"#c4c4d4",marginTop:2}}>Wind <span style={{color:"#777"}}>{Math.round(cur.wind_speed_10m)} km/h</span></div>
               </div>
             </div>
             {hourly&&(
@@ -374,7 +378,7 @@ function WeatherWidget() {
                     <div key={t} style={{flex:"0 0 auto",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"5px 9px",borderRadius:8,background:i===0?"rgba(247,201,79,0.1)":"transparent"}}>
                       <span style={{fontSize:10,color:i===0?"#f7c94f":"#333"}}>{i===0?"Now":new Date(t).toLocaleTimeString("fr-CA",{hour:"2-digit",minute:"2-digit"})}</span>
                       <span style={{fontSize:14}}>{ic}</span>
-                      <span style={{fontSize:11,color:"#aaa"}}>{Math.round(hourly.temperature_2m[nowIdx+i])}°</span>
+                      <span style={{fontSize:11,color:"#d0d0e0"}}>{Math.round(hourly.temperature_2m[nowIdx+i])}°</span>
                     </div>
                   );
                 })}
@@ -387,12 +391,12 @@ function WeatherWidget() {
                   const lbl=i===0?"Today":new Date(t+"T12:00").toLocaleDateString("fr-CA",{weekday:"short"});
                   return(
                     <div key={t} style={{display:"flex",alignItems:"center",padding:"4px 0",borderBottom:i<daily.time.length-1?"1px solid rgba(255,255,255,0.04)":"none"}}>
-                      <span style={{fontSize:12,color:"#aaa",width:44,textTransform:"capitalize"}}>{lbl}</span>
+                      <span style={{fontSize:12,color:"#d0d0e0",width:44,textTransform:"capitalize"}}>{lbl}</span>
                       <span style={{fontSize:13,marginRight:8}}>{ic}</span>
                       <div style={{flex:1,display:"flex",alignItems:"center",gap:6,justifyContent:"flex-end"}}>
-                        <span style={{fontSize:12,color:"#999"}}>{Math.round(daily.temperature_2m_min[i])}°</span>
+                        <span style={{fontSize:12,color:"#c4c4d4"}}>{Math.round(daily.temperature_2m_min[i])}°</span>
                         <div style={{height:3,borderRadius:2,background:"linear-gradient(90deg,#4f8ef7,#f7c94f)",width:38,opacity:0.3}}/>
-                        <span style={{fontSize:12,color:"#bbb"}}>{Math.round(daily.temperature_2m_max[i])}°</span>
+                        <span style={{fontSize:12,color:"#dcdcec"}}>{Math.round(daily.temperature_2m_max[i])}°</span>
                       </div>
                     </div>
                   );
@@ -467,7 +471,7 @@ function StocksWidget({ apiKey, onSaveKey }) {
               const chg=q.c-(q.pc||q.c),pct=q.pc?((chg/q.pc)*100).toFixed(2):"0.00",up=chg>=0;
               return(
                 <div key={sym} style={{display:"flex",alignItems:"center",padding:"7px 0",borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none"}}>
-                  <span style={{fontSize:12,fontWeight:500,color:"#999",width:46,fontFamily:"DM Mono,monospace"}}>{sym}</span>
+                  <span style={{fontSize:12,fontWeight:500,color:"#c4c4d4",width:46,fontFamily:"DM Mono,monospace"}}>{sym}</span>
                   <div style={{flex:1,margin:"0 10px"}}>
                     <div style={{height:3,borderRadius:2,background:"rgba(255,255,255,0.05)",overflow:"hidden"}}>
                       <div style={{height:"100%",width:Math.min(100,(q.c/(q.h||q.c))*100)+"%",background:up?"#5cc8a8":"#f77f4f",borderRadius:2}}/>
@@ -488,7 +492,7 @@ function StocksWidget({ apiKey, onSaveKey }) {
 }
 
 // ── Traffic widget ───────────────────────────────────────────────────────────
-function TrafficWidget({ apiKey, onSaveKey }) {
+function TrafficWidget({ apiKey, onSaveKey, location = DEFAULT_LOC }) {
   const [flow,setFlow]=useState(null);
   const [demo,setDemo]=useState(false);
   const [status,setStatus]=useState(apiKey?"loading":"nokey");
@@ -499,30 +503,31 @@ function TrafficWidget({ apiKey, onSaveKey }) {
     if(!apiKey){setStatus("nokey");return;}
     const doFetch = () => {
       setStatus("loading");
-      fetch(TOMTOM+"?point=46.7900,-71.2900&key="+apiKey).then(r=>r.json())
+      fetch(`${TOMTOM}?point=${location.lat},${location.lon}&key=${apiKey}`).then(r=>r.json())
         .then(d=>{if(d.flowSegmentData){setFlow(d.flowSegmentData);setDemo(false);setStatus("ok");setLastUpdated(Date.now());}else{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");setLastUpdated(Date.now());}})
         .catch(()=>{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");setLastUpdated(Date.now());});
     };
     doFetch();
-    const t = setInterval(doFetch, 5 * 60 * 1000); // refresh every 5 min
+    const t = setInterval(doFetch, 5 * 60 * 1000);
     return () => clearInterval(t);
-  },[apiKey]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[apiKey, location.lat, location.lon]);
 
   const ratio=flow?Math.min(1,flow.currentSpeed/flow.freeFlowSpeed):0;
   const tColor=ratio>0.8?"#5cc8a8":ratio>0.5?"#f7c94f":"#f77f4f";
   const tLabel=ratio>0.8?"Free flow":ratio>0.5?"Moderate":"Heavy";
 
-  return { color:"#f77f4f", title:"Traffic", sub:"TomTom · A-20 Lévis", lastUpdated,
+  return { color:"#f77f4f", title:"Traffic", sub:`TomTom · ${location.name}`, lastUpdated,
     content:(
       <div>
         {status==="nokey"&&(
           <div style={{paddingTop:8}}>
-            <div style={{fontSize:11,color:"#999",lineHeight:1.6,marginBottom:8}}>Free key at <a href="https://developer.tomtom.com" target="_blank" rel="noreferrer">developer.tomtom.com</a></div>
+            <div style={{fontSize:11,color:"#c4c4d4",lineHeight:1.6,marginBottom:8}}>Free key at <a href="https://developer.tomtom.com" target="_blank" rel="noreferrer">developer.tomtom.com</a></div>
             <div style={{display:"flex",gap:6}}>
               <input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Paste TomTom key…" style={{...C.inp,flex:1,fontSize:11,fontFamily:"DM Mono,monospace"}}/>
               {draft&&<button onClick={()=>onSaveKey("tomtom",draft)} style={C.btn}>✓</button>}
             </div>
-            <button onClick={()=>{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");}} style={{marginTop:8,background:"none",border:"none",fontSize:11,color:"#999",cursor:"pointer",padding:0}}>Preview with demo data →</button>
+            <button onClick={()=>{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");}} style={{marginTop:8,background:"none",border:"none",fontSize:11,color:"#c4c4d4",cursor:"pointer",padding:0}}>Preview with demo data →</button>
           </div>
         )}
         {status==="loading"&&<Skel n={2}/>}
@@ -531,8 +536,8 @@ function TrafficWidget({ apiKey, onSaveKey }) {
             {demo&&<DemoBadge/>}
             <div style={{background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"10px 12px"}}>
               <div style={{display:"flex",alignItems:"baseline",gap:10}}>
-                <span style={{fontSize:26,fontWeight:300,color:tColor,letterSpacing:-1}}>{Math.round(flow.currentSpeed)}<span style={{fontSize:11,color:"#aaa",marginLeft:2}}>km/h</span></span>
-                <span style={{fontSize:11,color:"#999"}}>free flow {Math.round(flow.freeFlowSpeed)} km/h</span>
+                <span style={{fontSize:26,fontWeight:300,color:tColor,letterSpacing:-1}}>{Math.round(flow.currentSpeed)}<span style={{fontSize:11,color:"#d0d0e0",marginLeft:2}}>km/h</span></span>
+                <span style={{fontSize:11,color:"#c4c4d4"}}>free flow {Math.round(flow.freeFlowSpeed)} km/h</span>
                 <span style={{...C.badge,background:tColor+"22",color:tColor,marginLeft:"auto"}}>{tLabel}</span>
               </div>
               <div style={{marginTop:10,height:3,borderRadius:2,background:"rgba(255,255,255,0.06)",overflow:"hidden"}}>
@@ -564,7 +569,7 @@ function ClockWidget() {
       <div style={{display:"flex",flexDirection:"column",alignItems:"center",paddingTop:6,paddingBottom:2}}>
         <svg width={128} height={128} viewBox="0 0 128 128" style={{display:"block"}}>
           {/* Outer ring */}
-          <circle cx={cx} cy={cy} r={r} fill="none" stroke="rgba(255,255,255,0.07)" strokeWidth={1}/>
+          <circle cx={cx} cy={cy} r={r} fill="rgba(255,255,255,0.07)" stroke="rgba(255,255,255,0.10)" strokeWidth={1}/>
           {/* Hour markers */}
           {Array.from({length:60}).map((_,i) => {
             const a = (i * 6 - 90) * Math.PI / 180;
@@ -588,11 +593,11 @@ function ClockWidget() {
           <circle cx={cx} cy={cy} r={3.5} fill="#f74f7e"/>
           <circle cx={cx} cy={cy} r={1.5} fill="rgba(20,20,24,0.8)"/>
         </svg>
-        <div style={{fontSize:11,color:"#aaa",fontFamily:"DM Mono,monospace",letterSpacing:2,marginTop:4}}>
+        <div style={{fontSize:11,color:"#d0d0e0",fontFamily:"DM Mono,monospace",letterSpacing:2,marginTop:4}}>
           {String(t.getHours()).padStart(2,"0")}:{String(m).padStart(2,"0")}:{String(s).padStart(2,"0")}
-          <span style={{fontSize:9,color:"#2a2a34",marginLeft:5}}>{t.getHours()<12?"AM":"PM"}</span>
+          <span style={{fontSize:9,color:"#c4c4d4",marginLeft:5}}>{t.getHours()<12?"AM":"PM"}</span>
         </div>
-        <div style={{fontSize:10,color:"#2a2a34",marginTop:3,textTransform:"capitalize"}}>
+        <div style={{fontSize:10,color:"#c4c4d4",marginTop:3,textTransform:"capitalize"}}>
           {t.toLocaleDateString("fr-CA",{weekday:"long",month:"long",day:"numeric"})}
         </div>
       </div>
@@ -672,8 +677,8 @@ function useMsAuth() {
 function MsSetupPane({ step, cidDraft, setCidDraft, startAuth }) {
   if (step === 'setup' || step === 'error') return (
     <div style={{paddingTop:6}}>
-      <div style={{fontSize:11,color:"#999",lineHeight:1.7,marginBottom:8}}>
-        {step === 'error' ? "Auth failed. " : ""}Enter your <span style={{color:"#bbb"}}>Azure app client ID</span> to connect Microsoft.
+      <div style={{fontSize:11,color:"#c4c4d4",lineHeight:1.7,marginBottom:8}}>
+        {step === 'error' ? "Auth failed. " : ""}Enter your <span style={{color:"#dcdcec"}}>Azure app client ID</span> to connect Microsoft.
       </div>
       <div style={{display:"flex",gap:6}}>
         <input value={cidDraft} onChange={e=>setCidDraft(e.target.value)}
@@ -689,7 +694,7 @@ function MsSetupPane({ step, cidDraft, setCidDraft, startAuth }) {
   if (step === 'authenticating') return (
     <div style={{paddingTop:6,display:"flex",alignItems:"center",gap:8}}>
       <div style={{width:8,height:8,border:"1.5px solid #333",borderTop:"1.5px solid #888",borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>
-      <span style={{fontSize:11,color:"#aaa"}}>Signing in… complete the browser window.</span>
+      <span style={{fontSize:11,color:"#d0d0e0"}}>Signing in… complete the browser window.</span>
     </div>
   );
   return null;
@@ -741,8 +746,8 @@ function AgendaWidget() {
         if (res.status !== 200 || !res.body?.value) return [];
         return res.body.value.map(ev => ({ ...ev, _calId: cal.id }));
       }));
-      const sorted = chunks.flat().sort((a, b) =>
-        new Date(a.start.dateTime || a.start.date) - new Date(b.start.dateTime || b.start.date));
+      const toMs = e => { const s = e.start.dateTime || e.start.date; return new Date(s.endsWith('Z') ? s : s + 'Z'); };
+      const sorted = chunks.flat().sort((a, b) => toMs(a) - toMs(b));
       setEvents(sorted); setDemo(false);
     } catch { setEvents(MOCK_EVENTS); setDemo(true); }
     setLoading(false); setLastUpdated(Date.now());
@@ -769,12 +774,13 @@ function AgendaWidget() {
     return MAP[cal.color] || '#0078d4';
   }
 
+  function toUtc(dt) { return new Date(dt.endsWith('Z') ? dt : dt + 'Z'); }
   function fmtTime(dt) {
-    return new Date(dt).toLocaleTimeString("fr-CA", { hour:"2-digit", minute:"2-digit" });
+    return toUtc(dt).toLocaleTimeString("fr-CA", { hour:"2-digit", minute:"2-digit" });
   }
   function fmtDur(start, end) {
     if (!start || !end) return '';
-    const m = Math.round((new Date(end) - new Date(start)) / 60000);
+    const m = Math.round((toUtc(end) - toUtc(start)) / 60000);
     const h = Math.floor(m / 60), rm = m % 60;
     if (h === 0) return `${m}min`;
     return rm ? `${h}h${rm}` : `${h}h`;
@@ -827,15 +833,15 @@ function AgendaWidget() {
               <div>
                 {demo && <DemoBadge/>}
                 {Object.keys(groups).length === 0 && (
-                  <div style={{paddingTop:10,fontSize:11,color:"#bbb",textAlign:"center"}}>Aucun événement à venir</div>
+                  <div style={{paddingTop:10,fontSize:11,color:"#dcdcec",textAlign:"center"}}>Aucun événement à venir</div>
                 )}
                 <div style={{maxHeight:360,overflowY:"auto",paddingRight:2}}>
                 {Object.entries(groups).map(([day, evs], gi) => (
                   <div key={day} style={{marginTop: gi > 0 ? 12 : 0}}>
                     {day === "Aujourd'hui" ? (
                       <div style={{marginBottom:6}}>
-                        <div style={{fontSize:11,fontWeight:600,color:"#aaa",textTransform:"uppercase",letterSpacing:0.9}}>{day}</div>
-                        <div style={{fontSize:10,color:"#aaa",marginTop:1,textTransform:"capitalize"}}>
+                        <div style={{fontSize:11,fontWeight:600,color:"#d0d0e0",textTransform:"uppercase",letterSpacing:0.9}}>{day}</div>
+                        <div style={{fontSize:10,color:"#d0d0e0",marginTop:1,textTransform:"capitalize"}}>
                           {today.toLocaleDateString("fr-CA",{weekday:"long",day:"numeric",month:"long"})}
                         </div>
                       </div>
@@ -845,7 +851,7 @@ function AgendaWidget() {
                     {evs.map((ev, i) => {
                       const dot = calColor(ev._calId);
                       if (ev.isAllDay) return (
-                        <div key={ev.id} style={{fontSize:10,color:"#bbb",padding:"5px 0",
+                        <div key={ev.id} style={{fontSize:10,color:"#dcdcec",padding:"5px 0",
                           borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none"}}>
                           Toute la journée: {ev.subject}
                         </div>
@@ -855,14 +861,14 @@ function AgendaWidget() {
                           borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none"}}>
                           <div style={{width:7,height:7,borderRadius:"50%",background:dot,flexShrink:0}}/>
                           <div style={{flex:1,minWidth:0}}>
-                            <div style={{fontSize:12,color:"#a0a0a8",lineHeight:1.35}}>{ev.subject}</div>
+                            <div style={{fontSize:12,color:"#d8d8e8",lineHeight:1.35}}>{ev.subject}</div>
                             {ev.location?.displayName && (
-                              <div style={{fontSize:10,color:"#aaa",marginTop:1}}>{ev.location.displayName}</div>
+                              <div style={{fontSize:10,color:"#d0d0e0",marginTop:1}}>{ev.location.displayName}</div>
                             )}
                           </div>
                           <div style={{textAlign:"right",flexShrink:0}}>
-                            <div style={{fontSize:10,color:"#bbb",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.start.dateTime)}</div>
-                            <div style={{fontSize:9,color:"#aaa"}}>{fmtDur(ev.start.dateTime, ev.end.dateTime)}</div>
+                            <div style={{fontSize:10,color:"#dcdcec",fontFamily:"DM Mono,monospace"}}>{fmtTime(ev.start.dateTime)}</div>
+                            <div style={{fontSize:9,color:"#d0d0e0"}}>{fmtDur(ev.start.dateTime, ev.end.dateTime)}</div>
                           </div>
                         </div>
                       );
@@ -979,7 +985,7 @@ function TodoWidget() {
               <select value={activeListId||''} onChange={e=>switchList(e.target.value)}
                 style={{width:"100%",marginBottom:10,background:"rgba(255,255,255,0.05)",
                   border:"1px solid rgba(255,255,255,0.08)",borderRadius:6,
-                  color:"#888",fontSize:11,padding:"5px 8px",cursor:"pointer",
+                  color:"#b8b8cc",fontSize:11,padding:"5px 8px",cursor:"pointer",
                   fontFamily:"'DM Sans',sans-serif",outline:"none"}}>
                 {lists.map(l => <option key={l.id} value={l.id} style={{background:"#18181c"}}>{l.displayName}</option>)}
               </select>
@@ -1002,7 +1008,7 @@ function TodoWidget() {
                       onMouseLeave={e=>{e.currentTarget.style.borderColor="#333";e.currentTarget.style.background="none";}}>
                     </button>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontSize:12,color:"#bbb",lineHeight:1.35}}>{task.title}</div>
+                      <div style={{fontSize:12,color:"#dcdcec",lineHeight:1.35}}>{task.title}</div>
                     </div>
                     <div style={{width:5,height:5,borderRadius:"50%",background:importanceColor(task.importance),flexShrink:0}}/>
                   </div>
@@ -1025,11 +1031,11 @@ function TodoWidget() {
 }
 
 // ── Widget renderer ──────────────────────────────────────────────────────────
-function WidgetCard({ id, categories, apiKeys, onSaveKey, colorIdx, onUnreadChange, onOpenUrl, expanded, onToggle, isDragging, onDragStart, onDragEnd }) {
+function WidgetCard({ id, categories, apiKeys, onSaveKey, colorIdx, onUnreadChange, onOpenUrl, location, expanded, onToggle, isDragging, onDragStart, onDragEnd }) {
   const newsData    = id.startsWith("cat:") ? NewsWidget({ category: categories.find(c=>c.label===id.slice(4)), colorIdx, onUnreadChange, onOpenUrl, expanded, onToggle }) : null;
-  const weatherData = id==="weather" ? WeatherWidget({ expanded, onToggle }) : null;
+  const weatherData = id==="weather" ? WeatherWidget({ location, expanded, onToggle }) : null;
   const stocksData  = id==="stocks"  ? StocksWidget({ apiKey:apiKeys.finnhub, onSaveKey, expanded, onToggle }) : null;
-  const trafficData = id==="traffic" ? TrafficWidget({ apiKey:apiKeys.tomtom, onSaveKey, expanded, onToggle }) : null;
+  const trafficData = id==="traffic" ? TrafficWidget({ apiKey:apiKeys.tomtom, onSaveKey, location, expanded, onToggle }) : null;
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const clockData   = id==="clock"   ? ClockWidget() : null;
   // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -1040,7 +1046,7 @@ function WidgetCard({ id, categories, apiKeys, onSaveKey, colorIdx, onUnreadChan
   if (!d) return null;
   return (
     <Shell color={d.color} title={d.title} sub={d.sub} badge={d.badge} lastUpdated={d.lastUpdated}
-      expanded={expanded} onToggle={onToggle}
+      expanded={expanded} onToggle={onToggle} transparent={d.transparent}
       isDragging={isDragging} onDragStart={onDragStart} onDragEnd={onDragEnd}>
       {d.content}
     </Shell>
@@ -1068,17 +1074,17 @@ function OPMLDrop({ onLoaded }) {
         onClick={()=>fileRef.current?.click()}
         style={{border:"1px dashed "+(dragging?"var(--accent)":"rgba(255,255,255,0.1)"),borderRadius:12,padding:"28px 20px",textAlign:"center",cursor:"pointer",background:dragging?"color-mix(in srgb, var(--accent) 6%, transparent)":"rgba(255,255,255,0.02)",transition:"all 0.15s",marginBottom:16}}>
         <div style={{fontSize:26,marginBottom:10,opacity:0.45}}>📰</div>
-        <div style={{fontSize:13,color:"#999",fontWeight:500,marginBottom:5}}>Drop your Feedly OPML here</div>
-        <div style={{fontSize:11,color:"#999"}}>or click to browse</div>
+        <div style={{fontSize:13,color:"#c4c4d4",fontWeight:500,marginBottom:5}}>Drop your Feedly OPML here</div>
+        <div style={{fontSize:11,color:"#c4c4d4"}}>or click to browse</div>
         <input ref={fileRef} type="file" accept=".opml,.xml" style={{display:"none"}} onChange={e=>processFile(e.target.files[0])}/>
       </div>
       {error&&<div style={{fontSize:11,color:"#f77f4f",marginBottom:12}}>{error}</div>}
       <div style={{background:"rgba(255,255,255,0.03)",borderRadius:10,padding:"12px 14px"}}>
-        <div style={{fontSize:10,color:"#aaa",fontWeight:500,textTransform:"uppercase",letterSpacing:0.8,marginBottom:8}}>How to export from Feedly</div>
+        <div style={{fontSize:10,color:"#d0d0e0",fontWeight:500,textTransform:"uppercase",letterSpacing:0.8,marginBottom:8}}>How to export from Feedly</div>
         {[["1","Go to","feedly.com"],["2","Click avatar →","Organize"],["3","Scroll down →","Export OPML"]].map(([n,a,b])=>(
           <div key={n} style={{display:"flex",gap:8,marginBottom:5}}>
             <span style={{fontSize:10,color:"#2a2a34",width:14,fontFamily:"DM Mono,monospace",flexShrink:0}}>{n}</span>
-            <span style={{fontSize:11,color:"#999"}}>{a} <span style={{color:"#bbb"}}>{b}</span></span>
+            <span style={{fontSize:11,color:"#c4c4d4"}}>{a} <span style={{color:"#dcdcec"}}>{b}</span></span>
           </div>
         ))}
         <div style={{marginTop:10,fontSize:10,color:"#282830",lineHeight:1.5}}>Also works with Inoreader, NewsBlur, or any OPML file.</div>
@@ -1094,7 +1100,7 @@ function CategoryManager({ categories, activeIds, setActiveIds, onClose, onReset
       <div style={{background:"#18181c",border:"1px solid rgba(255,255,255,0.08)",borderRadius:16,padding:20,width:300,maxHeight:"82vh",overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <span style={{fontSize:14,fontWeight:500,color:"#e0e0e0"}}>Manage widgets</span>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#aaa",fontSize:13,cursor:"pointer",padding:4}}>✕</button>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#d0d0e0",fontSize:13,cursor:"pointer",padding:4}}>✕</button>
         </div>
         <div style={{fontSize:10,color:"#2a2a34",textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>News categories</div>
         {categories.map((cat,i)=>{
@@ -1103,8 +1109,8 @@ function CategoryManager({ categories, activeIds, setActiveIds, onClose, onReset
             <div key={cat.label} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
               <span style={{...C.dot,background:col}}/>
               <div style={{flex:1}}>
-                <div style={{fontSize:13,color:"#ccc"}}>{cat.label}</div>
-                <div style={{fontSize:10,color:"#999"}}>{cat.feeds.length} feed{cat.feeds.length!==1?"s":""}</div>
+                <div style={{fontSize:13,color:"#e4e4f4"}}>{cat.label}</div>
+                <div style={{fontSize:10,color:"#c4c4d4"}}>{cat.feeds.length} feed{cat.feeds.length!==1?"s":""}</div>
               </div>
               <button onClick={()=>setActiveIds(p=>on?p.filter(x=>x!==id):[...p,id])}
                 style={{border:"1px solid",borderRadius:6,fontSize:11,padding:"3px 10px",cursor:"pointer",fontWeight:500,fontFamily:"'DM Sans',sans-serif",background:on?col+"22":"rgba(255,255,255,0.05)",color:on?col:"#444",borderColor:on?col+"44":"rgba(255,255,255,0.08)"}}>
@@ -1120,11 +1126,11 @@ function CategoryManager({ categories, activeIds, setActiveIds, onClose, onReset
             <div key={w.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
               <span style={{...C.dot,background:w.color}}/>
               <div style={{flex:1}}>
-                <div style={{fontSize:13,color:"#ccc"}}>{w.label}</div>
-                <div style={{fontSize:10,color:"#999"}}>{w.note}</div>
+                <div style={{fontSize:13,color:"#e4e4f4"}}>{w.label}</div>
+                <div style={{fontSize:10,color:"#c4c4d4"}}>{w.note}</div>
               </div>
               <button onClick={()=>setActiveIds(p=>on?p.filter(x=>x!==w.id):[...p,w.id])}
-                style={{border:"1px solid",borderRadius:6,fontSize:11,padding:"3px 10px",cursor:"pointer",fontWeight:500,fontFamily:"'DM Sans',sans-serif",background:on?w.color+"22":"rgba(255,255,255,0.05)",color:on?w.color:"#aaa",borderColor:on?w.color+"44":"rgba(255,255,255,0.08)"}}>
+                style={{border:"1px solid",borderRadius:6,fontSize:11,padding:"3px 10px",cursor:"pointer",fontWeight:500,fontFamily:"'DM Sans',sans-serif",background:on?w.color+"22":"rgba(255,255,255,0.05)",color:on?w.color:"#d0d0e0",borderColor:on?w.color+"44":"rgba(255,255,255,0.08)"}}>
                 {on?"Pinned":"Add"}
               </button>
             </div>
@@ -1137,26 +1143,59 @@ function CategoryManager({ categories, activeIds, setActiveIds, onClose, onReset
 }
 
 // ── Settings modal ────────────────────────────────────────────────────────────
-function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardOpacityChange }) {
+function SettingsSlider({ label, value, min, max, step=0.01, onChange }) {
+  return (
+    <div style={{padding:"10px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+        <div style={{fontSize:13,color:"#e4e4f4"}}>{label}</div>
+        <div style={{fontSize:11,color:"#d0d0e0",fontFamily:"DM Mono,monospace"}}>{Math.round(value*100)}%</div>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={value}
+        onChange={e=>onChange(parseFloat(e.target.value))}
+        style={{width:"100%",accentColor:"var(--accent)",cursor:"pointer"}}/>
+    </div>
+  );
+}
+
+function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardOpacityChange, pinnedOpacity, onPinnedOpacityChange, location, onLocationChange }) {
   const [autostart, setAutostart] = useState(false);
+  const [locDraft, setLocDraft] = useState('');
+  const [locSearching, setLocSearching] = useState(false);
+  const [locResult, setLocResult] = useState(null);
+  const [locError, setLocError] = useState('');
+
   useEffect(()=>{ api.autostart?.get().then(v=>setAutostart(!!v)); },[]);
+
   function toggleAutostart() {
-    const next=!autostart;
-    setAutostart(next);
-    api.autostart?.set(next);
-    api.store.set('wp-autostart', next ? '1' : '');
+    const next=!autostart; setAutostart(next);
+    api.autostart?.set(next); api.store.set('wp-autostart', next ? '1' : '');
   }
+
+  async function searchLocation() {
+    if (!locDraft.trim()) return;
+    setLocSearching(true); setLocError(''); setLocResult(null);
+    try {
+      const r = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(locDraft.trim())}&count=1&language=en&format=json`);
+      const d = await r.json();
+      if (d.results?.length) {
+        const res = d.results[0];
+        setLocResult({ name:`${res.name}, ${res.admin1||res.country}`, lat:res.latitude, lon:res.longitude, timezone:res.timezone });
+      } else { setLocError('Location not found'); }
+    } catch { setLocError('Search failed'); }
+    setLocSearching(false);
+  }
+
   return (
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}>
       <div style={{background:"#18181c",border:"1px solid rgba(255,255,255,0.08)",borderRadius:16,padding:20,width:280}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <span style={{fontSize:14,fontWeight:500,color:"#e0e0e0"}}>Settings</span>
-          <button onClick={onClose} style={{background:"none",border:"none",color:"#aaa",fontSize:13,cursor:"pointer",padding:4}}>✕</button>
+          <button onClick={onClose} style={{background:"none",border:"none",color:"#d0d0e0",fontSize:13,cursor:"pointer",padding:4}}>✕</button>
         </div>
         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
           <div>
-            <div style={{fontSize:13,color:"#ccc"}}>Start with Windows</div>
-            <div style={{fontSize:10,color:"#999",marginTop:2}}>Launch panel on login</div>
+            <div style={{fontSize:13,color:"#e4e4f4"}}>Start with Windows</div>
+            <div style={{fontSize:10,color:"#c4c4d4",marginTop:2}}>Launch panel on login</div>
           </div>
           <button onClick={toggleAutostart} style={{
             width:36,height:20,borderRadius:10,border:"none",cursor:"pointer",transition:"background 0.2s",position:"relative",
@@ -1165,23 +1204,27 @@ function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardO
             <span style={{position:"absolute",top:2,left:autostart?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:"left 0.2s",display:"block"}}/>
           </button>
         </div>
+        <SettingsSlider label="Background opacity" min="0.2" max="1" value={opacity} onChange={onOpacityChange}/>
+        <SettingsSlider label="Card opacity" min="0" max="1" value={cardOpacity} onChange={onCardOpacityChange}/>
+        <SettingsSlider label="Pinned opacity" min="0.05" max="1" value={pinnedOpacity} onChange={onPinnedOpacityChange}/>
         <div style={{padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <div style={{fontSize:13,color:"#ccc"}}>Opacité du panneau</div>
-            <div style={{fontSize:11,color:"#aaa",fontFamily:"DM Mono,monospace"}}>{Math.round(opacity*100)}%</div>
+          <div style={{fontSize:13,color:"#e4e4f4",marginBottom:2}}>Location</div>
+          <div style={{fontSize:10,color:"#c4c4d4",marginBottom:8}}>Weather &amp; traffic</div>
+          <div style={{fontSize:11,color:"#888",marginBottom:8,fontFamily:"DM Mono,monospace",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{location.name}</div>
+          <div style={{display:"flex",gap:6}}>
+            <input value={locDraft} onChange={e=>setLocDraft(e.target.value)}
+              onKeyDown={e=>{ if(e.key==='Enter') searchLocation(); }}
+              placeholder="Search city…"
+              style={{...C.inp,flex:1,fontSize:11}}/>
+            <button onClick={searchLocation} disabled={locSearching} style={C.btn}>{locSearching?'…':'↵'}</button>
           </div>
-          <input type="range" min="0.2" max="1" step="0.01" value={opacity}
-            onChange={e=>onOpacityChange(parseFloat(e.target.value))}
-            style={{width:"100%",accentColor:"var(--accent)",cursor:"pointer"}}/>
-        </div>
-        <div style={{padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-            <div style={{fontSize:13,color:"#ccc"}}>Opacité des cartes</div>
-            <div style={{fontSize:11,color:"#aaa",fontFamily:"DM Mono,monospace"}}>{Math.round(cardOpacity*100)}%</div>
-          </div>
-          <input type="range" min="0" max="1" step="0.01" value={cardOpacity}
-            onChange={e=>onCardOpacityChange(parseFloat(e.target.value))}
-            style={{width:"100%",accentColor:"var(--accent)",cursor:"pointer"}}/>
+          {locError&&<div style={{fontSize:10,color:"#f77f4f",marginTop:6}}>{locError}</div>}
+          {locResult&&(
+            <div style={{marginTop:8,padding:"8px 10px",background:"rgba(255,255,255,0.04)",borderRadius:8,display:"flex",alignItems:"center",justifyContent:"space-between",gap:8}}>
+              <span style={{fontSize:11,color:"#e4e4f4",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{locResult.name}</span>
+              <button onClick={()=>{ onLocationChange(locResult); setLocResult(null); setLocDraft(''); }} style={{...C.btn,padding:"2px 10px",fontSize:11,flexShrink:0}}>Use</button>
+            </div>
+          )}
         </div>
         <div style={{fontSize:10,color:"#282830",marginTop:16,lineHeight:1.5}}>
           Panel position: left edge · Win+W to toggle
@@ -1220,8 +1263,10 @@ export default function App() {
   const [pinned,       setPinned]       = useState(false);
   const [time,         setTime]         = useState(new Date());
   const [visible,      setVisible]      = useState(false);
-  const [opacity,      setOpacity]      = useState(1);
-  const [cardOpacity,  setCardOpacity]  = useState(1);
+  const [opacity,       setOpacity]       = useState(0.55);
+  const [cardOpacity,   setCardOpacity]   = useState(1);
+  const [pinnedOpacity, setPinnedOpacity] = useState(0.25);
+  const [location,      setLocation]      = useState(DEFAULT_LOC);
   const [accentColor,  setAccentColor]  = useState('#202020');
   const [browserPane,  setBrowserPane]  = useState({ open: false, url: '', loading: false, braveX: 0 });
 
@@ -1348,8 +1393,9 @@ export default function App() {
       storageLoad(),
       api.store.get('wp-opacity'),
       api.store.get('wp-card-opacity'),
-    ]).then(([saved, opv, cardv]) => {
-      api.log?.('opacity from store:', opv, '→ parsed:', opv ? parseFloat(opv) : '(default 1)');
+      api.store.get('wp-pinned-opacity'),
+      api.store.get('wp-location'),
+    ]).then(([saved, opv, cardv, pinnedv, locv]) => {
       if (saved?.categories?.length) {
         setCategories(saved.categories);
         setActiveIds(saved.activeIds||[]);
@@ -1381,6 +1427,8 @@ export default function App() {
       const cardVal = cardv ? parseFloat(cardv) : 1;
       setCardOpacity(cardVal);
       document.documentElement.style.setProperty('--card-bg', `rgba(24,24,28,${cardVal})`);
+      if (pinnedv) setPinnedOpacity(parseFloat(pinnedv));
+      if (locv) { try { setLocation(JSON.parse(locv)); } catch {} }
       setStorageReady(true);
     });
 
@@ -1411,11 +1459,26 @@ export default function App() {
     api.store.set(SK_EXPANDED, JSON.stringify(expandedMap));
   },[expandedMap, storageReady]);
 
-  // Persist opacity changes (useEffect guarantees saves even if inline save fails)
   useEffect(()=>{
     if (!storageReady) return;
     api.store.set('wp-opacity', String(opacity));
   },[opacity, storageReady]);
+
+  useEffect(()=>{
+    if (!storageReady) return;
+    api.store.set('wp-card-opacity', String(cardOpacity));
+    document.documentElement.style.setProperty('--card-bg', `rgba(24,24,28,${cardOpacity})`);
+  },[cardOpacity, storageReady]);
+
+  useEffect(()=>{
+    if (!storageReady) return;
+    api.store.set('wp-pinned-opacity', String(pinnedOpacity));
+  },[pinnedOpacity, storageReady]);
+
+  useEffect(()=>{
+    if (!storageReady) return;
+    api.store.set('wp-location', JSON.stringify(location));
+  },[location, storageReady]);
 
   // Log and force repaint when panel becomes visible
   useEffect(() => {
@@ -1482,7 +1545,7 @@ export default function App() {
 
   if (!storageReady) return (
     <div style={{display:"flex",height:"100vh",alignItems:"center",justifyContent:"center",background:"rgba(10,10,12,0.95)",fontFamily:"'DM Sans',sans-serif"}}>
-      <div style={{fontSize:11,color:"#999"}}>Loading…</div>
+      <div style={{fontSize:11,color:"#c4c4d4"}}>Loading…</div>
     </div>
   );
 
@@ -1518,6 +1581,7 @@ export default function App() {
             colorIdx={newsIds.indexOf(id)}
             onUnreadChange={count=>onUnread(id,count)}
             onOpenUrl={openBrowser}
+            location={location}
             expanded={getExpanded(id)}
             onToggle={()=>toggleExpanded(id)}
             isDragging={dragId === id}
@@ -1545,7 +1609,7 @@ export default function App() {
         input{color-scheme:dark}
         a{color:var(--accent)}
         /* Global text vibrancy */
-        body{color:#dcdce8}
+        body{color:#eeeef8}
         .panel-wrap{
           transform: translateX(-100%);
           transition: transform 260ms cubic-bezier(0.32,0,0.16,1);
@@ -1584,20 +1648,15 @@ export default function App() {
           width: browserPane.open ? browserPane.braveX : '100vw',
           overflow:"hidden",
           display:"flex",flexDirection:"row",
-          background:`color-mix(in srgb, ${accentColor} 4%, rgba(14,14,22,${Math.max(opacity,0.74)}))`,
+          background:`rgba(155,168,210,${opacity * 0.55})`,
           transition:"width 280ms cubic-bezier(0.32,0,0.16,1)"}}>
 
           <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
 
             {/* ── Header ── */}
-            <div style={{padding:"18px 20px 10px",borderBottom:"1px solid rgba(255,255,255,0.05)",display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexShrink:0}}>
-              <div>
-                <div style={{fontSize:13,fontWeight:600,color:"#f2f2ff",letterSpacing:0.2,textTransform:"capitalize"}}>
-                  {time.toLocaleDateString("fr-CA",{weekday:"long"})}
-                </div>
-                <div style={{fontSize:11,color:"#aaa",marginTop:2,textTransform:"capitalize"}}>
-                  {time.toLocaleDateString("fr-CA",{month:"long",day:"numeric"})}
-                </div>
+            <div style={{padding:"10px 20px 8px",borderBottom:"1px solid rgba(255,255,255,0.05)",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+              <div style={{fontSize:13,fontWeight:600,color:"#f2f2ff",letterSpacing:0.2,textTransform:"capitalize"}}>
+                {time.toLocaleDateString("fr-CA",{weekday:"long"})}
               </div>
               <div style={{display:"flex",gap:4,alignItems:"center",marginTop:2}}>
                 <button onClick={togglePin} title={pinned?"Unpin":"Pin to desktop"}
@@ -1606,13 +1665,13 @@ export default function App() {
                   📌
                 </button>
                 {loaded&&<button onClick={()=>setShowMgr(true)} title="Manage widgets"
-                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#bbb",fontSize:15,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⚙</button>}
+                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#dcdcec",fontSize:15,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⚙</button>}
                 {loaded&&<button onClick={resetColumns} title="Reset column layout"
-                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#bbb",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⇄</button>}
+                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#dcdcec",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⇄</button>}
                 <button onClick={()=>setShowSettings(true)} title="Settings"
-                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#bbb",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>≡</button>
+                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#dcdcec",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>≡</button>
                 {loaded&&<button onClick={reset} title="Reset / new OPML"
-                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#bbb",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>↺</button>}
+                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#dcdcec",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>↺</button>}
               </div>
             </div>
 
@@ -1626,7 +1685,7 @@ export default function App() {
                   onDragOver={e=>{e.preventDefault();setDropTarget({col:"left",beforeId:null});}}
                   onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
                   {renderCol(leftIds, "left")}
-                  {leftIds.length===0&&<div style={{textAlign:"center",color:"#aaa",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
+                  {leftIds.length===0&&<div style={{textAlign:"center",color:"#d0d0e0",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
                 </div>
 
                 {/* Divider col 1 | col 2 */}
@@ -1637,7 +1696,7 @@ export default function App() {
                   onDragOver={e=>{e.preventDefault();setDropTarget({col:"mid",beforeId:null});}}
                   onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
                   {renderCol(midIds, "mid")}
-                  {midIds.length===0&&<div style={{textAlign:"center",color:"#aaa",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
+                  {midIds.length===0&&<div style={{textAlign:"center",color:"#d0d0e0",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
                 </div>
 
                 {/* Divider col 2 | col 3 (feed) */}
@@ -1648,7 +1707,7 @@ export default function App() {
                   onDragOver={e=>{e.preventDefault();setDropTarget({col:"feed",beforeId:null});}}
                   onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
                   {renderCol(feedIds, "feed")}
-                  {feedIds.length===0&&<div style={{textAlign:"center",color:"#aaa",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
+                  {feedIds.length===0&&<div style={{textAlign:"center",color:"#d0d0e0",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
                 </div>
 
                 {/* Divider col 3 | col 4 */}
@@ -1659,7 +1718,7 @@ export default function App() {
                   onDragOver={e=>{e.preventDefault();setDropTarget({col:"right",beforeId:null});}}
                   onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
                   {renderCol(rightIds, "right")}
-                  {rightIds.length===0&&<div style={{textAlign:"center",color:"#aaa",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
+                  {rightIds.length===0&&<div style={{textAlign:"center",color:"#d0d0e0",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
                 </div>
               </div>
             )}
@@ -1667,8 +1726,8 @@ export default function App() {
             {/* ── Footer ── */}
             {loaded&&(
               <div style={{padding:"8px 16px",borderTop:"1px solid rgba(255,255,255,0.04)",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
-                <span style={{fontSize:9,color:"#999",fontFamily:"DM Mono,monospace"}}>{categories.length} categories · OPML</span>
-                <button onClick={()=>setShowMgr(true)} style={{background:"none",border:"1px solid rgba(255,255,255,0.2)",color:"#ccc",fontSize:10,padding:"3px 8px",borderRadius:5,cursor:"pointer"}}>+ Add widget</button>
+                <span style={{fontSize:9,color:"#c4c4d4",fontFamily:"DM Mono,monospace"}}>{categories.length} categories · OPML</span>
+                <button onClick={()=>setShowMgr(true)} style={{background:"none",border:"1px solid rgba(255,255,255,0.2)",color:"#e4e4f4",fontSize:10,padding:"3px 8px",borderRadius:5,cursor:"pointer"}}>+ Add widget</button>
               </div>
             )}
           </div>
@@ -1681,12 +1740,10 @@ export default function App() {
 
       {showMgr&&loaded&&<CategoryManager categories={categories} activeIds={activeIds} setActiveIds={setActiveIds} onClose={()=>setShowMgr(false)} onReset={reset}/>}
       {showSettings&&<SettingsModal onClose={()=>setShowSettings(false)}
-        opacity={opacity} onOpacityChange={v=>{ setOpacity(v); api.store.set('wp-opacity', String(v)); }}
-        cardOpacity={cardOpacity} onCardOpacityChange={v=>{
-          setCardOpacity(v);
-          document.documentElement.style.setProperty('--card-bg', `rgba(24,24,28,${v})`);
-          api.store.set('wp-card-opacity', String(v));
-        }}/>}
+        opacity={opacity} onOpacityChange={setOpacity}
+        cardOpacity={cardOpacity} onCardOpacityChange={v=>{ setCardOpacity(v); document.documentElement.style.setProperty('--card-bg',`rgba(24,24,28,${v})`); }}
+        pinnedOpacity={pinnedOpacity} onPinnedOpacityChange={setPinnedOpacity}
+        location={location} onLocationChange={setLocation}/>}
 
       {/* ── Browser card (panel extension with Brave content rendered behind) ── */}
       {browserPane.open && (

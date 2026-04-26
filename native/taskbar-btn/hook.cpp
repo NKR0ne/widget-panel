@@ -345,8 +345,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
 
     case WM_STATECHANGE:
-        UpdateAlpha();
-        InvalidateRect(hwnd, NULL, FALSE);
+        if (g_panelOn) {
+            ShowWindow(hwnd, SW_HIDE);
+        } else {
+            ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            PositionAppBar();
+            UpdateAlpha();
+            InvalidateRect(hwnd, NULL, FALSE);
+        }
         return 0;
     case WM_MOUSEMOVE:
         if (!g_hover) {

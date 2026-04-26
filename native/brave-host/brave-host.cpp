@@ -10,6 +10,8 @@
 //   Electron → brave-host  {"type":"close"}
 //   Electron → brave-host  {"type":"detach"}
 //   Electron → brave-host  {"type":"round-corners","hwnd":N}
+//   Electron → brave-host  {"type":"z-top","hwnd":N}
+//   Electron → brave-host  {"type":"z-bottom","hwnd":N}
 //   Electron → brave-host  {"type":"taskbar-hide"}
 //   Electron → brave-host  {"type":"taskbar-show"}
 //   brave-host → Electron  {"type":"ready"}
@@ -478,10 +480,19 @@ static void HandleMessage(const std::string& line) {
     else if (type == "round-corners") {
         HWND hwnd = (HWND)(uintptr_t)(unsigned long long)jnum(line, "hwnd");
         if (hwnd && IsWindow(hwnd)) {
-            // DWMWCP_ROUND = 2  (Windows 11 rounded corners, ~8px radius)
-            DWORD pref = 2;
+            DWORD pref = 2;  // DWMWCP_ROUND
             DwmSetWindowAttribute(hwnd, 33 /*DWMWA_WINDOW_CORNER_PREFERENCE*/, &pref, sizeof(pref));
         }
+    }
+    else if (type == "z-top") {
+        HWND hwnd = (HWND)(uintptr_t)(unsigned long long)jnum(line, "hwnd");
+        if (hwnd && IsWindow(hwnd))
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+    else if (type == "z-bottom") {
+        HWND hwnd = (HWND)(uintptr_t)(unsigned long long)jnum(line, "hwnd");
+        if (hwnd && IsWindow(hwnd))
+            SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     }
     else if (type == "taskbar-hide") {
         HWND tray = FindWindowW(L"Shell_TrayWnd", NULL);

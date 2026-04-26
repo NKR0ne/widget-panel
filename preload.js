@@ -41,15 +41,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   browser: {
-    open:         (url) => ipcRenderer.send('browser-open',       url),
-    navigate:     (url) => ipcRenderer.send('browser-navigate',   url),
-    close:        ()    => ipcRenderer.send('browser-close'),
-    openExternal: ()    => ipcRenderer.send('brave-open-external'),
-    onPaneShow:   (cb)  => ipcRenderer.on('browser-pane-show',  (_e, d) => cb(d)),
-    onPaneHide:   (cb)  => ipcRenderer.on('browser-pane-hide',  cb),
-    onLoading:    (cb)  => ipcRenderer.on('brave-loading',      (_e, v) => cb(v)),
-    onUrl:        (cb)  => ipcRenderer.on('brave-url',          (_e, u) => cb(u)),
+    open:                (url)    => ipcRenderer.send('browser-open',            url),
+    navigate:            (url)    => ipcRenderer.send('browser-navigate',        url),
+    close:               ()       => ipcRenderer.send('browser-close'),
+    openExternal:        ()       => ipcRenderer.send('brave-open-external'),
+    setIgnoreMouseEvents:(ignore) => ipcRenderer.send('set-ignore-mouse-events', ignore),
+    onPaneShow:          (cb)     => ipcRenderer.on('browser-pane-show',  (_e, d) => cb(d)),
+    onPaneHide:          (cb)     => ipcRenderer.on('browser-pane-hide',  cb),
+    onLoading:           (cb)     => ipcRenderer.on('brave-loading',      (_e, v) => cb(v)),
+    onUrl:               (cb)     => ipcRenderer.on('brave-url',          (_e, u) => cb(u)),
   },
+
+  log: (...args) => ipcRenderer.send('renderer-log', ...args),
 
   panel: {
     ready:       ()               => ipcRenderer.send('panel-renderer-ready'),
