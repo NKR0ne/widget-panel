@@ -571,47 +571,49 @@ function TradingViewWidget() {
     content:(
       <div>
         {tabs}
-        {symbols.map(({ s, d }) => {
-          const ticker = s.includes(':') ? s.split(':')[1] : s;
-          const q = quotes[ticker];
-          return (
-            <div key={s} style={{display:'flex',alignItems:'center',gap:10,
-              padding:'9px 2px',borderBottom:'1px solid rgba(255,255,255,0.05)',cursor:'pointer'}}
-              onClick={()=>api.browser.open(`https://www.tradingview.com/chart/?symbol=${s}`)}>
+        <div style={{maxHeight:400,overflowY:'auto',paddingRight:2}}>
+          {symbols.map(({ s, d }) => {
+            const ticker = s.includes(':') ? s.split(':')[1] : s;
+            const q = quotes[ticker];
+            return (
+              <div key={s} style={{display:'flex',alignItems:'center',gap:10,
+                padding:'7px 2px',borderBottom:'1px solid rgba(255,255,255,0.05)',cursor:'pointer'}}
+                onClick={()=>api.browser.open(`https://www.tradingview.com/chart/?symbol=${s}`)}>
 
-              <TickerAvatar ticker={ticker}/>
+                <TickerAvatar ticker={ticker} size={34}/>
 
-              <div style={{flex:1,minWidth:0,overflow:'hidden'}}>
-                <div style={{fontSize:14,fontWeight:700,color:'#eeeef8',lineHeight:1.3}}>{ticker}</div>
-                <div style={{fontSize:10,color:'#555',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-                  {q?.name || d} · {fmtDate(q?.date)}
+                <div style={{flex:1,minWidth:0,overflow:'hidden'}}>
+                  <div style={{fontSize:13,fontWeight:700,color:'#eeeef8',lineHeight:1.3}}>{ticker}</div>
+                  <div style={{fontSize:10,color:'#555',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                    {q?.name || d}
+                  </div>
+                </div>
+
+                <div style={{textAlign:'right',minWidth:72,flexShrink:0}}>
+                  <div style={{fontSize:11,color:'#888'}}>{fmtP(q?.prev)}</div>
+                  <div style={{fontSize:10,color:clr(q?.prevChange)}}>
+                    {fmtPct(q?.prevPct)}
+                  </div>
+                </div>
+
+                <div style={{textAlign:'right',minWidth:62,flexShrink:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:'#eeeef8'}}>{fmtP(q?.price)}</div>
+                  <div style={{fontSize:10,color:clr(q?.change)}}>
+                    {fmtPct(q?.pct)}
+                  </div>
                 </div>
               </div>
-
-              <div style={{textAlign:'right',minWidth:82,flexShrink:0}}>
-                <div style={{fontSize:11,color:'#888'}}>☀ {fmtP(q?.prev)}</div>
-                <div style={{fontSize:10,color:clr(q?.prevChange)}}>
-                  {fmtChg(q?.prevChange)} {fmtPct(q?.prevPct)}
-                </div>
-              </div>
-
-              <div style={{textAlign:'right',minWidth:66,flexShrink:0}}>
-                <div style={{fontSize:14,fontWeight:600,color:'#eeeef8'}}>{fmtP(q?.price)}</div>
-                <div style={{fontSize:10,color:clr(q?.change)}}>
-                  {fmtChg(q?.change)} {fmtPct(q?.pct)}
-                </div>
-              </div>
+            );
+          })}
+          {!symbols.length&&(
+            <div style={{color:'#555',fontSize:11,padding:'12px 0',textAlign:'center'}}>
+              {lists.length?'Empty watchlist':'No watchlists found'}
             </div>
-          );
-        })}
-        {!symbols.length&&(
-          <div style={{color:'#555',fontSize:11,padding:'12px 0',textAlign:'center'}}>
-            {lists.length?'Empty watchlist':'No watchlists found'}
-          </div>
-        )}
+          )}
+        </div>
         <button onClick={doLogout}
-          style={{marginTop:8,background:'none',border:'none',color:'#444',fontSize:10,cursor:'pointer',padding:0}}>
-          Sign out ({auth.username})
+          style={{marginTop:8,background:'none',border:'none',color:'#333',fontSize:10,cursor:'pointer',padding:0}}>
+          Sign out
         </button>
       </div>
     )
