@@ -25,7 +25,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   system: {
-    accentColor: () => ipcRenderer.invoke('system-accent-color'),
+    accentColor:       () => ipcRenderer.invoke('system-accent-color'),
+    windowColor:       () => ipcRenderer.invoke('system-window-color'),
+    onWindowColorChange: (cb) => ipcRenderer.on('system-color-updated', (_e, c) => cb(c)),
   },
 
   msGraph: {
@@ -50,6 +52,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onPaneHide:          (cb)     => ipcRenderer.on('browser-pane-hide',  cb),
     onLoading:           (cb)     => ipcRenderer.on('brave-loading',      (_e, v) => cb(v)),
     onUrl:               (cb)     => ipcRenderer.on('brave-url',          (_e, u) => cb(u)),
+  },
+
+  auth: {
+    openWindow: (url, title) => ipcRenderer.invoke('open-auth-window', url, title),
   },
 
   log: (...args) => ipcRenderer.send('renderer-log', ...args),

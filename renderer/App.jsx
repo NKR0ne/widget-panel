@@ -1,4 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+
+function hexToRgb(hex) {
+  const h = hex.replace('#','')
+  return `${parseInt(h.slice(0,2),16)},${parseInt(h.slice(2,4),16)},${parseInt(h.slice(4,6),16)}`
+}
 
 // ── API endpoints ────────────────────────────────────────────────────────────
 const PROXY1   = "https://api.allorigins.win/raw?url=";
@@ -310,7 +315,7 @@ function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
               <div style={{flex:1,minWidth:0}}>
                 <div style={{fontSize:12,color:"#d8d8e8",lineHeight:1.45,marginBottom:4}}>{item.title}</div>
                 <div style={{display:"flex",justifyContent:"space-between"}}>
-                  <span style={{fontSize:10,color:"#dcdcec"}}>{item.source}</span>
+                  <span style={{fontSize:10,color:"#666"}}>{item.source}</span>
                   <span style={{fontSize:10,color:"#dcdcec",fontFamily:"DM Mono,monospace"}}>{item.time}</span>
                 </div>
               </div>
@@ -376,7 +381,7 @@ function WeatherWidget({ location = DEFAULT_LOC }) {
                   const [,ic]=wmo(hourly.weather_code[nowIdx+i]);
                   return(
                     <div key={t} style={{flex:"0 0 auto",display:"flex",flexDirection:"column",alignItems:"center",gap:3,padding:"5px 9px",borderRadius:8,background:i===0?"rgba(247,201,79,0.1)":"transparent"}}>
-                      <span style={{fontSize:10,color:i===0?"#f7c94f":"#333"}}>{i===0?"Now":new Date(t).toLocaleTimeString("fr-CA",{hour:"2-digit",minute:"2-digit"})}</span>
+                      <span style={{fontSize:10,color:i===0?"#f7c94f":"#aaa"}}>{i===0?"Now":new Date(t).toLocaleTimeString("fr-CA",{hour:"2-digit",minute:"2-digit"})}</span>
                       <span style={{fontSize:14}}>{ic}</span>
                       <span style={{fontSize:11,color:"#d0d0e0"}}>{Math.round(hourly.temperature_2m[nowIdx+i])}°</span>
                     </div>
@@ -410,143 +415,192 @@ function WeatherWidget({ location = DEFAULT_LOC }) {
   };
 }
 
-// ── Stocks widget ────────────────────────────────────────────────────────────
-const TICKERS=["AAPL","MSFT","NVDA","SPY"];
-function StocksWidget({ apiKey, onSaveKey }) {
-  const [quotes,setQuotes]=useState({});
-  const [demo,setDemo]=useState(false);
-  const [source,setSource]=useState("");
-  const [status,setStatus]=useState(apiKey?"loading":"yahoo");
-  const [draft,setDraft]=useState("");
-  const [lastUpdated,setLastUpdated]=useState(null);
+// ── TradingView market overview widget ────────────────────────────────────────
+const INDEX_SYMBOLS = [
+  { yf:'^GSPC', label:'S&P 500',  tv:'FOREXCOM:SPXUSD' },
+  { yf:'^DJI',  label:'Dow 30',   tv:'DJ:DJI'          },
+  { yf:'^IXIC', label:'Nasdaq',   tv:'NASDAQ:COMP'     },
+];
 
-  useEffect(()=>{
-    const doFetch = () => {
-      if (apiKey) {
-        setStatus("loading");
-        Promise.all(TICKERS.map(sym=>fetch(FINNHUB+"/quote?symbol="+sym+"&token="+apiKey).then(r=>r.json()).then(d=>[sym,d]).catch(()=>[sym,null])))
-          .then(res=>{
-            const m={};res.forEach(([sym,d])=>{if(d?.c)m[sym]=d;});
-            if(Object.keys(m).length){setQuotes(m);setSource("finnhub");setStatus("ok");setLastUpdated(Date.now());return;}
-            return fetchYahoo();
-          }).catch(fetchYahoo);
-      } else {
-        fetchYahoo();
-      }
+const DEFAULT_TV_SYMBOLS = [
+  {s:'AMEX:GLD',   d:'Gold ETF'},
+  {s:'NASDAQ:NVDA',d:'NVIDIA'},
+  {s:'NASDAQ:IBIT',d:'Bitcoin ETF'},
+  {s:'NASDAQ:MSFT',d:'Microsoft'},
+  {s:'NASDAQ:GOOG',d:'Alphabet'},
+  {s:'AMEX:VOO',   d:'S&P 500 ETF'},
+  {s:'NASDAQ:BOTZ',d:'Robotics & AI ETF'},
+  {s:'NASDAQ:SMCI',d:'Super Micro'},
+  {s:'NASDAQ:AAPL',d:'Apple'},
+  {s:'NASDAQ:INTC',d:'Intel'},
+  {s:'NASDAQ:AMD', d:'AMD'},
+];
+
+function TradingViewWidget({ onOpenUrl, symbols }) {
+  const chartRef           = useRef(null);
+  const [chartIdx, setChartIdx] = useState(0);
+  const [quotes,   setQuotes]   = useState({});
+
+  // Fetch all quotes (indices + watchlist) from Yahoo Finance
+  useEffect(() => {
+    let cancelled = false;
+    const syms = symbols || DEFAULT_TV_SYMBOLS;
+    const fetchAll = async () => {
+      const keys = [
+        ...INDEX_SYMBOLS.map(i => i.yf),
+        ...syms.map(({ s }) => s.includes(':') ? s.split(':')[1] : s),
+      ];
+      const results = {};
+      await Promise.all(keys.map(async ticker => {
+        try {
+          const res  = await fetch(YF_QUOTE(ticker));
+          const data = await res.json();
+          const meta = data?.chart?.result?.[0]?.meta;
+          if (meta) {
+            const prev = meta.chartPreviousClose ?? meta.regularMarketPreviousClose ?? meta.previousClose;
+            results[ticker] = {
+              price:  meta.regularMarketPrice,
+              change: meta.regularMarketPrice - prev,
+              pct:   (meta.regularMarketPrice - prev) / prev * 100,
+            };
+          }
+        } catch {}
+      }));
+      if (!cancelled) setQuotes(results);
     };
-    doFetch();
-    const t = setInterval(doFetch, 5 * 60 * 1000); // refresh every 5 min
-    return () => clearInterval(t);
-  },[apiKey]);
+    fetchAll();
+    const id = setInterval(fetchAll, 60_000);
+    return () => { cancelled = true; clearInterval(id); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbols]);
 
-  function fetchYahoo() {
-    setStatus("loading");
-    Promise.all(TICKERS.map(sym=>fetchYahooQuote(sym).then(d=>[sym,d])))
-      .then(res=>{
-        const m={};res.forEach(([sym,d])=>{if(d?.c)m[sym]=d;});
-        if(Object.keys(m).length){setQuotes(m);setSource("yahoo");setStatus("ok");setLastUpdated(Date.now());}
-        else{setQuotes(MOCK_STOCKS);setSource("demo");setDemo(true);setStatus("ok");setLastUpdated(Date.now());}
-      }).catch(()=>{setQuotes(MOCK_STOCKS);setSource("demo");setDemo(true);setStatus("ok");setLastUpdated(Date.now());});
-  }
+  // Mini chart carousel
+  useEffect(() => {
+    if (!chartRef.current) return;
+    chartRef.current.innerHTML = '';
+    const s = document.createElement('script');
+    s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js';
+    s.async = true;
+    s.textContent = JSON.stringify({
+      symbol: INDEX_SYMBOLS[chartIdx].tv,
+      width:'100%', height:140, locale:'en', dateRange:'1D',
+      colorTheme:'dark', isTransparent:true, autosize:false,
+    });
+    chartRef.current.appendChild(s);
+  }, [chartIdx]);
 
-  const subLabel = source==="finnhub"?"Finnhub":source==="yahoo"?"Yahoo Finance · no key":"demo";
+  const navBtn = (onClick, label) => (
+    <button onClick={onClick} style={{background:'rgba(255,255,255,0.07)',border:'none',color:'#c4c4d4',
+      fontSize:15,width:22,height:20,borderRadius:4,cursor:'pointer',lineHeight:1,padding:0}}>{label}</button>
+  );
+  const fmtP = n => n == null ? '…' : n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const fmtPct = n => n == null ? '' : (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
+  const fmtChg = n => n == null ? '' : (n >= 0 ? '+' : '') + Math.abs(n).toFixed(2);
+  const clr = n => (n ?? 0) >= 0 ? '#26a69a' : '#ef5350';
+  const syms = symbols || DEFAULT_TV_SYMBOLS;
 
-  return { color:"#5cc8a8", title:"Stocks", sub:subLabel, lastUpdated,
+  return { color:'#5cc8a8', title:'Markets', sub:'TradingView',
     content:(
       <div>
-        {!apiKey&&status==="ok"&&source!=="demo"&&(
-          <div style={{paddingBottom:8}}>
-            <div style={{display:"flex",gap:6}}>
-              <input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Finnhub key for real-time data…" style={{...C.inp,flex:1,fontSize:11,fontFamily:"DM Mono,monospace"}}/>
-              {draft&&<button onClick={()=>onSaveKey("finnhub",draft)} style={C.btn}>✓</button>}
-            </div>
-          </div>
-        )}
-        {status==="loading"&&<Skel n={4}/>}
-        {status==="ok"&&(
-          <div>
-            {demo&&<DemoBadge/>}
-            {TICKERS.map((sym,i)=>{
-              const q=quotes[sym];if(!q)return null;
-              const chg=q.c-(q.pc||q.c),pct=q.pc?((chg/q.pc)*100).toFixed(2):"0.00",up=chg>=0;
-              return(
-                <div key={sym} style={{display:"flex",alignItems:"center",padding:"7px 0",borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none"}}>
-                  <span style={{fontSize:12,fontWeight:500,color:"#c4c4d4",width:46,fontFamily:"DM Mono,monospace"}}>{sym}</span>
-                  <div style={{flex:1,margin:"0 10px"}}>
-                    <div style={{height:3,borderRadius:2,background:"rgba(255,255,255,0.05)",overflow:"hidden"}}>
-                      <div style={{height:"100%",width:Math.min(100,(q.c/(q.h||q.c))*100)+"%",background:up?"#5cc8a8":"#f77f4f",borderRadius:2}}/>
-                    </div>
-                  </div>
-                  <div style={{textAlign:"right"}}>
-                    <div style={{fontSize:13,color:"#ddd",fontFamily:"DM Mono,monospace"}}>${q.c.toFixed(2)}</div>
-                    <div style={{fontSize:10,color:up?"#5cc8a8":"#f77f4f"}}>{up?"+":""}{pct}%</div>
-                  </div>
+        {/* Mini chart carousel */}
+        <div ref={chartRef} style={{width:'100%'}}/>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'2px 4px 8px'}}>
+          {navBtn(()=>setChartIdx(i=>(i-1+INDEX_SYMBOLS.length)%INDEX_SYMBOLS.length),'‹')}
+          <span style={{fontSize:10,color:'#888'}}>{INDEX_SYMBOLS[chartIdx].label}</span>
+          {navBtn(()=>setChartIdx(i=>(i+1)%INDEX_SYMBOLS.length),'›')}
+        </div>
+
+        {/* Index summary cards */}
+        <div style={{display:'flex',gap:4,paddingBottom:10}}>
+          {INDEX_SYMBOLS.map(idx => {
+            const q = quotes[idx.yf];
+            return (
+              <div key={idx.yf} onClick={()=>onOpenUrl?.(`https://www.tradingview.com/chart/?symbol=${idx.tv}`)}
+                style={{flex:1,background:'rgba(255,255,255,0.05)',borderRadius:7,padding:'6px 7px',cursor:'pointer'}}>
+                <div style={{fontSize:9,color:'#666',marginBottom:2}}>{idx.label}</div>
+                <div style={{fontSize:11,fontWeight:600,color:'#e4e4f4',lineHeight:1.2}}>{fmtP(q?.price)}</div>
+                <div style={{fontSize:9,color:clr(q?.change),marginTop:1}}>{fmtPct(q?.pct)}</div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Watchlist */}
+        <div style={{borderTop:'1px solid rgba(255,255,255,0.07)'}}>
+          {syms.map(({ s, d }) => {
+            const ticker = s.includes(':') ? s.split(':')[1] : s;
+            const q = quotes[ticker];
+            const c = clr(q?.change);
+            return (
+              <div key={s} onClick={()=>onOpenUrl?.(`https://www.tradingview.com/chart/?symbol=${s}`)}
+                style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                  padding:'7px 2px',borderBottom:'1px solid rgba(255,255,255,0.05)',cursor:'pointer'}}>
+                <div>
+                  <div style={{fontSize:12,fontWeight:600,color:'#e4e4f4'}}>{ticker}</div>
+                  <div style={{fontSize:10,color:'#555'}}>{d}</div>
                 </div>
-              );
-            })}
-          </div>
-        )}
+                <div style={{textAlign:'right'}}>
+                  <div style={{fontSize:12,fontWeight:500,color:'#e4e4f4'}}>{fmtP(q?.price)}</div>
+                  <div style={{fontSize:10,color:c}}>{fmtPct(q?.pct)}&nbsp;&nbsp;{fmtChg(q?.change)}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     )
   };
 }
 
-// ── Traffic widget ───────────────────────────────────────────────────────────
-function TrafficWidget({ apiKey, onSaveKey, location = DEFAULT_LOC }) {
-  const [flow,setFlow]=useState(null);
-  const [demo,setDemo]=useState(false);
-  const [status,setStatus]=useState(apiKey?"loading":"nokey");
-  const [draft,setDraft]=useState("");
-  const [lastUpdated,setLastUpdated]=useState(null);
+// ── Leaflet traffic widget (ESRI satellite + TomTom flow tiles) ───────────────
+function GoogleTrafficWidget({ location = DEFAULT_LOC, apiKey = '' }) {
+  const [zoom, setZoom] = useState(() => {
+    const stored = parseInt(api.store?.get?.('wp-traffic-zoom') || '');
+    return isNaN(stored) ? 11 : stored;
+  });
+  const zoomRef = useRef(zoom);
 
-  useEffect(()=>{
-    if(!apiKey){setStatus("nokey");return;}
-    const doFetch = () => {
-      setStatus("loading");
-      fetch(`${TOMTOM}?point=${location.lat},${location.lon}&key=${apiKey}`).then(r=>r.json())
-        .then(d=>{if(d.flowSegmentData){setFlow(d.flowSegmentData);setDemo(false);setStatus("ok");setLastUpdated(Date.now());}else{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");setLastUpdated(Date.now());}})
-        .catch(()=>{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");setLastUpdated(Date.now());});
+  // Load persisted zoom on mount
+  useEffect(() => {
+    api.store.get('wp-traffic-zoom').then(v => {
+      const z = parseInt(v || '');
+      if (!isNaN(z)) { setZoom(z); zoomRef.current = z; }
+    });
+  }, []);
+
+  // Listen for zoom changes sent by the iframe via postMessage
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.data?.type !== 'trafficZoom') return;
+      const z = e.data.zoom;
+      if (z === zoomRef.current) return;
+      zoomRef.current = z;
+      setZoom(z);
+      api.store.set('wp-traffic-zoom', String(z));
     };
-    doFetch();
-    const t = setInterval(doFetch, 5 * 60 * 1000);
-    return () => clearInterval(t);
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+  }, []);
+
+  const src = useMemo(() => {
+    const lat = location.lat.toFixed(5);
+    const lon = location.lon.toFixed(5);
+    const key = apiKey ? `&apiKey=${encodeURIComponent(apiKey)}` : '';
+    return `./traffic.html?lat=${lat}&lon=${lon}&zoom=${zoom}${key}`;
+  // zoom deliberately excluded: iframe manages its own zoom after load
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  },[apiKey, location.lat, location.lon]);
+  }, [location.lat, location.lon, apiKey]);
 
-  const ratio=flow?Math.min(1,flow.currentSpeed/flow.freeFlowSpeed):0;
-  const tColor=ratio>0.8?"#5cc8a8":ratio>0.5?"#f7c94f":"#f77f4f";
-  const tLabel=ratio>0.8?"Free flow":ratio>0.5?"Moderate":"Heavy";
-
-  return { color:"#f77f4f", title:"Traffic", sub:`TomTom · ${location.name}`, lastUpdated,
+  return { color:'#f77f4f', title:'Traffic', sub: `Satellite · ${location.name}`,
     content:(
-      <div>
-        {status==="nokey"&&(
-          <div style={{paddingTop:8}}>
-            <div style={{fontSize:11,color:"#c4c4d4",lineHeight:1.6,marginBottom:8}}>Free key at <a href="https://developer.tomtom.com" target="_blank" rel="noreferrer">developer.tomtom.com</a></div>
-            <div style={{display:"flex",gap:6}}>
-              <input value={draft} onChange={e=>setDraft(e.target.value)} placeholder="Paste TomTom key…" style={{...C.inp,flex:1,fontSize:11,fontFamily:"DM Mono,monospace"}}/>
-              {draft&&<button onClick={()=>onSaveKey("tomtom",draft)} style={C.btn}>✓</button>}
-            </div>
-            <button onClick={()=>{setFlow(MOCK_TRAFFIC);setDemo(true);setStatus("ok");}} style={{marginTop:8,background:"none",border:"none",fontSize:11,color:"#c4c4d4",cursor:"pointer",padding:0}}>Preview with demo data →</button>
-          </div>
-        )}
-        {status==="loading"&&<Skel n={2}/>}
-        {status==="ok"&&flow&&(
-          <div>
-            {demo&&<DemoBadge/>}
-            <div style={{background:"rgba(255,255,255,0.04)",borderRadius:10,padding:"10px 12px"}}>
-              <div style={{display:"flex",alignItems:"baseline",gap:10}}>
-                <span style={{fontSize:26,fontWeight:300,color:tColor,letterSpacing:-1}}>{Math.round(flow.currentSpeed)}<span style={{fontSize:11,color:"#d0d0e0",marginLeft:2}}>km/h</span></span>
-                <span style={{fontSize:11,color:"#c4c4d4"}}>free flow {Math.round(flow.freeFlowSpeed)} km/h</span>
-                <span style={{...C.badge,background:tColor+"22",color:tColor,marginLeft:"auto"}}>{tLabel}</span>
-              </div>
-              <div style={{marginTop:10,height:3,borderRadius:2,background:"rgba(255,255,255,0.06)",overflow:"hidden"}}>
-                <div style={{height:"100%",width:(ratio*100)+"%",background:tColor,borderRadius:2,transition:"width 0.5s"}}/>
-              </div>
-              <div style={{fontSize:10,color:"#282830",marginTop:6}}>Confidence {Math.round((flow.confidence||0)*100)}%</div>
-            </div>
-          </div>
-        )}
+      <div style={{margin:'4px -2px 0',borderRadius:10,overflow:'hidden',lineHeight:0}}>
+        <iframe
+          key={src}
+          src={src}
+          width="100%" height="260"
+          style={{border:'none',display:'block',borderRadius:10}}
+          title="Traffic map"
+        />
       </div>
     )
   };
@@ -596,9 +650,6 @@ function ClockWidget() {
         <div style={{fontSize:11,color:"#d0d0e0",fontFamily:"DM Mono,monospace",letterSpacing:2,marginTop:4}}>
           {String(t.getHours()).padStart(2,"0")}:{String(m).padStart(2,"0")}:{String(s).padStart(2,"0")}
           <span style={{fontSize:9,color:"#c4c4d4",marginLeft:5}}>{t.getHours()<12?"AM":"PM"}</span>
-        </div>
-        <div style={{fontSize:10,color:"#c4c4d4",marginTop:3,textTransform:"capitalize"}}>
-          {t.toLocaleDateString("fr-CA",{weekday:"long",month:"long",day:"numeric"})}
         </div>
       </div>
     )
@@ -851,9 +902,9 @@ function AgendaWidget() {
                     {evs.map((ev, i) => {
                       const dot = calColor(ev._calId);
                       if (ev.isAllDay) return (
-                        <div key={ev.id} style={{fontSize:10,color:"#dcdcec",padding:"5px 0",
+                        <div key={ev.id} style={{fontSize:10,color:"#666",padding:"5px 0",
                           borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none"}}>
-                          Toute la journée: {ev.subject}
+                          Toute la journée · {ev.subject}
                         </div>
                       );
                       return (
@@ -1031,11 +1082,11 @@ function TodoWidget() {
 }
 
 // ── Widget renderer ──────────────────────────────────────────────────────────
-function WidgetCard({ id, categories, apiKeys, onSaveKey, colorIdx, onUnreadChange, onOpenUrl, location, expanded, onToggle, isDragging, onDragStart, onDragEnd }) {
+function WidgetCard({ id, categories, apiKeys, onSaveKey, colorIdx, onUnreadChange, onOpenUrl, location, tvSymbols, expanded, onToggle, isDragging, onDragStart, onDragEnd }) {
   const newsData    = id.startsWith("cat:") ? NewsWidget({ category: categories.find(c=>c.label===id.slice(4)), colorIdx, onUnreadChange, onOpenUrl, expanded, onToggle }) : null;
   const weatherData = id==="weather" ? WeatherWidget({ location, expanded, onToggle }) : null;
-  const stocksData  = id==="stocks"  ? StocksWidget({ apiKey:apiKeys.finnhub, onSaveKey, expanded, onToggle }) : null;
-  const trafficData = id==="traffic" ? TrafficWidget({ apiKey:apiKeys.tomtom, onSaveKey, location, expanded, onToggle }) : null;
+  const stocksData  = id==="stocks"  ? TradingViewWidget({ onOpenUrl, symbols: tvSymbols, expanded, onToggle }) : null;
+  const trafficData = id==="traffic" ? GoogleTrafficWidget({ location, apiKey: apiKeys?.traffic || '', expanded, onToggle }) : null;
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const clockData   = id==="clock"   ? ClockWidget() : null;
   // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -1157,9 +1208,11 @@ function SettingsSlider({ label, value, min, max, step=0.01, onChange }) {
   );
 }
 
-function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardOpacityChange, pinnedOpacity, onPinnedOpacityChange, location, onLocationChange }) {
+function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardOpacityChange, pinnedOpacity, onPinnedOpacityChange, location, onLocationChange, tvSymbols, onTvSymbolsChange, apiKeys, onApiKeyChange }) {
   const [autostart, setAutostart] = useState(false);
   const [locDraft, setLocDraft] = useState('');
+  const [symDraft, setSymDraft] = useState(() => (tvSymbols||DEFAULT_TV_SYMBOLS).map(({s,d}) => `${s}  ${d}`).join('\n'));
+  const [tomtomDraft, setTomtomDraft] = useState(apiKeys?.traffic || '');
   const [locSearching, setLocSearching] = useState(false);
   const [locResult, setLocResult] = useState(null);
   const [locError, setLocError] = useState('');
@@ -1226,6 +1279,33 @@ function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardO
             </div>
           )}
         </div>
+        <div style={{padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
+          <div style={{fontSize:13,color:"#e4e4f4",marginBottom:2}}>Markets</div>
+          <div style={{fontSize:10,color:"#c4c4d4",marginBottom:8}}>One symbol per line · EXCHANGE:TICKER Name</div>
+          <textarea
+            value={symDraft}
+            onChange={e=>setSymDraft(e.target.value)}
+            rows={7}
+            style={{...C.inp,width:'100%',resize:'vertical',fontSize:10,fontFamily:'DM Mono,monospace',lineHeight:1.6,boxSizing:'border-box'}}
+          />
+          <button onClick={()=>{
+            const syms = symDraft.trim().split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
+              const [s,...rest] = l.split(/\s+/);
+              return { s, d: rest.join(' ') || s.split(':')[1] || s };
+            });
+            onTvSymbolsChange(syms);
+          }} style={{...C.btn,marginTop:6,width:'100%'}}>Save watchlist</button>
+        </div>
+        <div style={{padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
+          <div style={{fontSize:13,color:"#e4e4f4",marginBottom:2}}>Traffic API key</div>
+          <div style={{fontSize:10,color:"#c4c4d4",marginBottom:8}}>TomTom · free tier at developer.tomtom.com</div>
+          <div style={{display:"flex",gap:6}}>
+            <input value={tomtomDraft} onChange={e=>setTomtomDraft(e.target.value)}
+              placeholder="Paste TomTom key…"
+              style={{...C.inp,flex:1,fontSize:11,fontFamily:'DM Mono,monospace'}}/>
+            <button onClick={()=>onApiKeyChange('traffic', tomtomDraft.trim())} style={C.btn}>Save</button>
+          </div>
+        </div>
         <div style={{fontSize:10,color:"#282830",marginTop:16,lineHeight:1.5}}>
           Panel position: left edge · Win+W to toggle
         </div>
@@ -1258,6 +1338,7 @@ export default function App() {
   const [columns,      setColumns]      = useState({});
   const [apiKeys,      setApiKeys]      = useState({});
   const [showMgr,      setShowMgr]      = useState(false);
+  const [refreshKey,   setRefreshKey]   = useState(0);
   const [showSettings, setShowSettings] = useState(false);
   const [storageReady, setStorageReady] = useState(false);
   const [pinned,       setPinned]       = useState(false);
@@ -1267,7 +1348,9 @@ export default function App() {
   const [cardOpacity,   setCardOpacity]   = useState(1);
   const [pinnedOpacity, setPinnedOpacity] = useState(0.25);
   const [location,      setLocation]      = useState(DEFAULT_LOC);
-  const [accentColor,  setAccentColor]  = useState('#202020');
+  const [tvSymbols,     setTvSymbols]     = useState(null);
+  const [accentColor,    setAccentColor]    = useState('#202020');
+  const [systemWindowColor, setSystemWindowColor] = useState('#1f1f1f');
   const [browserPane,  setBrowserPane]  = useState({ open: false, url: '', loading: false, braveX: 0 });
 
   // Column widths: left + mid + feed are fixed; right column is flex
@@ -1429,6 +1512,11 @@ export default function App() {
       document.documentElement.style.setProperty('--card-bg', `rgba(24,24,28,${cardVal})`);
       if (pinnedv) setPinnedOpacity(parseFloat(pinnedv));
       if (locv) { try { setLocation(JSON.parse(locv)); } catch {} }
+      api.store.get('wp-tv-symbols').then(v => {
+        let syms = DEFAULT_TV_SYMBOLS;
+        if (v) { try { syms = JSON.parse(v); } catch {} }
+        setTvSymbols(syms);
+      });
       setStorageReady(true);
     });
 
@@ -1445,6 +1533,8 @@ export default function App() {
       if (v) try { setExpandedMap(JSON.parse(v)); } catch {}
     });
     window.electronAPI?.system?.accentColor().then(c=>{ if (c) setAccentColor(c); });
+    window.electronAPI?.system?.windowColor().then(c=>{ if (c) setSystemWindowColor(c); });
+    window.electronAPI?.system?.onWindowColorChange?.(c=>{ if (c) setSystemWindowColor(c); });
   },[]);
 
   // Persist main config on change
@@ -1558,7 +1648,7 @@ export default function App() {
       const dropBefore = dragId && dropTarget?.col === colName && dropTarget?.beforeId === id;
       const dropAfter  = dragId && dropTarget?.col === colName && dropTarget?.beforeId === nextId;
       return (
-        <div key={id} className="wi" style={{
+        <div key={`${id}-${refreshKey}`} className="wi" style={{
           animationDelay: (i*25)+"ms",
           borderTop:    dropBefore ? '2px solid var(--accent)' : '2px solid transparent',
           borderBottom: dropAfter  ? '2px solid var(--accent)' : '2px solid transparent',
@@ -1582,6 +1672,7 @@ export default function App() {
             onUnreadChange={count=>onUnread(id,count)}
             onOpenUrl={openBrowser}
             location={location}
+            tvSymbols={tvSymbols}
             expanded={getExpanded(id)}
             onToggle={()=>toggleExpanded(id)}
             isDragging={dragId === id}
@@ -1596,7 +1687,7 @@ export default function App() {
     <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans',sans-serif",background:"transparent",overflow:"hidden","--accent":accentColor}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@300;400&display=swap');
-        html,body{background:transparent;margin:0;padding:0}
+        html,body{background:rgba(255,255,255,0.08);margin:0;padding:0}
         *{box-sizing:border-box;margin:0;padding:0}
         ::-webkit-scrollbar{width:3px}
         ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.18);border-radius:2px}
@@ -1607,6 +1698,7 @@ export default function App() {
         @keyframes spin{to{transform:rotate(360deg)}}
         .wi{animation:fadeIn 0.2s ease both}
         input{color-scheme:dark}
+        button:focus{outline:none}
         a{color:var(--accent)}
         /* Global text vibrancy */
         body{color:#eeeef8}
@@ -1648,15 +1740,18 @@ export default function App() {
           width: browserPane.open ? browserPane.braveX : '100vw',
           overflow:"hidden",
           display:"flex",flexDirection:"row",
-          background:`rgba(155,168,210,${opacity * 0.55})`,
+          background:`rgba(55,55,70,${pinned ? pinnedOpacity : opacity})`,
           transition:"width 280ms cubic-bezier(0.32,0,0.16,1)"}}>
 
           <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
 
             {/* ── Header ── */}
-            <div style={{padding:"10px 20px 8px",borderBottom:"1px solid rgba(255,255,255,0.05)",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
-              <div style={{fontSize:13,fontWeight:600,color:"#f2f2ff",letterSpacing:0.2,textTransform:"capitalize"}}>
+            <div style={{padding:"10px 20px 10px",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
+              <div style={{fontSize:13,fontWeight:600,color:"#f2f2ff",letterSpacing:0.2,textTransform:"capitalize",display:"flex",alignItems:"baseline",gap:6}}>
                 {time.toLocaleDateString("fr-CA",{weekday:"long"})}
+                <span style={{fontSize:11,fontWeight:400,color:"#dcdcec",textTransform:"none"}}>
+                  {time.toLocaleDateString("fr-CA",{day:"numeric",month:"long",year:"numeric"})}
+                </span>
               </div>
               <div style={{display:"flex",gap:4,alignItems:"center",marginTop:2}}>
                 <button onClick={togglePin} title={pinned?"Unpin":"Pin to desktop"}
@@ -1666,11 +1761,9 @@ export default function App() {
                 </button>
                 {loaded&&<button onClick={()=>setShowMgr(true)} title="Manage widgets"
                   style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#dcdcec",fontSize:15,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⚙</button>}
-                {loaded&&<button onClick={resetColumns} title="Reset column layout"
-                  style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#dcdcec",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⇄</button>}
                 <button onClick={()=>setShowSettings(true)} title="Settings"
                   style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#dcdcec",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>≡</button>
-                {loaded&&<button onClick={reset} title="Reset / new OPML"
+                {loaded&&<button onClick={()=>setRefreshKey(k=>k+1)} title="Refresh data"
                   style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#dcdcec",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>↺</button>}
               </div>
             </div>
@@ -1681,7 +1774,7 @@ export default function App() {
               <div style={{flex:1,overflow:"hidden",display:"flex"}}>
 
                 {/* Column 1 */}
-                <div style={{flexShrink:0,width:colWidths.left,overflowY:"auto",padding:"10px 6px 12px 10px",display:"flex",flexDirection:"column",gap:8}}
+                <div style={{flexShrink:0,width:colWidths.left,overflowY:"auto",padding:"0px 6px 12px 10px",display:"flex",flexDirection:"column",gap:8}}
                   onDragOver={e=>{e.preventDefault();setDropTarget({col:"left",beforeId:null});}}
                   onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
                   {renderCol(leftIds, "left")}
@@ -1692,7 +1785,7 @@ export default function App() {
                 <div className="col-divider" onMouseDown={onColDividerDown('left')} />
 
                 {/* Column 2 */}
-                <div style={{flexShrink:0,width:colWidths.mid,overflowY:"auto",padding:"10px 6px 12px 6px",display:"flex",flexDirection:"column",gap:8}}
+                <div style={{flexShrink:0,width:colWidths.mid,overflowY:"auto",padding:"0px 6px 12px 6px",display:"flex",flexDirection:"column",gap:8}}
                   onDragOver={e=>{e.preventDefault();setDropTarget({col:"mid",beforeId:null});}}
                   onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
                   {renderCol(midIds, "mid")}
@@ -1703,7 +1796,7 @@ export default function App() {
                 <div className="col-divider" onMouseDown={onColDividerDown('mid')} />
 
                 {/* Column 3 — Feeds */}
-                <div style={{flexShrink:0,width:colWidths.feed,overflowY:"auto",padding:"10px 6px 12px 6px",display:"flex",flexDirection:"column",gap:8}}
+                <div style={{flexShrink:0,width:colWidths.feed,overflowY:"auto",padding:"0px 6px 12px 6px",display:"flex",flexDirection:"column",gap:8}}
                   onDragOver={e=>{e.preventDefault();setDropTarget({col:"feed",beforeId:null});}}
                   onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
                   {renderCol(feedIds, "feed")}
@@ -1714,7 +1807,7 @@ export default function App() {
                 <div className="col-divider" onMouseDown={onColDividerDown('feed')} />
 
                 {/* Column 4 — Personal (agenda, todo) */}
-                <div style={{flex:1,overflowY:"auto",padding:"10px 10px 12px 6px",display:"flex",flexDirection:"column",gap:8}}
+                <div style={{flex:1,overflowY:"auto",padding:"0px 10px 12px 6px",display:"flex",flexDirection:"column",gap:8}}
                   onDragOver={e=>{e.preventDefault();setDropTarget({col:"right",beforeId:null});}}
                   onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
                   {renderCol(rightIds, "right")}
@@ -1743,7 +1836,9 @@ export default function App() {
         opacity={opacity} onOpacityChange={setOpacity}
         cardOpacity={cardOpacity} onCardOpacityChange={v=>{ setCardOpacity(v); document.documentElement.style.setProperty('--card-bg',`rgba(24,24,28,${v})`); }}
         pinnedOpacity={pinnedOpacity} onPinnedOpacityChange={setPinnedOpacity}
-        location={location} onLocationChange={setLocation}/>}
+        location={location} onLocationChange={setLocation}
+        tvSymbols={tvSymbols} onTvSymbolsChange={syms=>{ setTvSymbols(syms); api.store.set('wp-tv-symbols', JSON.stringify(syms)); }}
+        apiKeys={apiKeys} onApiKeyChange={(service,key)=>saveKey(service,key)}/>}
 
       {/* ── Browser card (panel extension with Brave content rendered behind) ── */}
       {browserPane.open && (

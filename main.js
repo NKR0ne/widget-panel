@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, screen, ipcMain, nativeImage, systemPreferences, shell } = require('electron')
+const { app, BrowserWindow, globalShortcut, screen, ipcMain, nativeImage, systemPreferences, nativeTheme, shell } = require('electron')
 const path   = require('path')
 const fs     = require('fs')
 const net    = require('net')
@@ -24,8 +24,9 @@ let coldStart        = true   // true until first successful IPC connection
 let rendererReady    = false  // true once renderer has registered its panel listeners
 let _showAnimating   = false  // true while showPanel() pre-send is in flight
 let g_fadeIv         = null   // active opacity-fade interval — cancel before starting a new one
-let panelOnlyWidth   = parseInt(getStore('wp-width')) || 720  // panel width before browser was embedded
-let browserEmbedded  = false  // whether brave window is currently embedded in win
+let panelOnlyWidth      = parseInt(getStore('wp-width')) || 720  // panel width before browser was embedded
+let browserEmbedded     = false  // whether brave window is currently embedded in win
+let _showStateTimeout   = null   // ID of the 350ms post-show notifyHelperState timer
 
 // ── Single instance lock ──────────────────────────────────────────────────────
 const gotLock = app.requestSingleInstanceLock()
@@ -97,7 +98,9 @@ function createPipeServer() {
             log('[toggle] isVisible=', win.isVisible())
             if (win.isVisible()) { hidePanel() }
             else { showPanel() }
-            broadcastToHelper({ type: 'state', visible: win.isVisible() })
+            // Do NOT broadcastToHelper here — hidePanel/showPanel manage state via
+            // their async callbacks and win.on('hide'/'show'). Broadcasting now would
+            // send stale visible:true while the 260ms fade is still in progress.
           }
         } catch {}
       }
@@ -138,7 +141,11 @@ function showPanel() {
   win.setOpacity(0)
   win.show()
   if (!isPinned) setTimeout(() => win.focus(), 150)
-  if (rendererReady) win.webContents.send('panel-show')
+  // Always send panel-show regardless of rendererReady — the renderer has already
+  // registered its listener after the first load; panel-renderer-ready handles cold-start.
+  // Guarding on rendererReady here caused silent failures when did-start-loading fired
+  // spuriously (e.g. from iframes) and left rendererReady=false.
+  win.webContents.send('panel-show')
   fadeOpacity(0, isPinned ? pinnedWinOpacity() : 1, 120, () => { _showAnimating = false })
 }
 
@@ -146,6 +153,9 @@ function showPanel() {
 function hidePanel(opts = {}) {
   if (!win || !win.isVisible() || isHiding) return
   log('[hidePanel] called, browserEmbedded=', browserEmbedded, new Error().stack.split('\n')[2]?.trim())
+  // Cancel the post-show notifyHelperState timer — if hide completes before it fires
+  // (hide=260ms < timer=350ms), the timer would send stale visible:true → g_panelOn stuck.
+  if (_showStateTimeout) { clearTimeout(_showStateTimeout); _showStateTimeout = null }
   isHiding = true
   if (browserEmbedded) {
     sendToBrave({ type: 'close' })
@@ -217,8 +227,8 @@ function createWindow() {
     x:               -(panelW + PANEL_GAP),  // start off-screen; animation slides it in
     y:               workArea.y + PANEL_GAP,
     frame:           false,
-    transparent:     true,
     backgroundMaterial: 'acrylic',
+    backgroundColor: '#00000000',
     alwaysOnTop:     true,
     skipTaskbar:     true,
     resizable:       false,            // we handle resize ourselves via drag handle
@@ -243,7 +253,10 @@ function createWindow() {
   // Reset flags on each new window
   coldStart     = true
   rendererReady = false
-  win.webContents.on('did-start-loading', () => { rendererReady = false })
+  win.webContents.on('did-start-loading', () => {
+    log('[webContents] did-start-loading — rendererReady reset')
+    rendererReady = false
+  })
 
   win.on('close', (e) => {
     if (process.platform === 'win32') {
@@ -273,15 +286,20 @@ function createWindow() {
     }
   })
 
+
   win.on('show', () => {
     lastToggleTime = Date.now()
     const { workArea } = screen.getPrimaryDisplay()
     const targetW = browserEmbedded ? win.getSize()[0] : panelOnlyWidth
     win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: targetW, height: workArea.height - PANEL_GAP * 2 })
     // Delay so the strip WM_LBUTTONDOWN passes through the hook before g_panelOn=true.
-    setTimeout(() => { notifyHelperState(true); notifyHelperHwnds() }, 350)
+    _showStateTimeout = setTimeout(() => {
+      _showStateTimeout = null
+      notifyHelperState(true)
+      notifyHelperHwnds()
+    }, 350)
     log('[win] show — rendererReady=', rendererReady, '_showAnimating=', _showAnimating)
-    if (rendererReady && !_showAnimating) {
+    if (!_showAnimating) {
       // Fallback: if show wasn't triggered via showPanel() (e.g. second-instance), send now
       win.webContents.send('panel-show')
     }
@@ -290,6 +308,7 @@ function createWindow() {
     // Move off-screen left of the strip so next show starts slide-in from translateX(-100%)
     const w = win.getSize()[0]
     win.setPosition(-w, win.getPosition()[1])
+    if (_showStateTimeout) { clearTimeout(_showStateTimeout); _showStateTimeout = null }
     notifyHelperState(false)
     isHiding = false
   })
@@ -336,6 +355,16 @@ function setTaskbarOverlay(count) {
 ipcMain.handle('system-accent-color', () => {
   const raw = systemPreferences.getAccentColor() // 'rrggbbaa'
   return '#' + raw.slice(0, 6)
+})
+
+function getThemeWindowColor() {
+  return nativeTheme.shouldUseDarkColors ? '#1f1f1f' : '#f3f3f3'
+}
+
+ipcMain.handle('system-window-color', () => getThemeWindowColor())
+
+nativeTheme.on('updated', () => {
+  if (win) win.webContents.send('system-color-updated', getThemeWindowColor())
 })
 
 ipcMain.handle('store-get',    (_e, key)       => getStore(key))
@@ -756,6 +785,22 @@ ipcMain.handle('ms-auth-pkce', async (_e, clientId, scopes) => {
 
     const timeout = setTimeout(() => { server.close(); reject(new Error('auth timeout')) }, 5 * 60 * 1000)
     server.on('close', () => clearTimeout(timeout))
+  })
+})
+
+// Opens a full BrowserWindow for third-party login (e.g. TradingView).
+// Uses session.defaultSession so cookies are shared with renderer iframes.
+// Returns true once the window is closed.
+ipcMain.handle('open-auth-window', (_e, url, title) => {
+  return new Promise(resolve => {
+    const authWin = new BrowserWindow({
+      width: 820, height: 720,
+      title: title || 'Login',
+      autoHideMenuBar: true,
+      webPreferences: { contextIsolation: true, nodeIntegration: false },
+    })
+    authWin.loadURL(url)
+    authWin.on('closed', () => resolve(true))
   })
 })
 
