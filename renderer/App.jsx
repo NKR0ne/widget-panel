@@ -447,7 +447,6 @@ function TradingViewWidget() {
   const [lists,   setLists]   = useState([]);
   const [listIdx, setListIdx] = useState(0);
   const [quotes,  setQuotes]  = useState({});
-  const [form,    setForm]    = useState({ u:'', p:'' });
   const [err,     setErr]     = useState('');
   const [busy,    setBusy]    = useState(false);
 
@@ -465,7 +464,7 @@ function TradingViewWidget() {
     })();
   }, []);
 
-  // Symbols from selected list
+  // Symbols from selected list — each is {s, d}
   const symbols = lists[listIdx]?.symbols || [];
 
   // Fetch Yahoo Finance quotes for current list
@@ -474,8 +473,8 @@ function TradingViewWidget() {
     let cancelled = false;
     const fetchQ = async () => {
       const results = {};
-      await Promise.all(symbols.map(async sym => {
-        const ticker = sym.includes(':') ? sym.split(':')[1] : sym;
+      await Promise.all(symbols.map(async ({ s }) => {
+        const ticker = s.includes(':') ? s.split(':')[1] : s;
         try {
           const res  = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=5d&interval=1d`);
           const data = await res.json();
@@ -503,17 +502,24 @@ function TradingViewWidget() {
     const id = setInterval(fetchQ, 60_000);
     return () => { cancelled = true; clearInterval(id); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbols.join(',')]);
+  }, [symbols.map(x=>x.s).join(',')]);
 
-  const doLogin = async () => {
+  const doBrowserLogin = async () => {
     setBusy(true); setErr('');
-    const res = await api.tv.login({ username: form.u, password: form.p });
+    api.modal?.open();
+    const res = await api.tv.browserLogin();
+    api.modal?.close();
     if (res.ok) {
       const wl = await api.tv.watchlists();
-      setLists(wl.data || []);
-      setAuth({ username: res.username || form.u });
+      if (wl.ok && wl.data?.length) {
+        setLists(wl.data);
+        setAuth({ username: res.username || '' });
+      } else {
+        setAuth({ username: res.username || '' });
+        setErr('Signed in — no watchlists found');
+      }
     } else {
-      setErr(res.error || 'Login failed');
+      setErr(res.error || 'Login cancelled');
     }
     setBusy(false);
   };
@@ -533,17 +539,11 @@ function TradingViewWidget() {
   if (auth === false) return { color:'#5cc8a8', title:'Markets', sub:'TradingView',
     content:(
       <div style={{paddingTop:4}}>
-        <div style={{fontSize:11,color:'#888',marginBottom:10}}>Sign in to access your watchlists</div>
-        <input placeholder="Username or email" value={form.u}
-          onChange={e=>setForm(f=>({...f,u:e.target.value}))}
-          style={{...C.inp,width:'100%',marginBottom:8,display:'block'}}/>
-        <input placeholder="Password" type="password" value={form.p}
-          onChange={e=>setForm(f=>({...f,p:e.target.value}))}
-          onKeyDown={e=>e.key==='Enter'&&doLogin()}
-          style={{...C.inp,width:'100%',marginBottom:8,display:'block'}}/>
+        <div style={{fontSize:11,color:'#888',marginBottom:12}}>Sign in to load your TradingView watchlists</div>
         {err&&<div style={{fontSize:10,color:'#ef5350',marginBottom:8}}>{err}</div>}
-        <button onClick={doLogin} disabled={busy} style={{...C.btn,width:'100%',opacity:busy?0.6:1}}>
-          {busy?'Signing in…':'Sign in'}
+        <button onClick={doBrowserLogin} disabled={busy}
+          style={{...C.btn,width:'100%',opacity:busy?0.6:1}}>
+          {busy?'Opening browser…':'Sign in to TradingView'}
         </button>
       </div>
     )
@@ -571,20 +571,20 @@ function TradingViewWidget() {
     content:(
       <div>
         {tabs}
-        {symbols.map(sym => {
-          const ticker = sym.includes(':') ? sym.split(':')[1] : sym;
+        {symbols.map(({ s, d }) => {
+          const ticker = s.includes(':') ? s.split(':')[1] : s;
           const q = quotes[ticker];
           return (
-            <div key={sym} style={{display:'flex',alignItems:'center',gap:10,
+            <div key={s} style={{display:'flex',alignItems:'center',gap:10,
               padding:'9px 2px',borderBottom:'1px solid rgba(255,255,255,0.05)',cursor:'pointer'}}
-              onClick={()=>api.browser.open(`https://www.tradingview.com/chart/?symbol=${sym}`)}>
+              onClick={()=>api.browser.open(`https://www.tradingview.com/chart/?symbol=${s}`)}>
 
               <TickerAvatar ticker={ticker}/>
 
               <div style={{flex:1,minWidth:0,overflow:'hidden'}}>
                 <div style={{fontSize:14,fontWeight:700,color:'#eeeef8',lineHeight:1.3}}>{ticker}</div>
                 <div style={{fontSize:10,color:'#555',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-                  {q?.name||sym} · {fmtDate(q?.date)}
+                  {q?.name || d} · {fmtDate(q?.date)}
                 </div>
               </div>
 
@@ -1274,10 +1274,9 @@ function SettingsSlider({ label, value, min, max, step=0.01, onChange }) {
   );
 }
 
-function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardOpacityChange, pinnedOpacity, onPinnedOpacityChange, location, onLocationChange, tvSymbols, onTvSymbolsChange, apiKeys, onApiKeyChange }) {
+function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardOpacityChange, pinnedOpacity, onPinnedOpacityChange, location, onLocationChange, apiKeys, onApiKeyChange }) {
   const [autostart, setAutostart] = useState(false);
   const [locDraft, setLocDraft] = useState('');
-  const [symDraft, setSymDraft] = useState(() => (tvSymbols||DEFAULT_TV_SYMBOLS).map(({s,d}) => `${s}  ${d}`).join('\n'));
   const [tomtomDraft, setTomtomDraft] = useState(apiKeys?.traffic || '');
   const [locSearching, setLocSearching] = useState(false);
   const [locResult, setLocResult] = useState(null);
@@ -1344,23 +1343,6 @@ function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardO
               <button onClick={()=>{ onLocationChange(locResult); setLocResult(null); setLocDraft(''); }} style={{...C.btn,padding:"2px 10px",fontSize:11,flexShrink:0}}>Use</button>
             </div>
           )}
-        </div>
-        <div style={{padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
-          <div style={{fontSize:13,color:"#e4e4f4",marginBottom:2}}>Markets</div>
-          <div style={{fontSize:10,color:"#c4c4d4",marginBottom:8}}>One symbol per line · EXCHANGE:TICKER Name</div>
-          <textarea
-            value={symDraft}
-            onChange={e=>setSymDraft(e.target.value)}
-            rows={7}
-            style={{...C.inp,width:'100%',resize:'vertical',fontSize:10,fontFamily:'DM Mono,monospace',lineHeight:1.6,boxSizing:'border-box'}}
-          />
-          <button onClick={()=>{
-            const syms = symDraft.trim().split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{
-              const [s,...rest] = l.split(/\s+/);
-              return { s, d: rest.join(' ') || s.split(':')[1] || s };
-            });
-            onTvSymbolsChange(syms);
-          }} style={{...C.btn,marginTop:6,width:'100%'}}>Save watchlist</button>
         </div>
         <div style={{padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
           <div style={{fontSize:13,color:"#e4e4f4",marginBottom:2}}>Traffic API key</div>
@@ -1906,7 +1888,6 @@ export default function App() {
         cardOpacity={cardOpacity} onCardOpacityChange={v=>{ setCardOpacity(v); document.documentElement.style.setProperty('--card-bg',`rgba(24,24,28,${v})`); }}
         pinnedOpacity={pinnedOpacity} onPinnedOpacityChange={setPinnedOpacity}
         location={location} onLocationChange={setLocation}
-        tvSymbols={tvSymbols} onTvSymbolsChange={syms=>{ setTvSymbols(syms); api.store.set('wp-tv-symbols', JSON.stringify(syms)); }}
         apiKeys={apiKeys} onApiKeyChange={(service,key)=>saveKey(service,key)}/>}
 
       {/* ── Browser card (panel extension with Brave content rendered behind) ── */}

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, globalShortcut, screen, ipcMain, nativeImage, systemPreferences, nativeTheme, shell } = require('electron')
+const { app, BrowserWindow, session, globalShortcut, screen, ipcMain, nativeImage, systemPreferences, nativeTheme, shell } = require('electron')
 const path   = require('path')
 const fs     = require('fs')
 const net    = require('net')
@@ -747,41 +747,61 @@ function tvRequest(method, url, headers, body) {
   })
 }
 
-ipcMain.handle('tv-login', async (_e, { username, password }) => {
-  try {
-    const body = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&remember=on`
-    const res = await tvRequest('POST', 'https://www.tradingview.com/accounts/signin/', {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Origin': 'https://www.tradingview.com',
-      'Referer': 'https://www.tradingview.com/',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    }, body)
-    // Capture ALL cookies (sessionid, device_t, csrftoken, etc.)
-    const allCookies = [].concat(res.headers['set-cookie'] || [])
-      .map(c => c.split(';')[0]).join('; ')
-    const sessionId = (allCookies.match(/sessionid=([^;,\s]+)/) || [])[1]
-    log('[tv-login] status=', res.status, 'cookies=', allCookies.slice(0,200), 'body=', res.body.slice(0,300))
-    let json = {}
-    try { json = JSON.parse(res.body) } catch {}
-    if (sessionId || json.user) {
-      setStore('wp-tv-cookies', allCookies)
-      setStore('wp-tv-session', sessionId || '')
-      setStore('wp-tv-user', json.user?.username || username)
-      return { ok: true, username: json.user?.username || username }
+// Opens a real BrowserWindow so the user can log in through TradingView's UI.
+// Polls for the sessionid cookie; auto-closes and stores credentials on success.
+ipcMain.handle('tv-browser-login', async () => {
+  return new Promise(resolve => {
+    const authWin = new BrowserWindow({
+      width: 1000, height: 720,
+      title: 'Sign in to TradingView',
+      autoHideMenuBar: true,
+      webPreferences: { contextIsolation: true, nodeIntegration: false },
+    })
+    authWin.loadURL('https://www.tradingview.com/accounts/signin/')
+
+    let resolved = false
+    async function finish() {
+      if (resolved) return
+      const cookies = await session.defaultSession.cookies.get({ domain: '.tradingview.com' })
+      const sessionCookie = cookies.find(c => c.name === 'sessionid')
+      if (!sessionCookie) { resolve({ ok: false, error: 'Login cancelled' }); return }
+      resolved = true
+      const cookieStr  = cookies.map(c => `${c.name}=${c.value}`).join('; ')
+      const csrfToken  = cookies.find(c => c.name === 'csrftoken')?.value  || ''
+      const username   = cookies.find(c => c.name === 'username')?.value   || ''
+      setStore('wp-tv-cookies',  cookieStr)
+      setStore('wp-tv-session',  sessionCookie.value)
+      setStore('wp-tv-csrf',     csrfToken)
+      setStore('wp-tv-user',     username)
+      log('[tv-browser-login] ok session=', sessionCookie.value.slice(0,20), '...')
+      resolve({ ok: true, username })
     }
-    return { ok: false, error: json.error || json[0] || `HTTP ${res.status}` }
-  } catch (e) { return { ok: false, error: e.message } }
+
+    // Auto-close once the user lands on the main TV page after login
+    authWin.webContents.on('did-navigate', async (_e, url) => {
+      if (/^https:\/\/www\.tradingview\.com\/(chart\/)?(\?|$)/.test(url)) {
+        const cookies = await session.defaultSession.cookies.get({ domain: '.tradingview.com' })
+        if (cookies.find(c => c.name === 'sessionid')) { authWin.close() }
+      }
+    })
+
+    authWin.on('closed', finish)
+  })
 })
 
 ipcMain.handle('tv-watchlists', async () => {
   const sessionId = getStore('wp-tv-session')
   if (!sessionId) return { ok: false, error: 'Not logged in' }
-  const cookies = getStore('wp-tv-cookies') || `sessionid=${sessionId}`
+  const cookies   = getStore('wp-tv-cookies') || `sessionid=${sessionId}`
+  const csrfToken = getStore('wp-tv-csrf') || ''
   const hdrs = {
-    'Cookie': cookies,
-    'Referer': 'https://www.tradingview.com/',
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-    'X-Language': 'en',
+    'Cookie':           cookies,
+    'Referer':          'https://www.tradingview.com/',
+    'User-Agent':       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept':           'application/json, text/javascript, */*; q=0.01',
+    'X-Requested-With': 'XMLHttpRequest',
+    'X-Language':       'en',
+    ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
   }
   for (const url of [
     'https://www.tradingview.com/api/v1/lists/',
@@ -790,15 +810,38 @@ ipcMain.handle('tv-watchlists', async () => {
   ]) {
     try {
       const res = await tvRequest('GET', url, hdrs)
-      log('[tv-watchlists]', url, 'status=', res.status, 'body=', res.body.slice(0, 600))
+      log('[tv-watchlists]', url, 'status=', res.status, 'body=', res.body.slice(0, 800))
+      if (!res.body.startsWith('{') && !res.body.startsWith('[')) continue
       let json
       try { json = JSON.parse(res.body) } catch { continue }
-      // Look for any array that has symbol-list shape
-      const candidates = [json, json?.lists, json?.results, json?.data, json?.watchlists]
-      for (const c of candidates) {
-        if (Array.isArray(c) && c.length && (c[0]?.symbols || c[0]?.name)) {
-          return { ok: true, data: c }
+
+      // Normalise symbols to {s,d} objects regardless of API response shape
+      function normSymbols(raw) {
+        if (!Array.isArray(raw)) {
+          // newline/comma-separated string inside an object
+          if (typeof raw?.content === 'string') raw = raw.content.trim().split(/[\n,]+/)
+          else return null
         }
+        return raw.map(s => {
+          if (typeof s === 'string') return { s: s.trim(), d: s.split(':')[1] || s }
+          return { s: s.id || s.s || s.symbol || '', d: s.description || s.d || s.name || '' }
+        }).filter(x => x.s)
+      }
+
+      const candidates = [json, json?.lists, json?.results, json?.data, json?.watchlists, json?.activeLists]
+      for (const c of candidates) {
+        if (!Array.isArray(c) || !c.length) continue
+        if (c[0]?.symbols !== undefined || c[0]?.name) {
+          const lists = c.map(l => ({
+            id:      l.id   || l.listId || '',
+            name:    l.name || l.listName || 'Watchlist',
+            symbols: normSymbols(l.symbols) || [],
+          })).filter(l => l.symbols.length)
+          if (lists.length) return { ok: true, data: lists }
+        }
+        // flat array of symbol strings/objects
+        const syms = normSymbols(c)
+        if (syms?.length) return { ok: true, data: [{ id: '', name: 'Watchlist', symbols: syms }] }
       }
     } catch (e) { log('[tv-watchlists] error', url, e.message) }
   }
@@ -807,7 +850,9 @@ ipcMain.handle('tv-watchlists', async () => {
 
 ipcMain.handle('tv-logout', async () => {
   setStore('wp-tv-session', '')
-  setStore('wp-tv-user', '')
+  setStore('wp-tv-cookies', '')
+  setStore('wp-tv-csrf',    '')
+  setStore('wp-tv-user',    '')
   return { ok: true }
 })
 

@@ -59,9 +59,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   tv: {
-    login:      (creds) => ipcRenderer.invoke('tv-login',      creds),
-    watchlists: ()      => ipcRenderer.invoke('tv-watchlists'),
-    logout:     ()      => ipcRenderer.invoke('tv-logout'),
+    browserLogin: ()      => ipcRenderer.invoke('tv-browser-login'),
+    watchlists:   ()      => ipcRenderer.invoke('tv-watchlists'),
+    logout:       ()      => ipcRenderer.invoke('tv-logout'),
   },
 
   log: (...args) => ipcRenderer.send('renderer-log', ...args),
