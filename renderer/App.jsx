@@ -31,6 +31,20 @@ const SYS = [
   { id:"todo",    label:"Microsoft To-Do",  note:"Microsoft Graph · OAuth",       color:"#2564cf" },
 ];
 
+const DEFAULT_TV_SYMBOLS = [
+  {s:'AMEX:GLD',   d:'Gold ETF'},
+  {s:'NASDAQ:NVDA',d:'NVIDIA'},
+  {s:'NASDAQ:IBIT',d:'Bitcoin ETF'},
+  {s:'NASDAQ:MSFT',d:'Microsoft'},
+  {s:'NASDAQ:GOOG',d:'Alphabet'},
+  {s:'AMEX:VOO',   d:'S&P 500 ETF'},
+  {s:'NASDAQ:BOTZ',d:'Robotics & AI ETF'},
+  {s:'NASDAQ:SMCI',d:'Super Micro'},
+  {s:'NASDAQ:AAPL',d:'Apple'},
+  {s:'NASDAQ:INTC',d:'Intel'},
+  {s:'NASDAQ:AMD', d:'AMD'},
+];
+
 // ── Mock fallback data ───────────────────────────────────────────────────────
 const MOCK_NEWS = [
   { id:"1", title:"RISC-V chips are closing the gap with x86 in datacenter benchmarks",   source:"arstechnica.com", link:"#", time:"12m", image:null },
