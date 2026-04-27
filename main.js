@@ -20,6 +20,8 @@ let win              = null
 let isPinned         = false
 let lastToggleTime   = 0
 let isHiding         = false  // prevents double-hide (blur + toggle arriving together)
+let modalOpen        = false  // renderer signals when a settings/manage modal is open
+let lastModalClose   = 0     // timestamp of last modal close — grace period before blur-hide
 let coldStart        = true   // true until first successful IPC connection
 let rendererReady    = false  // true once renderer has registered its panel listeners
 let _showAnimating   = false  // true while showPanel() pre-send is in flight
@@ -89,8 +91,13 @@ function createPipeServer() {
             notifyHelperState(win.isVisible())
           }
           else if (msg.type === 'clickoutside') {
-            if (!isPinned) { log('[clickoutside] → hidePanel()'); hidePanel() }
-            else { log('[clickoutside] pinned — ignored') }
+            if (!isPinned) {
+              setTimeout(() => {
+                if (modalOpen)                         { log('[clickoutside] modal open — skip'); return }
+                if (Date.now() - lastModalClose < 400) { log('[clickoutside] modal just closed — skip'); return }
+                log('[clickoutside] → hidePanel()'); hidePanel()
+              }, 150)
+            } else { log('[clickoutside] pinned — ignored') }
           }
           else if (msg.type === 'toggle') {
             if (!win) return
@@ -274,15 +281,19 @@ function createWindow() {
     const dtBrowser = Date.now() - lastBrowserOpenTime
     log('[blur] isPinned=', isPinned, 'isVisible=', win.isVisible(), 'dt=', dt, 'dtBrowser=', dtBrowser)
     if (!isPinned && win.isVisible()) {
-      if (dt < 200) { log('[blur] debounced (toggle)'); return }
-      // Debounce for 500ms after a browser-open — the Win32 SetParent can
-      // fire blur before the child window has finished attaching.
+      if (dt < 200)        { log('[blur] debounced (toggle)'); return }
       if (dtBrowser < 500) { log('[blur] debounced (browser-open)'); return }
-      // Brave is a child of win — interacting with its content causes blur on win
-      // because the HWND focus moves to the child. Skip hide when browser is embedded.
       if (browserEmbedded) { log('[blur] browserEmbedded — skip hide'); return }
-      log('[blur] → hidePanel()')
-      hidePanel()
+      // Delay 150ms: lets in-flight modal-open IPC land and lets Windows
+      // finish any momentary focus transfer caused by the click itself.
+      setTimeout(() => {
+        if (!win || !win.isVisible() || isPinned) return
+        if (win.isFocused()) { log('[blur/delay] focus returned — skip'); return }
+        if (modalOpen)                           { log('[blur/delay] modal open — skip'); return }
+        if (Date.now() - lastModalClose < 400)   { log('[blur/delay] modal just closed — skip'); return }
+        log('[blur/delay] → hidePanel()')
+        hidePanel()
+      }, 150)
     }
   })
 
@@ -366,6 +377,9 @@ ipcMain.handle('system-window-color', () => getThemeWindowColor())
 nativeTheme.on('updated', () => {
   if (win) win.webContents.send('system-color-updated', getThemeWindowColor())
 })
+
+ipcMain.on('modal-open',  () => { modalOpen = true })
+ipcMain.on('modal-close', () => { modalOpen = false; lastModalClose = Date.now() })
 
 ipcMain.handle('store-get',    (_e, key)       => getStore(key))
 ipcMain.handle('store-set',    (_e, key, value) => { log('[store-set]', key, '=', JSON.stringify(value)); setStore(key, value) })
@@ -711,6 +725,89 @@ function rssFetch(url, redirects = 0) {
 ipcMain.handle('rss-fetch', async (_e, url) => {
   try { return await rssFetch(url) }
   catch (e) { return { ok: false, error: e.message } }
+})
+
+// ── TradingView auth ──────────────────────────────────────────────────────────
+function tvRequest(method, url, headers, body) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url)
+    const opts = {
+      hostname: u.hostname, path: u.pathname + (u.search || ''), method,
+      headers: body ? { ...headers, 'Content-Length': Buffer.byteLength(body) } : headers,
+    }
+    const req = https.request(opts, res => {
+      const chunks = []
+      res.on('data', d => chunks.push(d))
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString('utf8') }))
+    })
+    req.on('error', reject)
+    if (body) req.write(body)
+    req.end()
+  })
+}
+
+ipcMain.handle('tv-login', async (_e, { username, password }) => {
+  try {
+    const body = `username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}&remember=on`
+    const res = await tvRequest('POST', 'https://www.tradingview.com/accounts/signin/', {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'Origin': 'https://www.tradingview.com',
+      'Referer': 'https://www.tradingview.com/',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    }, body)
+    // Capture ALL cookies (sessionid, device_t, csrftoken, etc.)
+    const allCookies = [].concat(res.headers['set-cookie'] || [])
+      .map(c => c.split(';')[0]).join('; ')
+    const sessionId = (allCookies.match(/sessionid=([^;,\s]+)/) || [])[1]
+    log('[tv-login] status=', res.status, 'cookies=', allCookies.slice(0,200), 'body=', res.body.slice(0,300))
+    let json = {}
+    try { json = JSON.parse(res.body) } catch {}
+    if (sessionId || json.user) {
+      setStore('wp-tv-cookies', allCookies)
+      setStore('wp-tv-session', sessionId || '')
+      setStore('wp-tv-user', json.user?.username || username)
+      return { ok: true, username: json.user?.username || username }
+    }
+    return { ok: false, error: json.error || json[0] || `HTTP ${res.status}` }
+  } catch (e) { return { ok: false, error: e.message } }
+})
+
+ipcMain.handle('tv-watchlists', async () => {
+  const sessionId = getStore('wp-tv-session')
+  if (!sessionId) return { ok: false, error: 'Not logged in' }
+  const cookies = getStore('wp-tv-cookies') || `sessionid=${sessionId}`
+  const hdrs = {
+    'Cookie': cookies,
+    'Referer': 'https://www.tradingview.com/',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    'X-Language': 'en',
+  }
+  for (const url of [
+    'https://www.tradingview.com/api/v1/lists/',
+    'https://www.tradingview.com/api/v1/user_data/',
+    'https://www.tradingview.com/api/v1/symbols_list/',
+  ]) {
+    try {
+      const res = await tvRequest('GET', url, hdrs)
+      log('[tv-watchlists]', url, 'status=', res.status, 'body=', res.body.slice(0, 600))
+      let json
+      try { json = JSON.parse(res.body) } catch { continue }
+      // Look for any array that has symbol-list shape
+      const candidates = [json, json?.lists, json?.results, json?.data, json?.watchlists]
+      for (const c of candidates) {
+        if (Array.isArray(c) && c.length && (c[0]?.symbols || c[0]?.name)) {
+          return { ok: true, data: c }
+        }
+      }
+    } catch (e) { log('[tv-watchlists] error', url, e.message) }
+  }
+  return { ok: true, data: [] }
+})
+
+ipcMain.handle('tv-logout', async () => {
+  setStore('wp-tv-session', '')
+  setStore('wp-tv-user', '')
+  return { ok: true }
 })
 
 ipcMain.handle('ms-graph-post', async (_e, url, accessToken, postBody) => {

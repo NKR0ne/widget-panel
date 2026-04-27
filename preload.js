@@ -58,7 +58,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openWindow: (url, title) => ipcRenderer.invoke('open-auth-window', url, title),
   },
 
+  tv: {
+    login:      (creds) => ipcRenderer.invoke('tv-login',      creds),
+    watchlists: ()      => ipcRenderer.invoke('tv-watchlists'),
+    logout:     ()      => ipcRenderer.invoke('tv-logout'),
+  },
+
   log: (...args) => ipcRenderer.send('renderer-log', ...args),
+
+  modal: {
+    open:  () => ipcRenderer.send('modal-open'),
+    close: () => ipcRenderer.send('modal-close'),
+  },
 
   panel: {
     ready:       ()               => ipcRenderer.send('panel-renderer-ready'),

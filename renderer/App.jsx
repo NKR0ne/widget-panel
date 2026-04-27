@@ -415,138 +415,190 @@ function WeatherWidget({ location = DEFAULT_LOC }) {
   };
 }
 
-// ── TradingView market overview widget ────────────────────────────────────────
-const INDEX_SYMBOLS = [
-  { yf:'^GSPC', label:'S&P 500',  tv:'FOREXCOM:SPXUSD' },
-  { yf:'^DJI',  label:'Dow 30',   tv:'DJ:DJI'          },
-  { yf:'^IXIC', label:'Nasdaq',   tv:'NASDAQ:COMP'     },
-];
+// ── TradingView watchlist widget ──────────────────────────────────────────────
+function TickerAvatar({ ticker, size=42 }) {
+  const COLORS = ['#26a69a','#ef5350','#42a5f5','#ffa726','#ab47bc','#ff7043','#5cc8a8','#78909c'];
+  let h = 0; for (const c of ticker) h = (h*31 + c.charCodeAt(0)) & 0x7fffffff;
+  return (
+    <div style={{width:size,height:size,borderRadius:'50%',background:COLORS[h%COLORS.length],
+      display:'flex',alignItems:'center',justifyContent:'center',
+      fontSize:Math.round(size*0.38),fontWeight:700,color:'#fff',flexShrink:0}}>
+      {ticker[0]}
+    </div>
+  );
+}
 
-const DEFAULT_TV_SYMBOLS = [
-  {s:'AMEX:GLD',   d:'Gold ETF'},
-  {s:'NASDAQ:NVDA',d:'NVIDIA'},
-  {s:'NASDAQ:IBIT',d:'Bitcoin ETF'},
-  {s:'NASDAQ:MSFT',d:'Microsoft'},
-  {s:'NASDAQ:GOOG',d:'Alphabet'},
-  {s:'AMEX:VOO',   d:'S&P 500 ETF'},
-  {s:'NASDAQ:BOTZ',d:'Robotics & AI ETF'},
-  {s:'NASDAQ:SMCI',d:'Super Micro'},
-  {s:'NASDAQ:AAPL',d:'Apple'},
-  {s:'NASDAQ:INTC',d:'Intel'},
-  {s:'NASDAQ:AMD', d:'AMD'},
-];
+function TradingViewWidget() {
+  const [auth,    setAuth]    = useState(null);  // null=loading, false=anon, {username}=ok
+  const [lists,   setLists]   = useState([]);
+  const [listIdx, setListIdx] = useState(0);
+  const [quotes,  setQuotes]  = useState({});
+  const [form,    setForm]    = useState({ u:'', p:'' });
+  const [err,     setErr]     = useState('');
+  const [busy,    setBusy]    = useState(false);
 
-function TradingViewWidget({ onOpenUrl, symbols }) {
-  const chartRef           = useRef(null);
-  const [chartIdx, setChartIdx] = useState(0);
-  const [quotes,   setQuotes]   = useState({});
-
-  // Fetch all quotes (indices + watchlist) from Yahoo Finance
+  // Check stored session on mount
   useEffect(() => {
+    (async () => {
+      const session = await api.store.get('wp-tv-session');
+      if (session) {
+        const r = await api.tv.watchlists();
+        if (r.ok && r.data?.length) {
+          setLists(r.data);
+          setAuth({ username: await api.store.get('wp-tv-user') || '' });
+        } else { setAuth(false); }
+      } else { setAuth(false); }
+    })();
+  }, []);
+
+  // Symbols from selected list
+  const symbols = lists[listIdx]?.symbols || [];
+
+  // Fetch Yahoo Finance quotes for current list
+  useEffect(() => {
+    if (!symbols.length) return;
     let cancelled = false;
-    const syms = symbols || DEFAULT_TV_SYMBOLS;
-    const fetchAll = async () => {
-      const keys = [
-        ...INDEX_SYMBOLS.map(i => i.yf),
-        ...syms.map(({ s }) => s.includes(':') ? s.split(':')[1] : s),
-      ];
+    const fetchQ = async () => {
       const results = {};
-      await Promise.all(keys.map(async ticker => {
+      await Promise.all(symbols.map(async sym => {
+        const ticker = sym.includes(':') ? sym.split(':')[1] : sym;
         try {
-          const res  = await fetch(YF_QUOTE(ticker));
+          const res  = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=5d&interval=1d`);
           const data = await res.json();
-          const meta = data?.chart?.result?.[0]?.meta;
+          const meta   = data?.chart?.result?.[0]?.meta;
+          const closes = data?.chart?.result?.[0]?.indicators?.quote?.[0]?.close?.filter(Boolean) || [];
           if (meta) {
-            const prev = meta.chartPreviousClose ?? meta.regularMarketPreviousClose ?? meta.previousClose;
+            const price    = meta.regularMarketPrice;
+            const prev     = meta.chartPreviousClose ?? meta.regularMarketPreviousClose ?? meta.previousClose;
+            const prevPrev = closes.length >= 2 ? closes[closes.length - 2] : null;
             results[ticker] = {
-              price:  meta.regularMarketPrice,
-              change: meta.regularMarketPrice - prev,
-              pct:   (meta.regularMarketPrice - prev) / prev * 100,
+              price, prev,
+              change:     price - prev,
+              pct:       (price - prev) / prev * 100,
+              prevChange: prevPrev != null ? prev - prevPrev : null,
+              prevPct:    prevPrev != null ? (prev - prevPrev) / prevPrev * 100 : null,
+              name:       meta.longName || meta.shortName || '',
+              date:       new Date((meta.regularMarketTime || Date.now()/1000) * 1000),
             };
           }
         } catch {}
       }));
       if (!cancelled) setQuotes(results);
     };
-    fetchAll();
-    const id = setInterval(fetchAll, 60_000);
+    fetchQ();
+    const id = setInterval(fetchQ, 60_000);
     return () => { cancelled = true; clearInterval(id); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbols]);
+  }, [symbols.join(',')]);
 
-  // Mini chart carousel
-  useEffect(() => {
-    if (!chartRef.current) return;
-    chartRef.current.innerHTML = '';
-    const s = document.createElement('script');
-    s.src = 'https://s3.tradingview.com/external-embedding/embed-widget-mini-symbol-overview.js';
-    s.async = true;
-    s.textContent = JSON.stringify({
-      symbol: INDEX_SYMBOLS[chartIdx].tv,
-      width:'100%', height:140, locale:'en', dateRange:'1D',
-      colorTheme:'dark', isTransparent:true, autosize:false,
-    });
-    chartRef.current.appendChild(s);
-  }, [chartIdx]);
+  const doLogin = async () => {
+    setBusy(true); setErr('');
+    const res = await api.tv.login({ username: form.u, password: form.p });
+    if (res.ok) {
+      const wl = await api.tv.watchlists();
+      setLists(wl.data || []);
+      setAuth({ username: res.username || form.u });
+    } else {
+      setErr(res.error || 'Login failed');
+    }
+    setBusy(false);
+  };
 
-  const navBtn = (onClick, label) => (
-    <button onClick={onClick} style={{background:'rgba(255,255,255,0.07)',border:'none',color:'#c4c4d4',
-      fontSize:15,width:22,height:20,borderRadius:4,cursor:'pointer',lineHeight:1,padding:0}}>{label}</button>
-  );
-  const fmtP = n => n == null ? '…' : n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const doLogout = async () => {
+    await api.tv.logout();
+    setAuth(false); setLists([]); setQuotes({});
+  };
+
+  const fmtP   = n => n == null ? '–' : n.toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 });
+  const fmtChg = n => n == null ? '' : (n >= 0 ? '+' : '') + n.toFixed(2);
   const fmtPct = n => n == null ? '' : (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
-  const fmtChg = n => n == null ? '' : (n >= 0 ? '+' : '') + Math.abs(n).toFixed(2);
-  const clr = n => (n ?? 0) >= 0 ? '#26a69a' : '#ef5350';
-  const syms = symbols || DEFAULT_TV_SYMBOLS;
+  const clr    = n => (n ?? 0) >= 0 ? '#26a69a' : '#ef5350';
+  const fmtDate = d => d ? `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}` : '';
 
-  return { color:'#5cc8a8', title:'Markets', sub:'TradingView',
+  // ── Login screen
+  if (auth === false) return { color:'#5cc8a8', title:'Markets', sub:'TradingView',
+    content:(
+      <div style={{paddingTop:4}}>
+        <div style={{fontSize:11,color:'#888',marginBottom:10}}>Sign in to access your watchlists</div>
+        <input placeholder="Username or email" value={form.u}
+          onChange={e=>setForm(f=>({...f,u:e.target.value}))}
+          style={{...C.inp,width:'100%',marginBottom:8,display:'block'}}/>
+        <input placeholder="Password" type="password" value={form.p}
+          onChange={e=>setForm(f=>({...f,p:e.target.value}))}
+          onKeyDown={e=>e.key==='Enter'&&doLogin()}
+          style={{...C.inp,width:'100%',marginBottom:8,display:'block'}}/>
+        {err&&<div style={{fontSize:10,color:'#ef5350',marginBottom:8}}>{err}</div>}
+        <button onClick={doLogin} disabled={busy} style={{...C.btn,width:'100%',opacity:busy?0.6:1}}>
+          {busy?'Signing in…':'Sign in'}
+        </button>
+      </div>
+    )
+  };
+
+  if (auth === null) return { color:'#5cc8a8', title:'Markets', sub:'TradingView',
+    content:<div style={{color:'#555',fontSize:11,paddingTop:8}}>Loading…</div>
+  };
+
+  // ── Watchlist tabs (if multiple lists)
+  const tabs = lists.length > 1 && (
+    <div style={{display:'flex',gap:4,marginBottom:8,overflowX:'auto'}}>
+      {lists.map((l,i) => (
+        <button key={l.id||i} onClick={()=>setListIdx(i)}
+          style={{background:i===listIdx?'rgba(255,255,255,0.1)':'none',border:'none',
+            borderRadius:5,color:i===listIdx?'#e4e4f4':'#666',
+            fontSize:10,padding:'3px 8px',cursor:'pointer',whiteSpace:'nowrap',flexShrink:0}}>
+          {l.name}
+        </button>
+      ))}
+    </div>
+  );
+
+  return { color:'#5cc8a8', title:'Markets', sub: auth.username || 'TradingView',
     content:(
       <div>
-        {/* Mini chart carousel */}
-        <div ref={chartRef} style={{width:'100%'}}/>
-        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'2px 4px 8px'}}>
-          {navBtn(()=>setChartIdx(i=>(i-1+INDEX_SYMBOLS.length)%INDEX_SYMBOLS.length),'‹')}
-          <span style={{fontSize:10,color:'#888'}}>{INDEX_SYMBOLS[chartIdx].label}</span>
-          {navBtn(()=>setChartIdx(i=>(i+1)%INDEX_SYMBOLS.length),'›')}
-        </div>
+        {tabs}
+        {symbols.map(sym => {
+          const ticker = sym.includes(':') ? sym.split(':')[1] : sym;
+          const q = quotes[ticker];
+          return (
+            <div key={sym} style={{display:'flex',alignItems:'center',gap:10,
+              padding:'9px 2px',borderBottom:'1px solid rgba(255,255,255,0.05)',cursor:'pointer'}}
+              onClick={()=>api.browser.open(`https://www.tradingview.com/chart/?symbol=${sym}`)}>
 
-        {/* Index summary cards */}
-        <div style={{display:'flex',gap:4,paddingBottom:10}}>
-          {INDEX_SYMBOLS.map(idx => {
-            const q = quotes[idx.yf];
-            return (
-              <div key={idx.yf} onClick={()=>onOpenUrl?.(`https://www.tradingview.com/chart/?symbol=${idx.tv}`)}
-                style={{flex:1,background:'rgba(255,255,255,0.05)',borderRadius:7,padding:'6px 7px',cursor:'pointer'}}>
-                <div style={{fontSize:9,color:'#666',marginBottom:2}}>{idx.label}</div>
-                <div style={{fontSize:11,fontWeight:600,color:'#e4e4f4',lineHeight:1.2}}>{fmtP(q?.price)}</div>
-                <div style={{fontSize:9,color:clr(q?.change),marginTop:1}}>{fmtPct(q?.pct)}</div>
-              </div>
-            );
-          })}
-        </div>
+              <TickerAvatar ticker={ticker}/>
 
-        {/* Watchlist */}
-        <div style={{borderTop:'1px solid rgba(255,255,255,0.07)'}}>
-          {syms.map(({ s, d }) => {
-            const ticker = s.includes(':') ? s.split(':')[1] : s;
-            const q = quotes[ticker];
-            const c = clr(q?.change);
-            return (
-              <div key={s} onClick={()=>onOpenUrl?.(`https://www.tradingview.com/chart/?symbol=${s}`)}
-                style={{display:'flex',justifyContent:'space-between',alignItems:'center',
-                  padding:'7px 2px',borderBottom:'1px solid rgba(255,255,255,0.05)',cursor:'pointer'}}>
-                <div>
-                  <div style={{fontSize:12,fontWeight:600,color:'#e4e4f4'}}>{ticker}</div>
-                  <div style={{fontSize:10,color:'#555'}}>{d}</div>
-                </div>
-                <div style={{textAlign:'right'}}>
-                  <div style={{fontSize:12,fontWeight:500,color:'#e4e4f4'}}>{fmtP(q?.price)}</div>
-                  <div style={{fontSize:10,color:c}}>{fmtPct(q?.pct)}&nbsp;&nbsp;{fmtChg(q?.change)}</div>
+              <div style={{flex:1,minWidth:0,overflow:'hidden'}}>
+                <div style={{fontSize:14,fontWeight:700,color:'#eeeef8',lineHeight:1.3}}>{ticker}</div>
+                <div style={{fontSize:10,color:'#555',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
+                  {q?.name||sym} · {fmtDate(q?.date)}
                 </div>
               </div>
-            );
-          })}
-        </div>
+
+              <div style={{textAlign:'right',minWidth:82,flexShrink:0}}>
+                <div style={{fontSize:11,color:'#888'}}>☀ {fmtP(q?.prev)}</div>
+                <div style={{fontSize:10,color:clr(q?.prevChange)}}>
+                  {fmtChg(q?.prevChange)} {fmtPct(q?.prevPct)}
+                </div>
+              </div>
+
+              <div style={{textAlign:'right',minWidth:66,flexShrink:0}}>
+                <div style={{fontSize:14,fontWeight:600,color:'#eeeef8'}}>{fmtP(q?.price)}</div>
+                <div style={{fontSize:10,color:clr(q?.change)}}>
+                  {fmtChg(q?.change)} {fmtPct(q?.pct)}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {!symbols.length&&(
+          <div style={{color:'#555',fontSize:11,padding:'12px 0',textAlign:'center'}}>
+            {lists.length?'Empty watchlist':'No watchlists found'}
+          </div>
+        )}
+        <button onClick={doLogout}
+          style={{marginTop:8,background:'none',border:'none',color:'#444',fontSize:10,cursor:'pointer',padding:0}}>
+          Sign out ({auth.username})
+        </button>
       </div>
     )
   };
@@ -1085,7 +1137,7 @@ function TodoWidget() {
 function WidgetCard({ id, categories, apiKeys, onSaveKey, colorIdx, onUnreadChange, onOpenUrl, location, tvSymbols, expanded, onToggle, isDragging, onDragStart, onDragEnd }) {
   const newsData    = id.startsWith("cat:") ? NewsWidget({ category: categories.find(c=>c.label===id.slice(4)), colorIdx, onUnreadChange, onOpenUrl, expanded, onToggle }) : null;
   const weatherData = id==="weather" ? WeatherWidget({ location, expanded, onToggle }) : null;
-  const stocksData  = id==="stocks"  ? TradingViewWidget({ onOpenUrl, symbols: tvSymbols, expanded, onToggle }) : null;
+  const stocksData  = id==="stocks"  ? TradingViewWidget({ expanded, onToggle }) : null;
   const trafficData = id==="traffic" ? GoogleTrafficWidget({ location, apiKey: apiKeys?.traffic || '', expanded, onToggle }) : null;
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const clockData   = id==="clock"   ? ClockWidget() : null;
@@ -1759,9 +1811,9 @@ export default function App() {
                     borderRadius:6,color:pinned?"var(--accent)":"#aaa",fontSize:14,cursor:"pointer",padding:"3px 6px",lineHeight:1,transition:"all 0.15s"}}>
                   📌
                 </button>
-                {loaded&&<button onClick={()=>setShowMgr(true)} title="Manage widgets"
+                {loaded&&<button onClick={()=>{setShowMgr(true);api.modal.open();}} title="Manage widgets"
                   style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#dcdcec",fontSize:15,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>⚙</button>}
-                <button onClick={()=>setShowSettings(true)} title="Settings"
+                <button onClick={()=>{setShowSettings(true);api.modal.open();}} title="Settings"
                   style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#dcdcec",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>≡</button>
                 {loaded&&<button onClick={()=>setRefreshKey(k=>k+1)} title="Refresh data"
                   style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#dcdcec",fontSize:13,cursor:"pointer",padding:"3px 6px",lineHeight:1}}>↺</button>}
@@ -1820,7 +1872,7 @@ export default function App() {
             {loaded&&(
               <div style={{padding:"8px 16px",borderTop:"1px solid rgba(255,255,255,0.04)",display:"flex",justifyContent:"space-between",alignItems:"center",flexShrink:0}}>
                 <span style={{fontSize:9,color:"#c4c4d4",fontFamily:"DM Mono,monospace"}}>{categories.length} categories · OPML</span>
-                <button onClick={()=>setShowMgr(true)} style={{background:"none",border:"1px solid rgba(255,255,255,0.2)",color:"#e4e4f4",fontSize:10,padding:"3px 8px",borderRadius:5,cursor:"pointer"}}>+ Add widget</button>
+                <button onClick={()=>{setShowMgr(true);api.modal.open();}} style={{background:"none",border:"1px solid rgba(255,255,255,0.2)",color:"#e4e4f4",fontSize:10,padding:"3px 8px",borderRadius:5,cursor:"pointer"}}>+ Add widget</button>
               </div>
             )}
           </div>
@@ -1831,8 +1883,8 @@ export default function App() {
 
       </div>
 
-      {showMgr&&loaded&&<CategoryManager categories={categories} activeIds={activeIds} setActiveIds={setActiveIds} onClose={()=>setShowMgr(false)} onReset={reset}/>}
-      {showSettings&&<SettingsModal onClose={()=>setShowSettings(false)}
+      {showMgr&&loaded&&<CategoryManager categories={categories} activeIds={activeIds} setActiveIds={setActiveIds} onClose={()=>{setShowMgr(false);api.modal.close();}} onReset={reset}/>}
+      {showSettings&&<SettingsModal onClose={()=>{setShowSettings(false);api.modal.close();}}
         opacity={opacity} onOpacityChange={setOpacity}
         cardOpacity={cardOpacity} onCardOpacityChange={v=>{ setCardOpacity(v); document.documentElement.style.setProperty('--card-bg',`rgba(24,24,28,${v})`); }}
         pinnedOpacity={pinnedOpacity} onPinnedOpacityChange={setPinnedOpacity}
