@@ -430,44 +430,47 @@ function WeatherWidget({ location = DEFAULT_LOC }) {
 }
 
 // ── TradingView watchlist widget ──────────────────────────────────────────────
-function TickerAvatar({ ticker, size=42 }) {
+function TickerAvatar({ ticker, size=52 }) {
   const COLORS = ['#26a69a','#ef5350','#42a5f5','#ffa726','#ab47bc','#ff7043','#5cc8a8','#78909c'];
   let h = 0; for (const c of ticker) h = (h*31 + c.charCodeAt(0)) & 0x7fffffff;
+  const [imgOk, setImgOk] = useState(true);
   return (
-    <div style={{width:size,height:size,borderRadius:'50%',background:COLORS[h%COLORS.length],
+    <div style={{width:size,height:size,borderRadius:'50%',flexShrink:0,overflow:'hidden',
+      background:imgOk?'#16161c':COLORS[h%COLORS.length],
       display:'flex',alignItems:'center',justifyContent:'center',
-      fontSize:Math.round(size*0.38),fontWeight:700,color:'#fff',flexShrink:0}}>
-      {ticker[0]}
+      fontSize:Math.round(size*0.38),fontWeight:700,color:'#fff'}}>
+      {imgOk
+        ? <img src={`https://assets.parqet.com/logos/symbol/${ticker}?format=png`}
+            alt="" style={{width:'100%',height:'100%',objectFit:'cover'}}
+            onError={()=>setImgOk(false)}/>
+        : ticker[0]
+      }
     </div>
   );
 }
 
 function TradingViewWidget() {
-  const [auth,    setAuth]    = useState(null);  // null=loading, false=anon, {username}=ok
-  const [lists,   setLists]   = useState([]);
-  const [listIdx, setListIdx] = useState(0);
-  const [quotes,  setQuotes]  = useState({});
-  const [err,     setErr]     = useState('');
-  const [busy,    setBusy]    = useState(false);
+  const [auth,      setAuth]      = useState(null); // null=loading, false=anon, {username}=ok
+  const [lists,     setLists]     = useState([]);
+  const [listIdx,   setListIdx]   = useState(0);
+  const [quotes,    setQuotes]    = useState({});
+  const [lastFetch, setLastFetch] = useState(null);
+  const [err,       setErr]       = useState('');
+  const [busy,      setBusy]      = useState(false);
 
-  // Check stored session on mount
   useEffect(() => {
     (async () => {
       const session = await api.store.get('wp-tv-session');
       if (session) {
         const r = await api.tv.watchlists();
-        if (r.ok && r.data?.length) {
-          setLists(r.data);
-          setAuth({ username: await api.store.get('wp-tv-user') || '' });
-        } else { setAuth(false); }
+        if (r.ok && r.data?.length) { setLists(r.data); setAuth({ username: await api.store.get('wp-tv-user') || '' }); }
+        else { setAuth(false); }
       } else { setAuth(false); }
     })();
   }, []);
 
-  // Symbols from selected list — each is {s, d}
   const symbols = lists[listIdx]?.symbols || [];
 
-  // Fetch Yahoo Finance quotes for current list
   useEffect(() => {
     if (!symbols.length) return;
     let cancelled = false;
@@ -481,22 +484,21 @@ function TradingViewWidget() {
           const meta   = data?.chart?.result?.[0]?.meta;
           const closes = data?.chart?.result?.[0]?.indicators?.quote?.[0]?.close?.filter(Boolean) || [];
           if (meta) {
-            const price    = meta.regularMarketPrice;
-            const prev     = meta.chartPreviousClose ?? meta.regularMarketPreviousClose ?? meta.previousClose;
-            const prevPrev = closes.length >= 2 ? closes[closes.length - 2] : null;
+            const price = meta.regularMarketPrice;
+            const prev  = meta.chartPreviousClose ?? meta.regularMarketPreviousClose ?? meta.previousClose;
+            const pp    = closes.length >= 2 ? closes[closes.length - 2] : null;
             results[ticker] = {
               price, prev,
-              change:     price - prev,
-              pct:       (price - prev) / prev * 100,
-              prevChange: prevPrev != null ? prev - prevPrev : null,
-              prevPct:    prevPrev != null ? (prev - prevPrev) / prevPrev * 100 : null,
-              name:       meta.longName || meta.shortName || '',
-              date:       new Date((meta.regularMarketTime || Date.now()/1000) * 1000),
+              change: price - prev, pct: (price - prev) / prev * 100,
+              prevChange: pp != null ? prev - pp : null,
+              prevPct:    pp != null ? (prev - pp) / pp * 100 : null,
+              name: meta.longName || meta.shortName || '',
+              date: new Date((meta.regularMarketTime || Date.now()/1000) * 1000),
             };
           }
         } catch {}
       }));
-      if (!cancelled) setQuotes(results);
+      if (!cancelled) { setQuotes(results); setLastFetch(Date.now()); }
     };
     fetchQ();
     const id = setInterval(fetchQ, 60_000);
@@ -511,38 +513,26 @@ function TradingViewWidget() {
     api.modal?.close();
     if (res.ok) {
       const wl = await api.tv.watchlists();
-      if (wl.ok && wl.data?.length) {
-        setLists(wl.data);
-        setAuth({ username: res.username || '' });
-      } else {
-        setAuth({ username: res.username || '' });
-        setErr('Signed in — no watchlists found');
-      }
-    } else {
-      setErr(res.error || 'Login cancelled');
-    }
+      if (wl.ok && wl.data?.length) { setLists(wl.data); setAuth({ username: res.username || '' }); }
+      else { setAuth({ username: res.username || '' }); setErr('Signed in — no watchlists found'); }
+    } else { setErr(res.error || 'Login cancelled'); }
     setBusy(false);
   };
 
-  const doLogout = async () => {
-    await api.tv.logout();
-    setAuth(false); setLists([]); setQuotes({});
-  };
+  const doLogout = async () => { await api.tv.logout(); setAuth(false); setLists([]); setQuotes({}); setLastFetch(null); };
 
   const fmtP   = n => n == null ? '–' : n.toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 });
   const fmtChg = n => n == null ? '' : (n >= 0 ? '+' : '') + n.toFixed(2);
   const fmtPct = n => n == null ? '' : (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
-  const clr    = n => (n ?? 0) >= 0 ? '#26a69a' : '#ef5350';
+  const clr    = n => (n ?? 0) >= 0 ? '#4caf73' : '#ef5350';
   const fmtDate = d => d ? `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}` : '';
 
-  // ── Login screen
   if (auth === false) return { color:'#5cc8a8', title:'Markets', sub:'TradingView',
     content:(
       <div style={{paddingTop:4}}>
-        <div style={{fontSize:11,color:'#888',marginBottom:12}}>Sign in to load your TradingView watchlists</div>
+        <div style={{fontSize:11,color:'#666',marginBottom:12}}>Sign in to load your TradingView watchlists</div>
         {err&&<div style={{fontSize:10,color:'#ef5350',marginBottom:8}}>{err}</div>}
-        <button onClick={doBrowserLogin} disabled={busy}
-          style={{...C.btn,width:'100%',opacity:busy?0.6:1}}>
+        <button onClick={doBrowserLogin} disabled={busy} style={{...C.btn,width:'100%',opacity:busy?0.6:1}}>
           {busy?'Opening browser…':'Sign in to TradingView'}
         </button>
       </div>
@@ -550,16 +540,20 @@ function TradingViewWidget() {
   };
 
   if (auth === null) return { color:'#5cc8a8', title:'Markets', sub:'TradingView',
-    content:<div style={{color:'#555',fontSize:11,paddingTop:8}}>Loading…</div>
+    content:<div style={{color:'#444',fontSize:11,paddingTop:8}}>Loading…</div>
   };
 
-  // ── Watchlist tabs (if multiple lists)
+  const listName  = lists[listIdx]?.name || 'Markets';
+  const updatedAt = lastFetch
+    ? new Date(lastFetch).toLocaleTimeString('en-CA',{hour:'2-digit',minute:'2-digit',hour12:false})
+    : '';
+
   const tabs = lists.length > 1 && (
     <div style={{display:'flex',gap:4,marginBottom:8,overflowX:'auto'}}>
       {lists.map((l,i) => (
         <button key={l.id||i} onClick={()=>setListIdx(i)}
           style={{background:i===listIdx?'rgba(255,255,255,0.1)':'none',border:'none',
-            borderRadius:5,color:i===listIdx?'#e4e4f4':'#666',
+            borderRadius:5,color:i===listIdx?'#e4e4f4':'#555',
             fontSize:10,padding:'3px 8px',cursor:'pointer',whiteSpace:'nowrap',flexShrink:0}}>
           {l.name}
         </button>
@@ -567,46 +561,50 @@ function TradingViewWidget() {
     </div>
   );
 
-  return { color:'#5cc8a8', title:'Markets', sub: auth.username || 'TradingView',
+  return { color:'#5cc8a8', title: listName, sub: updatedAt ? `Last updated: ${updatedAt}` : 'TradingView',
+    lastUpdated: lastFetch || undefined,
     content:(
       <div>
         {tabs}
-        <div style={{maxHeight:400,overflowY:'auto',paddingRight:2}}>
+        <div style={{maxHeight:440,overflowY:'auto',marginRight:-4,paddingRight:4}}>
           {symbols.map(({ s, d }) => {
             const ticker = s.includes(':') ? s.split(':')[1] : s;
             const q = quotes[ticker];
             return (
-              <div key={s} style={{display:'flex',alignItems:'center',gap:10,
-                padding:'7px 2px',borderBottom:'1px solid rgba(255,255,255,0.05)',cursor:'pointer'}}
+              <div key={s} style={{display:'flex',alignItems:'center',gap:12,
+                padding:'10px 0',borderBottom:'1px solid rgba(255,255,255,0.05)',cursor:'pointer'}}
                 onClick={()=>api.browser.open(`https://www.tradingview.com/chart/?symbol=${s}`)}>
 
-                <TickerAvatar ticker={ticker} size={34}/>
+                <TickerAvatar ticker={ticker} size={52}/>
 
-                <div style={{flex:1,minWidth:0,overflow:'hidden'}}>
-                  <div style={{fontSize:13,fontWeight:700,color:'#eeeef8',lineHeight:1.3}}>{ticker}</div>
-                  <div style={{fontSize:10,color:'#555',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>
-                    {q?.name || d}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:17,fontWeight:700,color:'#eeeef8',lineHeight:1.2}}>{ticker}</div>
+                  <div style={{fontSize:10,color:'#555',display:'flex',gap:4,marginTop:2,alignItems:'center'}}>
+                    <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:85}}>{q?.name||d}</span>
+                    {q?.date&&<span style={{flexShrink:0}}>· {fmtDate(q.date)}</span>}
                   </div>
                 </div>
 
-                <div style={{textAlign:'right',minWidth:72,flexShrink:0}}>
-                  <div style={{fontSize:11,color:'#888'}}>{fmtP(q?.prev)}</div>
-                  <div style={{fontSize:10,color:clr(q?.prevChange)}}>
-                    {fmtPct(q?.prevPct)}
+                <div style={{textAlign:'right',flexShrink:0,minWidth:88}}>
+                  <div style={{fontSize:12,color:'#888',display:'flex',gap:3,justifyContent:'flex-end',alignItems:'center'}}>
+                    <span>☀️</span><span>{fmtP(q?.prev)}</span>
+                  </div>
+                  <div style={{fontSize:10,color:clr(q?.prevChange),marginTop:2}}>
+                    {q?.prevChange!=null?`${fmtChg(q.prevChange)} ${fmtPct(q.prevPct)}`:''}
                   </div>
                 </div>
 
-                <div style={{textAlign:'right',minWidth:62,flexShrink:0}}>
-                  <div style={{fontSize:13,fontWeight:600,color:'#eeeef8'}}>{fmtP(q?.price)}</div>
-                  <div style={{fontSize:10,color:clr(q?.change)}}>
-                    {fmtPct(q?.pct)}
+                <div style={{textAlign:'right',minWidth:74,flexShrink:0}}>
+                  <div style={{fontSize:15,fontWeight:600,color:'#eeeef8'}}>{fmtP(q?.price)}</div>
+                  <div style={{fontSize:10,color:clr(q?.change),marginTop:2}}>
+                    {q?.change!=null?`${fmtChg(q.change)} ${fmtPct(q.pct)}`:''}
                   </div>
                 </div>
               </div>
             );
           })}
           {!symbols.length&&(
-            <div style={{color:'#555',fontSize:11,padding:'12px 0',textAlign:'center'}}>
+            <div style={{color:'#444',fontSize:11,padding:'12px 0',textAlign:'center'}}>
               {lists.length?'Empty watchlist':'No watchlists found'}
             </div>
           )}
@@ -1740,7 +1738,7 @@ export default function App() {
     <div style={{display:"flex",height:"100vh",fontFamily:"'DM Sans',sans-serif",background:"transparent",overflow:"hidden","--accent":accentColor}}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=DM+Mono:wght@300;400&display=swap');
-        html,body{background:rgba(255,255,255,0.08);margin:0;padding:0}
+        html,body{background:transparent;margin:0;padding:0}
         *{box-sizing:border-box;margin:0;padding:0}
         ::-webkit-scrollbar{width:3px}
         ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.18);border-radius:2px}

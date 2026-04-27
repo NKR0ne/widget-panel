@@ -748,9 +748,11 @@ function tvRequest(method, url, headers, body) {
 }
 
 // Opens a real BrowserWindow so the user can log in through TradingView's UI.
-// Uses Chrome DevTools Protocol to intercept TV's own API responses and extract
-// watchlist data directly — avoids needing to know the REST endpoint URLs.
+// Uses Chrome DevTools Protocol to intercept TV's own API responses AFTER login,
+// and also tries extracting from localStorage once the main page loads.
 ipcMain.handle('tv-browser-login', async () => {
+  setStore('wp-tv-raw-lists', '')  // clear stale data from previous logins
+
   return new Promise(resolve => {
     const authWin = new BrowserWindow({
       width: 1000, height: 720,
@@ -759,10 +761,11 @@ ipcMain.handle('tv-browser-login', async () => {
       webPreferences: { contextIsolation: true, nodeIntegration: false },
     })
 
-    let resolved  = false
-    const pendReqs = {}  // requestId → url
+    let resolved      = false
+    let authenticated = false  // only capture data after session cookie is confirmed
+    const pendReqs    = {}
 
-    // ── CDP: intercept all network responses in the auth window ───────────────
+    // ── CDP: intercept network responses (only after login) ───────────────────
     const dbg = authWin.webContents.debugger
     try {
       dbg.attach('1.3')
@@ -775,21 +778,17 @@ ipcMain.handle('tv-browser-login', async () => {
         if (method === 'Network.loadingFinished') {
           const url = pendReqs[params.requestId]
           delete pendReqs[params.requestId]
-          if (!url?.includes('tradingview.com')) return
+          if (!url?.includes('tradingview.com') || !authenticated) return
           try {
             const resp = await dbg.sendCommand('Network.getResponseBody', { requestId: params.requestId })
             const text = resp.base64Encoded
               ? Buffer.from(resp.body, 'base64').toString('utf8')
               : (resp.body || '')
             if (!text) return
-            // Log all TV API/data calls for diagnostics
-            if (/\/(api|pine|user|data|watchlist)/i.test(url)) {
+            if (/\/(api|pine|user|data|watchlist)/i.test(url))
               log('[tv-cdp]', url.split('?')[0], 'len=', text.length, text.slice(0, 300))
-            }
             if (!text.startsWith('{') && !text.startsWith('[')) return
             let json; try { json = JSON.parse(text) } catch { return }
-
-            // Hunt for watchlist-shaped data anywhere in the response
             const candidates = [json, json?.lists, json?.data, json?.watchlists,
                                  json?.activeLists, json?.payload, json?.results]
             for (const c of candidates) {
@@ -824,14 +823,38 @@ ipcMain.handle('tv-browser-login', async () => {
       resolve({ ok: true, username })
     }
 
-    // Detect post-login redirect to main TV page; wait 2 s for API calls to complete
+    // Post-login: set authenticated flag, extract from localStorage, then close
     authWin.webContents.on('did-navigate', async (_e, url) => {
-      if (/^https:\/\/www\.tradingview\.com\/(chart\/)?(\?|$)/.test(url)) {
-        const cookies = await session.defaultSession.cookies.get({ domain: '.tradingview.com' })
-        if (cookies.find(c => c.name === 'sessionid')) {
-          setTimeout(() => { if (!authWin.isDestroyed()) authWin.close() }, 2000)
-        }
-      }
+      if (!/^https:\/\/www\.tradingview\.com\/(chart\/)?(\?|$)/.test(url)) return
+      const cookies = await session.defaultSession.cookies.get({ domain: '.tradingview.com' })
+      if (!cookies.find(c => c.name === 'sessionid')) return
+      authenticated = true  // CDP will now capture API responses
+
+      // Wait for page JS to initialize, then extract watchlists from localStorage
+      setTimeout(async () => {
+        try {
+          const raw = await authWin.webContents.executeJavaScript(`
+            (() => {
+              for (let i = 0; i < localStorage.length; i++) {
+                const key = localStorage.key(i);
+                try {
+                  const v = JSON.parse(localStorage.getItem(key));
+                  if (Array.isArray(v) && v.length && v[0]?.symbols !== undefined)
+                    return JSON.stringify(v);
+                  if (v?.lists && Array.isArray(v.lists) && v.lists[0]?.symbols !== undefined)
+                    return JSON.stringify(v.lists);
+                } catch {}
+              }
+              return null;
+            })()
+          `)
+          if (raw) {
+            log('[tv-js] extracted watchlists from localStorage, len=', raw.length)
+            setStore('wp-tv-raw-lists', raw)
+          }
+        } catch (e) { log('[tv-js] failed:', e.message) }
+        setTimeout(() => { if (!authWin.isDestroyed()) authWin.close() }, 500)
+      }, 3000)
     })
 
     authWin.on('closed', finish)
