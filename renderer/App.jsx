@@ -1199,8 +1199,8 @@ function OPMLDrop({ onLoaded }) {
 // ── Category manager ─────────────────────────────────────────────────────────
 function CategoryManager({ categories, activeIds, setActiveIds, onClose, onReset }) {
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}>
-      <div style={{background:"#18181c",border:"1px solid rgba(255,255,255,0.08)",borderRadius:16,padding:20,width:300,maxHeight:"82vh",overflowY:"auto"}}>
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:"#18181c",border:"1px solid rgba(255,255,255,0.08)",borderRadius:16,padding:20,width:300,maxHeight:"82vh",overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <span style={{fontSize:14,fontWeight:500,color:"#e0e0e0"}}>Manage widgets</span>
           <button onClick={onClose} style={{background:"none",border:"none",color:"#d0d0e0",fontSize:13,cursor:"pointer",padding:4}}>✕</button>
@@ -1291,8 +1291,8 @@ function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardO
   }
 
   return (
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}>
-      <div style={{background:"#18181c",border:"1px solid rgba(255,255,255,0.08)",borderRadius:16,padding:20,width:280}}>
+    <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:"#18181c",border:"1px solid rgba(255,255,255,0.08)",borderRadius:16,padding:20,width:280,maxHeight:"90vh",overflowY:"auto"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
           <span style={{fontSize:14,fontWeight:500,color:"#e0e0e0"}}>Settings</span>
           <button onClick={onClose} style={{background:"none",border:"none",color:"#d0d0e0",fontSize:13,cursor:"pointer",padding:4}}>✕</button>
@@ -1473,6 +1473,9 @@ export default function App() {
     panelApi.onShow(() => setVisible(true));
     panelApi.onHide(() => {
       setVisible(false);
+      setShowSettings(false);
+      setShowMgr(false);
+      api.modal?.close();
       setTimeout(() => panelApi.hideDone(), 270);
     });
     panelApi.ready();

@@ -163,6 +163,7 @@ function hidePanel(opts = {}) {
   // Cancel the post-show notifyHelperState timer — if hide completes before it fires
   // (hide=260ms < timer=350ms), the timer would send stale visible:true → g_panelOn stuck.
   if (_showStateTimeout) { clearTimeout(_showStateTimeout); _showStateTimeout = null }
+  modalOpen = false
   isHiding = true
   if (browserEmbedded) {
     sendToBrave({ type: 'close' })
@@ -291,7 +292,7 @@ function createWindow() {
         if (win.isFocused()) { log('[blur/delay] focus returned — skip'); return }
         if (modalOpen)                           { log('[blur/delay] modal open — skip'); return }
         if (Date.now() - lastModalClose < 400)   { log('[blur/delay] modal just closed — skip'); return }
-        log('[blur/delay] → hidePanel()')
+        log('[blur/delay] → hidePanel() modalOpen=', modalOpen, 'lastModalClose=', lastModalClose)
         hidePanel()
       }, 150)
     }
@@ -378,8 +379,8 @@ nativeTheme.on('updated', () => {
   if (win) win.webContents.send('system-color-updated', getThemeWindowColor())
 })
 
-ipcMain.on('modal-open',  () => { modalOpen = true })
-ipcMain.on('modal-close', () => { modalOpen = false; lastModalClose = Date.now() })
+ipcMain.on('modal-open',  () => { modalOpen = true;  log('[modal-open] modalOpen=true') })
+ipcMain.on('modal-close', () => { modalOpen = false; lastModalClose = Date.now(); log('[modal-close] grace period started') })
 
 ipcMain.handle('store-get',    (_e, key)       => getStore(key))
 ipcMain.handle('store-set',    (_e, key, value) => { log('[store-set]', key, '=', JSON.stringify(value)); setStore(key, value) })
