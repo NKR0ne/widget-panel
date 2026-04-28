@@ -211,7 +211,11 @@ function notifyHelperHwnds() {
   log('[notifyHelperHwnds] panel=', panelHwnd, 'isPinned=', isPinned)
   broadcastToHelper({ type: 'hwnd', panel: panelHwnd, brave: 0 })
   sendToBrave({ type: 'round-corners', hwnd: panelHwnd })
-  sendToBrave({ type: isPinned ? 'z-bottom' : 'z-top', hwnd: panelHwnd })
+  // When the browser is embedded the shell is HWND_TOPMOST above the panel —
+  // skip z-order adjustment so Brave content remains visible above Electron.
+  if (!browserEmbedded) {
+    sendToBrave({ type: isPinned ? 'z-bottom' : 'z-top', hwnd: panelHwnd })
+  }
 }
 
 // ── Spawn taskbar-btn.exe ─────────────────────────────────────────────────────
@@ -454,7 +458,7 @@ let braveServer    = null
 let braveSocket    = null
 let currentUrl     = ''
 let navLoadTimer   = null   // auto-clears the loading spinner if brave-host never acks
-const TOOLBAR_H = 41
+const TOOLBAR_H = 42
 
 // Clear the brave-loading spinner after a timeout in case brave-host doesn't
 // send 'ready' after navigation.
@@ -493,9 +497,9 @@ function createBraveServer() {
             if (navLoadTimer) { clearTimeout(navLoadTimer); navLoadTimer = null }
             win.webContents.send('brave-loading', false)
             win.webContents.send('brave-url', currentUrl)
-            // brave-host's plain Win32 shell owns keyboard focus — no Chromium competing.
-            // Ensure win (toolbar) remains Z-top above the shell window.
-            win.moveTop()
+            // Shell is HWND_TOPMOST and positioned below the toolbar — do not call
+            // win.moveTop() here as it would promote Electron above the shell and
+            // cover Brave content.
           }
         } catch {}
       })
@@ -524,10 +528,12 @@ function openBraveInPanel(url) {
   if (!browserEmbedded) panelOnlyWidth = panelW
 
   // Panel window is inset PANEL_GAP from the left; Brave starts right after the panel at screen x=PANEL_GAP+panelW
+  // Window also leaves PANEL_GAP on the right side, matching the panel's left gap to the screen
   const panelScreenRight = PANEL_GAP + panelW   // screen x where panel ends (physical = *sf)
   const physPanelRight  = Math.round(panelScreenRight * sf)
   const physScreenRight = Math.round(bounds.width * sf)
-  const braveW = Math.floor((physScreenRight - physPanelRight - 2) / sf)
+  const physRightGap    = Math.round(PANEL_GAP * sf)
+  const braveW = Math.floor((physScreenRight - physPanelRight - physRightGap) / sf)
   const totalW = panelW + braveW
   const braveH = workArea.height - PANEL_GAP * 2
 
@@ -537,17 +543,17 @@ function openBraveInPanel(url) {
   win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: totalW, height: braveH })
   browserEmbedded = true
 
-  win.setBackgroundMaterial('none')   // disable acrylic so Brave shows through the transparent area
   win.webContents.send('browser-pane-show', { url, braveX: panelW })
   win.webContents.send('brave-loading', true)
   win.webContents.send('brave-url', url)
 
-  const CARD_M = 8
+  // BRAVE_M: margin around the shell, so the panel-color backdrop is visible as a frame
+  const BRAVE_M = 8
   sendToBrave({ type: 'open', hwnd: 0,
-    x: Math.round((panelScreenRight + CARD_M) * sf),
-    y: Math.round((workArea.y + PANEL_GAP + TOOLBAR_H + CARD_M) * sf),
-    w: Math.round((braveW - CARD_M * 2) * sf),
-    h: Math.round((braveH - TOOLBAR_H - CARD_M * 2) * sf),
+    x: Math.round((panelScreenRight + BRAVE_M) * sf),
+    y: Math.round((workArea.y + PANEL_GAP + TOOLBAR_H) * sf),
+    w: Math.round((braveW - BRAVE_M * 2) * sf),
+    h: Math.round((braveH - TOOLBAR_H - BRAVE_M) * sf),
     url })
   notifyHelperHwnds()
 }
@@ -556,7 +562,6 @@ function closeBraveInPanel() {
   sendToBrave({ type: 'close' })
   browserEmbedded = false
   currentUrl = ''
-  win.setBackgroundMaterial('acrylic')  // re-enable frosted glass
   win.webContents.send('browser-pane-hide')
   const { workArea } = screen.getPrimaryDisplay()
   if (panelOnlyWidth > 0) win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: panelOnlyWidth, height: workArea.height - PANEL_GAP * 2 })

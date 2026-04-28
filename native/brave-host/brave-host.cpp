@@ -278,7 +278,10 @@ static void RegisterShellClass() {
     wc.lpfnWndProc   = ShellWndProc;
     wc.hInstance     = GetModuleHandleW(NULL);
     wc.lpszClassName = L"WP_BraveShell";
-    wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    // Match the panel background color (rgba 55,55,70) so any sub-pixel gap
+    // around Brave's content blends with the panel-color backdrop rather than
+    // showing a black border.
+    wc.hbrBackground = CreateSolidBrush(RGB(55, 55, 70));
     RegisterClassW(&wc);
 }
 
@@ -387,19 +390,25 @@ static bool ReparentBrave(const std::vector<HWND>& snapBefore) {
     HWND prev = SetParent(g_brave, g_shell);
     Log("[reparent] SetParent prev=" + std::to_string((size_t)prev) + " err=" + std::to_string(GetLastError()));
 
-    BOOL ok2 = SetWindowPos(g_brave, HWND_TOP, 0, 0, g_w, g_h,
+    // Position Brave so its Chromium-rendered chrome (tab/title bar) is clipped
+    // off the top by the shell's bounds (WS_CLIPCHILDREN). The user only sees
+    // the web content area below the chrome.
+    // Chrome height in app-mode is ~34 logical px; scale by DPI to physical px.
+    UINT dpi = GetDpiForWindow(g_shell);
+    int chromeH = MulDiv(34, dpi, 96);
+    Log("[reparent] dpi=" + std::to_string(dpi) + " chromeH=" + std::to_string(chromeH));
+    BOOL ok2 = SetWindowPos(g_brave, HWND_TOP, 0, -chromeH, g_w, g_h + chromeH,
                             SWP_SHOWWINDOW | SWP_FRAMECHANGED | SWP_NOACTIVATE);
     Log("[reparent] SetWindowPos(brave) ok=" + std::to_string(ok2) + " err=" + std::to_string(GetLastError()));
 
     g_launched = true;
 
-    // Show shell as HWND_TOP (non-topmost) — Electron's alwaysOnTop window is
-    // WS_EX_TOPMOST and will naturally sit above all non-topmost windows, so
-    // Electron's transparent areas reveal the shell (Brave) behind them.
+    // Show shell as HWND_TOPMOST so it appears above the Electron window (which is
+    // also TOPMOST). Shell is positioned below the 41px toolbar so the React
+    // toolbar header remains visible. Brave content shows above Electron directly.
     BOOL ok3 = ShowWindow(g_shell, SW_SHOWNOACTIVATE);
     Log("[reparent] ShowWindow(shell) ok=" + std::to_string(ok3));
-    BringWindowToTop(g_shell);
-    BOOL ok4 = SetWindowPos(g_shell, HWND_TOP, g_shellX, g_shellY, g_w, g_h,
+    BOOL ok4 = SetWindowPos(g_shell, HWND_TOPMOST, g_shellX, g_shellY, g_w, g_h,
                             SWP_NOACTIVATE);
     Log("[reparent] SetWindowPos(shell) ok=" + std::to_string(ok4) + " err=" + std::to_string(GetLastError()));
 

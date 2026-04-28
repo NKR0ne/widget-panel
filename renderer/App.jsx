@@ -1956,55 +1956,39 @@ export default function App() {
         location={location} onLocationChange={setLocation}
         apiKeys={apiKeys} onApiKeyChange={(service,key)=>saveKey(service,key)}/>}
 
-      {/* ── Browser card (panel extension with Brave content rendered behind) ── */}
+      {/* ── Panel-color backdrop for the browser extension area ── */}
       {browserPane.open && (
         <div style={{
-          position: 'fixed', left: browserPane.braveX + 8, top: 8, right: 8, bottom: 8,
-          border: '1px solid rgba(255,255,255,0.07)',
-          borderRadius: 10,
-          boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
-          overflow: 'hidden',
+          position: 'fixed', left: browserPane.braveX, top: 0, right: 0, bottom: 0,
+          background: `rgba(55,55,70,${pinned ? pinnedOpacity : opacity})`,
+          zIndex: 9998, pointerEvents: 'none',
+        }} />
+      )}
+
+      {/* ── Browser controls — two buttons painted on the panel backdrop ── */}
+      {browserPane.open && (
+        <div style={{
+          position: 'fixed', top: 12, right: 20,
+          display: 'flex', alignItems: 'center', gap: 4,
           zIndex: 9999, userSelect: 'none',
-          // background transparent so Brave (in shell window behind) shows through
-          background: 'transparent',
-        }}
-          onMouseMove={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            // Header is 41px tall — only the content area below it is click-through
-            window.electronAPI.browser.setIgnoreMouseEvents(e.clientY > rect.top + 41);
-          }}
-          onMouseLeave={() => window.electronAPI.browser.setIgnoreMouseEvents(false)}
-        >
-          {/* Card header — opaque, captures clicks */}
-          <div style={{
-            position: 'absolute', top: 0, left: 0, right: 0, height: 41,
-            background: '#18181c',
-            borderBottom: '1px solid rgba(255,255,255,0.06)',
-            borderRadius: '9px 9px 0 0',
-            display: 'flex', alignItems: 'center', gap: 8, padding: '0 12px',
-          }}>
-            {browserPane.loading && (
-              <div style={{width:13,height:13,border:'2px solid rgba(255,255,255,0.1)',borderTop:'2px solid #888',borderRadius:'50%',animation:'spin 0.7s linear infinite',flexShrink:0}}/>
-            )}
-            <div style={{flex:1,fontSize:11,color:'#555',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontFamily:'DM Mono,monospace'}}>
-              {browserPane.url}
-            </div>
-            <button
-              onClick={() => window.electronAPI?.browser?.openExternal()}
-              title="Open in Brave"
-              style={{background:'none',border:'none',color:'#444',fontSize:13,cursor:'pointer',padding:'4px 6px',lineHeight:1,borderRadius:4,transition:'color 0.1s'}}
-              onMouseEnter={e=>e.currentTarget.style.color='#aaa'} onMouseLeave={e=>e.currentTarget.style.color='#444'}>
-              ↗
-            </button>
-            <button
-              onClick={() => window.electronAPI?.browser?.close()}
-              title="Dismiss"
-              style={{background:'none',border:'none',color:'#444',fontSize:13,cursor:'pointer',padding:'4px 6px',lineHeight:1,borderRadius:4,transition:'color 0.1s'}}
-              onMouseEnter={e=>e.currentTarget.style.color='#aaa'} onMouseLeave={e=>e.currentTarget.style.color='#444'}>
-              ✕
-            </button>
-          </div>
-          {/* Content area transparent — Brave renders in shell window behind this */}
+        }}>
+          {browserPane.loading && (
+            <div style={{width:12,height:12,border:'2px solid rgba(255,255,255,0.1)',borderTop:'2px solid #888',borderRadius:'50%',animation:'spin 0.7s linear infinite',marginRight:8}}/>
+          )}
+          <button
+            onClick={() => window.electronAPI?.browser?.openExternal()}
+            title="Open in Brave"
+            style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#aaa",fontSize:14,cursor:"pointer",padding:"3px 6px",lineHeight:1,transition:"all 0.15s"}}
+            onMouseEnter={e=>e.currentTarget.style.color='#dcdcec'} onMouseLeave={e=>e.currentTarget.style.color='#aaa'}>
+            ↗
+          </button>
+          <button
+            onClick={() => window.electronAPI?.browser?.close()}
+            title="Dismiss"
+            style={{background:"none",border:"1px solid transparent",borderRadius:6,color:"#aaa",fontSize:14,cursor:"pointer",padding:"3px 6px",lineHeight:1,transition:"all 0.15s"}}
+            onMouseEnter={e=>e.currentTarget.style.color='#dcdcec'} onMouseLeave={e=>e.currentTarget.style.color='#aaa'}>
+            ✕
+          </button>
         </div>
       )}
     </div>

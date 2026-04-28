@@ -1,5 +1,5 @@
-# ninja log v7
-5	1758	7989921493497669	CMakeFiles/brave-host.dir/brave-host.cpp.obj	66dd54c8db1bbd3f
-1759	1961	7989921511170943	C:/Users/nicol/source/repos/widget-panel/native/bin/brave-host.exe	7e39bb586e74ef5e
-17	1754	7989926786211524	CMakeFiles/brave-host.dir/brave-host.cpp.obj	66dd54c8db1bbd3f
-1754	1931	7989926803464233	C:/Users/nicol/source/repos/widget-panel/native/bin/brave-host.exe	7e39bb586e74ef5e
+# ninja log v6
+25	1935	7991032707979409	CMakeFiles/brave-host.dir/brave-host.cpp.obj	39e372211db5543c
+1936	2102	7991032727237897	C:/Users/nicol/source/repos/widget-panel/native/bin/brave-host.exe	7ad59c74381362f2
+26	1955	7991063679356163	CMakeFiles/brave-host.dir/brave-host.cpp.obj	39e372211db5543c
+1956	2139	7991063698644886	C:/Users/nicol/source/repos/widget-panel/native/bin/brave-host.exe	7ad59c74381362f2
