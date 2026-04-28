@@ -457,17 +457,42 @@ function TradingViewWidget() {
   const [lastFetch, setLastFetch] = useState(null);
   const [err,       setErr]       = useState('');
   const [busy,      setBusy]      = useState(false);
+  const [listHeight, setListHeight] = useState(380);
 
   useEffect(() => {
     (async () => {
       const session = await api.store.get('wp-tv-session');
       if (session) {
         const r = await api.tv.watchlists();
-        if (r.ok && r.data?.length) { setLists(r.data); setAuth({ username: await api.store.get('wp-tv-user') || '' }); }
-        else { setAuth(false); }
+        if (r.ok && r.data?.length) {
+          setLists(r.data);
+          setAuth({ username: await api.store.get('wp-tv-user') || '' });
+          const savedIdx = parseInt(await api.store.get('wp-tv-list-idx') || '0');
+          if (savedIdx > 0 && savedIdx < r.data.length) setListIdx(savedIdx);
+        } else { setAuth(false); }
       } else { setAuth(false); }
+      const savedH = parseInt(await api.store.get('wp-tv-card-height') || '0');
+      if (savedH >= 80) setListHeight(savedH);
     })();
   }, []);
+
+  const onResizeMouseDown = (e) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = listHeight;
+    let cur = startH;
+    const onMove = (ev) => {
+      cur = Math.max(80, startH + (ev.clientY - startY));
+      setListHeight(cur);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      api.store.set('wp-tv-card-height', String(cur));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
 
   const symbols = lists[listIdx]?.symbols || [];
 
@@ -551,7 +576,7 @@ function TradingViewWidget() {
   const tabs = lists.length > 1 && (
     <div style={{display:'flex',gap:4,marginBottom:8,overflowX:'auto'}}>
       {lists.map((l,i) => (
-        <button key={l.id||i} onClick={()=>setListIdx(i)}
+        <button key={l.id||i} onClick={()=>{ setListIdx(i); api.store.set('wp-tv-list-idx', String(i)); }}
           style={{background:i===listIdx?'rgba(255,255,255,0.1)':'none',border:'none',
             borderRadius:5,color:i===listIdx?'#e4e4f4':'#555',
             fontSize:10,padding:'3px 8px',cursor:'pointer',whiteSpace:'nowrap',flexShrink:0}}>
@@ -566,39 +591,47 @@ function TradingViewWidget() {
     content:(
       <div>
         {tabs}
-        <div style={{maxHeight:440,overflowY:'auto',marginRight:-4,paddingRight:4}}>
+        <div style={{display:'flex',alignItems:'center',gap:6,padding:'0 0 4px',
+          borderBottom:'1px solid rgba(255,255,255,0.08)',marginBottom:2,
+          fontVariantNumeric:'tabular-nums'}}>
+          <div style={{width:16,flexShrink:0}}/>
+          <div style={{width:46,flexShrink:0,fontSize:9,color:'#444'}}/>
+          <div style={{width:52,flexShrink:0,textAlign:'right',fontSize:9,color:'#444'}}>Prev</div>
+          <div style={{width:52,flexShrink:0,textAlign:'right',fontSize:9,color:'#444'}}>%</div>
+          <div style={{width:52,flexShrink:0,textAlign:'right',fontSize:9,color:'#444'}}>Price</div>
+          <div style={{width:52,flexShrink:0,textAlign:'right',fontSize:9,color:'#444'}}>%</div>
+        </div>
+        <div style={{height:listHeight,overflowY:'auto',marginRight:-4,paddingRight:4}}>
           {symbols.map(({ s, d }) => {
             const ticker = s.includes(':') ? s.split(':')[1] : s;
             const q = quotes[ticker];
             return (
-              <div key={s} style={{display:'flex',alignItems:'center',gap:12,
-                padding:'10px 0',borderBottom:'1px solid rgba(255,255,255,0.05)',cursor:'pointer'}}
+              <div key={s} style={{display:'flex',alignItems:'center',gap:6,
+                padding:'2px 0',borderBottom:'1px solid rgba(255,255,255,0.04)',cursor:'pointer',
+                fontVariantNumeric:'tabular-nums'}}
                 onClick={()=>api.browser.open(`https://www.tradingview.com/chart/?symbol=${s}`)}>
 
-                <TickerAvatar ticker={ticker} size={52}/>
+                <TickerAvatar ticker={ticker} size={16}/>
 
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:17,fontWeight:700,color:'#eeeef8',lineHeight:1.2}}>{ticker}</div>
-                  <div style={{fontSize:10,color:'#555',display:'flex',gap:4,marginTop:2,alignItems:'center'}}>
-                    <span style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:85}}>{q?.name||d}</span>
-                    {q?.date&&<span style={{flexShrink:0}}>· {fmtDate(q.date)}</span>}
-                  </div>
+                <div style={{width:46,flexShrink:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',
+                  fontSize:11,fontWeight:600,color:'#eeeef8'}}>
+                  {ticker}
                 </div>
 
-                <div style={{textAlign:'right',flexShrink:0,minWidth:88}}>
-                  <div style={{fontSize:12,color:'#888',display:'flex',gap:3,justifyContent:'flex-end',alignItems:'center'}}>
-                    <span>☀️</span><span>{fmtP(q?.prev)}</span>
-                  </div>
-                  <div style={{fontSize:10,color:clr(q?.prevChange),marginTop:2}}>
-                    {q?.prevChange!=null?`${fmtChg(q.prevChange)} ${fmtPct(q.prevPct)}`:''}
-                  </div>
+                <div style={{width:52,flexShrink:0,textAlign:'right',fontSize:9,color:'#777',whiteSpace:'nowrap'}}>
+                  ☀️ {fmtP(q?.prev)}
                 </div>
 
-                <div style={{textAlign:'right',minWidth:74,flexShrink:0}}>
-                  <div style={{fontSize:15,fontWeight:600,color:'#eeeef8'}}>{fmtP(q?.price)}</div>
-                  <div style={{fontSize:10,color:clr(q?.change),marginTop:2}}>
-                    {q?.change!=null?`${fmtChg(q.change)} ${fmtPct(q.pct)}`:''}
-                  </div>
+                <div style={{width:52,flexShrink:0,textAlign:'right',fontSize:9,whiteSpace:'nowrap',color:clr(q?.prevChange)}}>
+                  {q?.prevChange!=null ? fmtPct(q.prevPct) : ''}
+                </div>
+
+                <div style={{width:52,flexShrink:0,textAlign:'right',fontSize:11,fontWeight:600,color:'#eeeef8',whiteSpace:'nowrap'}}>
+                  {fmtP(q?.price)}
+                </div>
+
+                <div style={{width:52,flexShrink:0,textAlign:'right',fontSize:9,whiteSpace:'nowrap',color:clr(q?.change)}}>
+                  {q?.change!=null ? fmtPct(q.pct) : ''}
                 </div>
               </div>
             );
@@ -608,6 +641,11 @@ function TradingViewWidget() {
               {lists.length?'Empty watchlist':'No watchlists found'}
             </div>
           )}
+        </div>
+        <div onMouseDown={onResizeMouseDown}
+          style={{height:6,marginTop:2,marginLeft:-14,marginRight:-14,cursor:'ns-resize',
+            display:'flex',alignItems:'center',justifyContent:'center',userSelect:'none'}}>
+          <div style={{width:28,height:2,borderRadius:1,background:'rgba(255,255,255,0.1)'}}/>
         </div>
         <button onClick={doLogout}
           style={{marginTop:8,background:'none',border:'none',color:'#333',fontSize:10,cursor:'pointer',padding:0}}>
@@ -1214,46 +1252,60 @@ function OPMLDrop({ onLoaded }) {
 function CategoryManager({ categories, activeIds, setActiveIds, onClose, onReset }) {
   return (
     <div onClick={onClose} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:100}}>
-      <div onClick={e=>e.stopPropagation()} style={{background:"#18181c",border:"1px solid rgba(255,255,255,0.08)",borderRadius:16,padding:20,width:300,maxHeight:"82vh",overflowY:"auto"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+      <div onClick={e=>e.stopPropagation()} style={{background:"#18181c",border:"1px solid rgba(255,255,255,0.08)",borderRadius:16,padding:20,width:560,maxHeight:"82vh",display:"flex",flexDirection:"column"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16,flexShrink:0}}>
           <span style={{fontSize:14,fontWeight:500,color:"#e0e0e0"}}>Manage widgets</span>
           <button onClick={onClose} style={{background:"none",border:"none",color:"#d0d0e0",fontSize:13,cursor:"pointer",padding:4}}>✕</button>
         </div>
-        <div style={{fontSize:10,color:"#2a2a34",textTransform:"uppercase",letterSpacing:1,marginBottom:8}}>News categories</div>
-        {categories.map((cat,i)=>{
-          const id="cat:"+cat.label,on=activeIds.includes(id),col=catColor(cat.label,i);
-          return(
-            <div key={cat.label} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
-              <span style={{...C.dot,background:col}}/>
-              <div style={{flex:1}}>
-                <div style={{fontSize:13,color:"#e4e4f4"}}>{cat.label}</div>
-                <div style={{fontSize:10,color:"#c4c4d4"}}>{cat.feeds.length} feed{cat.feeds.length!==1?"s":""}</div>
-              </div>
-              <button onClick={()=>setActiveIds(p=>on?p.filter(x=>x!==id):[...p,id])}
-                style={{border:"1px solid",borderRadius:6,fontSize:11,padding:"3px 10px",cursor:"pointer",fontWeight:500,fontFamily:"'DM Sans',sans-serif",background:on?col+"22":"rgba(255,255,255,0.05)",color:on?col:"#444",borderColor:on?col+"44":"rgba(255,255,255,0.08)"}}>
-                {on?"Pinned":"Add"}
-              </button>
+        <div style={{display:"flex",gap:20,overflow:"hidden",flex:1}}>
+          {/* System column */}
+          <div style={{flex:"0 0 220px",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            <div style={{fontSize:10,color:"#2a2a34",textTransform:"uppercase",letterSpacing:1,marginBottom:8,flexShrink:0}}>System</div>
+            <div style={{overflowY:"auto",flex:1}}>
+              {SYS.map(w=>{
+                const on=activeIds.includes(w.id);
+                return(
+                  <div key={w.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+                    <span style={{...C.dot,background:w.color}}/>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:13,color:"#e4e4f4"}}>{w.label}</div>
+                      <div style={{fontSize:10,color:"#c4c4d4"}}>{w.note}</div>
+                    </div>
+                    <button onClick={()=>setActiveIds(p=>on?p.filter(x=>x!==w.id):[...p,w.id])}
+                      style={{border:"1px solid",borderRadius:6,fontSize:11,padding:"3px 10px",cursor:"pointer",fontWeight:500,fontFamily:"'DM Sans',sans-serif",background:on?w.color+"22":"rgba(255,255,255,0.05)",color:on?w.color:"#d0d0e0",borderColor:on?w.color+"44":"rgba(255,255,255,0.08)"}}>
+                      {on?"Pinned":"Add"}
+                    </button>
+                  </div>
+                );
+              })}
+              <button onClick={onReset} style={{marginTop:16,background:"none",border:"none",fontSize:11,color:"#282830",cursor:"pointer",padding:0,display:"block"}}>↺ Load a different OPML file</button>
             </div>
-          );
-        })}
-        <div style={{fontSize:10,color:"#2a2a34",textTransform:"uppercase",letterSpacing:1,margin:"16px 0 8px"}}>System widgets</div>
-        {SYS.map(w=>{
-          const on=activeIds.includes(w.id);
-          return(
-            <div key={w.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
-              <span style={{...C.dot,background:w.color}}/>
-              <div style={{flex:1}}>
-                <div style={{fontSize:13,color:"#e4e4f4"}}>{w.label}</div>
-                <div style={{fontSize:10,color:"#c4c4d4"}}>{w.note}</div>
-              </div>
-              <button onClick={()=>setActiveIds(p=>on?p.filter(x=>x!==w.id):[...p,w.id])}
-                style={{border:"1px solid",borderRadius:6,fontSize:11,padding:"3px 10px",cursor:"pointer",fontWeight:500,fontFamily:"'DM Sans',sans-serif",background:on?w.color+"22":"rgba(255,255,255,0.05)",color:on?w.color:"#d0d0e0",borderColor:on?w.color+"44":"rgba(255,255,255,0.08)"}}>
-                {on?"Pinned":"Add"}
-              </button>
+          </div>
+          {/* Divider */}
+          <div style={{width:1,background:"rgba(255,255,255,0.06)",flexShrink:0}}/>
+          {/* News column */}
+          <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            <div style={{fontSize:10,color:"#2a2a34",textTransform:"uppercase",letterSpacing:1,marginBottom:8,flexShrink:0}}>News categories</div>
+            <div style={{overflowY:"auto",flex:1}}>
+              {categories.map((cat,i)=>{
+                const id="cat:"+cat.label,on=activeIds.includes(id),col=catColor(cat.label,i);
+                return(
+                  <div key={cat.label} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+                    <span style={{...C.dot,background:col}}/>
+                    <div style={{flex:1}}>
+                      <div style={{fontSize:13,color:"#e4e4f4"}}>{cat.label}</div>
+                      <div style={{fontSize:10,color:"#c4c4d4"}}>{cat.feeds.length} feed{cat.feeds.length!==1?"s":""}</div>
+                    </div>
+                    <button onClick={()=>setActiveIds(p=>on?p.filter(x=>x!==id):[...p,id])}
+                      style={{border:"1px solid",borderRadius:6,fontSize:11,padding:"3px 10px",cursor:"pointer",fontWeight:500,fontFamily:"'DM Sans',sans-serif",background:on?col+"22":"rgba(255,255,255,0.05)",color:on?col:"#444",borderColor:on?col+"44":"rgba(255,255,255,0.08)"}}>
+                      {on?"Pinned":"Add"}
+                    </button>
+                  </div>
+                );
+              })}
             </div>
-          );
-        })}
-        <button onClick={onReset} style={{marginTop:20,background:"none",border:"none",fontSize:11,color:"#282830",cursor:"pointer",padding:0,display:"block"}}>↺ Load a different OPML file</button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -1405,6 +1457,8 @@ export default function App() {
   const [colWidths, setColWidths] = useState({ left: 220, mid: 240, feed: 260 });
   const colWidthsRef = useRef({ left: 220, mid: 240, feed: 260 });
   const panelBgRef = useRef(null);
+  const storageReadyRef = useRef(false);
+  const pendingShowRef  = useRef(false);
   useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
 
   // Expand/collapse state per widget id — persisted
@@ -1466,7 +1520,10 @@ export default function App() {
   useEffect(() => {
     const panelApi = window.electronAPI?.panel;
     if (!panelApi) return;
-    panelApi.onShow(() => setVisible(true));
+    panelApi.onShow(() => {
+      if (storageReadyRef.current) setVisible(true);
+      else pendingShowRef.current = true;
+    });
     panelApi.onHide(() => {
       setVisible(false);
       setShowSettings(false);
@@ -1587,6 +1644,15 @@ export default function App() {
     window.electronAPI?.system?.windowColor().then(c=>{ if (c) setSystemWindowColor(c); });
     window.electronAPI?.system?.onWindowColorChange?.(c=>{ if (c) setSystemWindowColor(c); });
   },[]);
+
+  // Flush pending panel-show once storage is ready (cold-start race fix)
+  useEffect(() => {
+    storageReadyRef.current = storageReady;
+    if (storageReady && pendingShowRef.current) {
+      pendingShowRef.current = false;
+      setVisible(true);
+    }
+  }, [storageReady]);
 
   // Persist main config on change
   useEffect(()=>{

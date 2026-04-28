@@ -8,13 +8,19 @@ const { getStore, setStore, deleteStore } = require('./store')
 const PANEL_GAP = 10   // px gap between window edge and screen; window is inset so the gap shows raw desktop
 
 const isDev  = !!process.env.VITE_DEV
-const LOG    = path.join(__dirname, 'native', 'bin', 'electron.log')
+const LOG_SRC = path.join(__dirname, 'native', 'bin', 'electron.log')
+// Fallback to userData in case __dirname is inside a read-only asar
+let LOG = LOG_SRC
+try { fs.writeFileSync(LOG_SRC, '') }  // works in dev / unpackaged
+catch {
+  LOG = path.join(app.getPath('userData'), 'electron.log')
+  try { fs.writeFileSync(LOG, '') } catch {}
+}
 function log(...args) {
   const line = `[${new Date().toISOString()}] ${args.join(' ')}\n`
   try { fs.appendFileSync(LOG, line) } catch {}
   console.log(...args)
 }
-try { fs.writeFileSync(LOG, '') } catch {}  // clear on startup
 
 let win              = null
 let isPinned         = false
@@ -751,7 +757,7 @@ function tvRequest(method, url, headers, body) {
 // Uses Chrome DevTools Protocol to intercept TV's own API responses AFTER login,
 // and also tries extracting from localStorage once the main page loads.
 ipcMain.handle('tv-browser-login', async () => {
-  setStore('wp-tv-raw-lists', '')  // clear stale data from previous logins
+  // Don't clear wp-tv-raw-lists here — tv-watchlists will refresh it via hidden window
 
   return new Promise(resolve => {
     const authWin = new BrowserWindow({
@@ -886,68 +892,122 @@ function normLists(arr) {
     .filter(l => l.symbols.length)
 }
 
+// Fetch a single watchlist by ID via session.defaultSession.fetch (auto-includes cookies).
+// Returns normalised {id, name, symbols} or null.
+async function fetchWatchlistById(id, name) {
+  try {
+    const res = await session.defaultSession.fetch(
+      `https://www.tradingview.com/api/v1/symbols_list/custom/${id}/`,
+      { headers: { 'X-Requested-With': 'XMLHttpRequest', 'Referer': 'https://www.tradingview.com/' } }
+    )
+    if (!res.ok) { log('[tv-api] watchlist', id, 'status=', res.status); return null }
+    const json = await res.json()
+    // Response: {"symbols": ["NASDAQ:AAPL", "###Section", ...]}
+    const rawSyms = json?.symbols
+    if (!Array.isArray(rawSyms) || !rawSyms.length) return null
+    const symbols = rawSyms
+      .filter(s => typeof s === 'string' && !s.startsWith('###'))
+      .map(s => ({ s, d: s.includes(':') ? s.split(':')[1] : s }))
+    if (!symbols.length) return null
+    log('[tv-api] watchlist', id, 'symbols=', symbols.length)
+    return { id, name: name || `Watchlist ${id}`, symbols }
+  } catch (e) { log('[tv-api] fetch error', id, e.message); return null }
+}
+
+const TV_HDR = { 'X-Requested-With': 'XMLHttpRequest', 'Referer': 'https://www.tradingview.com/' }
+
+// Fetch a colored list by name. Returns {id, name, symbols} or null.
+async function fetchColoredList(color) {
+  try {
+    const res = await session.defaultSession.fetch(
+      `https://www.tradingview.com/api/v1/symbols_list/colored/${color}/`, { headers: TV_HDR }
+    )
+    if (!res.ok) return null
+    const json = await res.json()
+    const rawSyms = json?.symbols
+    if (!Array.isArray(rawSyms) || !rawSyms.length) return null
+    const symbols = rawSyms
+      .filter(s => typeof s === 'string' && !s.startsWith('###'))
+      .map(s => ({ s, d: s.includes(':') ? s.split(':')[1] : s }))
+    if (!symbols.length) return null
+    log('[tv-api] colored/', color, 'symbols=', symbols.length)
+    return { id: `colored_${color}`, name: color.charAt(0).toUpperCase() + color.slice(1), symbols }
+  } catch (e) { log('[tv-api] colored error', color, e.message); return null }
+}
+
+// Try TV's REST endpoints that return watchlists + colored lists.
+async function fetchWatchlistIndex() {
+  const hdrs = TV_HDR
+  const lists = []
+
+  // ── Custom watchlists ─────────────────────────────────────────────────────
+  try {
+    const res = await session.defaultSession.fetch(
+      'https://www.tradingview.com/api/v1/symbols_list/custom/', { headers: hdrs }
+    )
+    const text = await res.text()
+    log('[tv-index] custom status=', res.status, 'body=', text.slice(0, 200))
+    if (res.ok && (text.startsWith('{') || text.startsWith('['))) {
+      const json = JSON.parse(text)
+      const arr = Array.isArray(json) ? json : (json?.lists || json?.data || json?.results || [])
+      arr.forEach(l => {
+        if (!l?.id) return
+        const rawSyms = l.symbols || []
+        const symbols = rawSyms
+          .filter(s => typeof s === 'string' && !s.startsWith('###'))
+          .map(s => ({ s, d: s.includes(':') ? s.split(':')[1] : s }))
+        if (symbols.length) lists.push({ id: String(l.id), name: l.name || `Watchlist ${l.id}`, symbols })
+      })
+    }
+  } catch (e) { log('[tv-index] custom error', e.message) }
+
+  // ── Colored lists (red, orange, yellow, green, blue, purple, aqua, gray) ──
+  const colors = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'aqua', 'gray']
+  const colored = await Promise.all(colors.map(fetchColoredList))
+  colored.forEach(l => { if (l) lists.push(l) })
+
+  if (lists.length) {
+    log('[tv-index] total lists=', lists.length)
+    return lists
+  }
+  return null
+}
+
 ipcMain.handle('tv-watchlists', async () => {
   const sessionId = getStore('wp-tv-session')
   if (!sessionId) return { ok: false, error: 'Not logged in' }
 
-  // ── 1. Use data captured via CDP during browser login ─────────────────────
-  const rawLists = getStore('wp-tv-raw-lists')
-  if (rawLists) {
+  // ── 1. Serve from cache ───────────────────────────────────────────────────
+  const cached = getStore('wp-tv-lists-cache')
+  if (cached) {
     try {
-      const arr = JSON.parse(rawLists)
-      if (Array.isArray(arr) && arr.length) {
-        const lists = normLists(arr)
-        if (lists.length) {
-          log('[tv-watchlists] serving CDP-captured lists, count=', lists.length)
-          return { ok: true, data: lists }
-        }
+      const lists = JSON.parse(cached)
+      if (Array.isArray(lists) && lists.length) {
+        log('[tv-watchlists] served', lists.length, 'lists from cache')
+        return { ok: true, data: lists }
       }
     } catch {}
   }
 
-  // ── 2. Fall back to REST (these currently return 404 but kept for discovery) ─
-  const cookies   = getStore('wp-tv-cookies') || `sessionid=${sessionId}`
-  const csrfToken = getStore('wp-tv-csrf') || ''
-  const hdrs = {
-    'Cookie':           cookies,
-    'Referer':          'https://www.tradingview.com/',
-    'User-Agent':       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Accept':           'application/json, text/javascript, */*; q=0.01',
-    'X-Requested-With': 'XMLHttpRequest',
-    'X-Language':       'en',
-    ...(csrfToken ? { 'X-CSRFToken': csrfToken } : {}),
+  // ── 2. Fetch fresh — custom watchlists + colored lists ────────────────────
+  log('[tv-watchlists] fetching fresh lists')
+  const lists = await fetchWatchlistIndex()
+  if (lists?.length) {
+    setStore('wp-tv-lists-cache', JSON.stringify(lists))
+    return { ok: true, data: lists }
   }
-  for (const url of [
-    'https://www.tradingview.com/api/v1/lists/',
-    'https://www.tradingview.com/api/v1/user_data/',
-    'https://www.tradingview.com/api/v1/symbols_list/',
-  ]) {
-    try {
-      const res = await tvRequest('GET', url, hdrs)
-      log('[tv-watchlists]', url, 'status=', res.status, 'body=', res.body.slice(0, 800))
-      if (!res.body.startsWith('{') && !res.body.startsWith('[')) continue
-      let json; try { json = JSON.parse(res.body) } catch { continue }
-      const candidates = [json, json?.lists, json?.results, json?.data, json?.watchlists, json?.activeLists]
-      for (const c of candidates) {
-        if (!Array.isArray(c) || !c.length) continue
-        if (c[0]?.symbols !== undefined || c[0]?.name) {
-          const lists = normLists(c)
-          if (lists.length) return { ok: true, data: lists }
-        }
-        const syms = normSymbols(c)
-        if (syms?.length) return { ok: true, data: [{ id: '', name: 'Watchlist', symbols: syms }] }
-      }
-    } catch (e) { log('[tv-watchlists] error', url, e.message) }
-  }
+
   return { ok: true, data: [] }
 })
 
 ipcMain.handle('tv-logout', async () => {
-  setStore('wp-tv-session',   '')
-  setStore('wp-tv-cookies',   '')
-  setStore('wp-tv-csrf',      '')
-  setStore('wp-tv-user',      '')
-  setStore('wp-tv-raw-lists', '')
+  setStore('wp-tv-session',       '')
+  setStore('wp-tv-cookies',       '')
+  setStore('wp-tv-csrf',          '')
+  setStore('wp-tv-user',          '')
+  setStore('wp-tv-raw-lists',     '')
+  setStore('wp-tv-watchlist-ids', '')
+  setStore('wp-tv-lists-cache',   '')
   return { ok: true }
 })
 
