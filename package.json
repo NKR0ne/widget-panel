@@ -1,6 +1,6 @@
 {
   "name": "widget-panel",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Windows 11 sidebar widget panel — Feedly OPML, weather, traffic, stocks",
   "main": "main.js",
   "scripts": {
