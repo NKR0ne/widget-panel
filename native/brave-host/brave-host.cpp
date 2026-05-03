@@ -278,10 +278,10 @@ static void RegisterShellClass() {
     wc.lpfnWndProc   = ShellWndProc;
     wc.hInstance     = GetModuleHandleW(NULL);
     wc.lpszClassName = L"WP_BraveShell";
-    // Match the panel background color (rgba 95,100,120) so any sub-pixel gap
+    // Match the panel background color (rgba 75,80,100) so any sub-pixel gap
     // around Brave's content blends with the panel-color backdrop rather than
     // showing a black border.
-    wc.hbrBackground = CreateSolidBrush(RGB(95, 100, 120));
+    wc.hbrBackground = CreateSolidBrush(RGB(75, 80, 100));
     RegisterClassW(&wc);
 }
 

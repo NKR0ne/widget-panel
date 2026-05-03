@@ -985,9 +985,9 @@ function AgendaWidget() {
       setCalendars(cals);
 
       const now = new Date();
-      const cutoff = new Date(now.getTime() + 7 * 86400000);
+      const cutoff = new Date(now); cutoff.setMonth(cutoff.getMonth() + 1);
       const timeQ = `startDateTime=${now.toISOString()}&endDateTime=${cutoff.toISOString()}`
-        + `&$select=subject,start,end,location,isAllDay&$top=50`;
+        + `&$select=subject,start,end,location,isAllDay&$top=200`;
 
       // Fetch per calendar so we know which calendar each event belongs to
       const chunks = await Promise.all(cals.map(async cal => {
@@ -1085,7 +1085,7 @@ function AgendaWidget() {
                 {Object.keys(groups).length === 0 && (
                   <div style={{paddingTop:10,fontSize:11,color:"#dcdcec",textAlign:"center"}}>Aucun événement à venir</div>
                 )}
-                <div style={{maxHeight:cardHeight,overflowY:"auto",paddingRight:2}}>
+                <div style={{height:cardHeight,overflowY:"auto",paddingRight:2}}>
                 {Object.entries(groups).map(([day, evs], gi) => (
                   <div key={day} style={{marginTop: gi > 0 ? 12 : 0}}>
                     {day === "Aujourd'hui" ? (
@@ -1958,7 +1958,7 @@ export default function App() {
           width: browserPane.open ? browserPane.braveX : '100vw',
           overflow:"hidden",
           display:"flex",flexDirection:"row",
-          background:`rgba(95,100,120,${pinned ? pinnedOpacity : opacity})`,
+          background:`rgba(75,80,100,${pinned ? pinnedOpacity : opacity})`,
           transition:"width 280ms cubic-bezier(0.32,0,0.16,1)"}}>
 
           <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -2061,7 +2061,7 @@ export default function App() {
       {browserPane.open && (
         <div style={{
           position: 'fixed', left: browserPane.braveX, top: 0, right: 0, bottom: 0,
-          background: `rgba(95,100,120,${pinned ? pinnedOpacity : opacity})`,
+          background: `rgba(75,80,100,${pinned ? pinnedOpacity : opacity})`,
           zIndex: 9998, pointerEvents: 'none',
         }} />
       )}
