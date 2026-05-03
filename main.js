@@ -593,14 +593,13 @@ function openBraveInPanel(url) {
   win.webContents.send('brave-loading', true)
   win.webContents.send('brave-url', url)
 
-  // No internal margins — Brave fills edge-to-edge within the window's right
-  // area. The PANEL_GAP at the window→screen boundary already provides the
-  // visual breathing room.
+  // BRAVE_M: margin around the shell, so the panel-color backdrop is visible as a frame
+  const BRAVE_M = 8
   sendToBrave({ type: 'open', hwnd: 0,
-    x: Math.round(panelScreenRight * sf),
+    x: Math.round((panelScreenRight + BRAVE_M) * sf),
     y: Math.round((workArea.y + PANEL_GAP + TOOLBAR_H) * sf),
-    w: Math.round(braveW * sf),
-    h: Math.round((braveH - TOOLBAR_H) * sf),
+    w: Math.round((braveW - BRAVE_M * 2) * sf),
+    h: Math.round((braveH - TOOLBAR_H - BRAVE_M) * sf),
     url })
   notifyHelperHwnds()
 }
