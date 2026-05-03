@@ -31,7 +31,10 @@ const SYS = [
   { id:"agenda",  label:"Outlook Agenda",   note:"Microsoft Graph · OAuth",       color:"#0078d4" },
   { id:"mail",    label:"Outlook Mail",     note:"Microsoft Graph · OAuth",       color:"#0078d4" },
   { id:"todo",    label:"Microsoft To-Do",  note:"Microsoft Graph · OAuth",       color:"#2564cf" },
+  { id:"pressreader", label:"PressReader",  note:"Library e-zone (EZProxy login)", color:"#c8102e" },
 ];
+
+const PRESSREADER_URL = "https://www.pressreader.com.ezproxy.bibliothequedequebec.qc.ca/fr/catalog/featured";
 
 const DEFAULT_TV_SYMBOLS = [
   {s:'AMEX:GLD',   d:'Gold ETF'},
@@ -1293,6 +1296,60 @@ function MailWidget() {
   };
 }
 
+// ── PressReader widget ───────────────────────────────────────────────────────
+function PressReaderWidget() {
+  const [cardHeight, setCardHeight] = useState(500);
+
+  useEffect(() => {
+    api.store.get('wp-pressreader-height').then(v => {
+      const h = parseInt(v || '0');
+      if (h >= 200) setCardHeight(h);
+    });
+  }, []);
+
+  const onResizeMouseDown = (e) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = cardHeight;
+    let cur = startH;
+    const onMove = (ev) => {
+      cur = Math.max(200, startH + (ev.clientY - startY));
+      setCardHeight(cur);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      api.store.set('wp-pressreader-height', String(cur));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const externalBtn = (
+    <button onClick={e=>{ e.stopPropagation(); api.browser?.open?.(PRESSREADER_URL); }}
+      title="Open in browser"
+      style={{background:"none",border:"none",color:"#666",fontSize:12,cursor:"pointer",padding:"0 2px",lineHeight:1}}>↗</button>
+  );
+
+  return { color:"#c8102e", title:"PressReader", badge: externalBtn,
+    content:(
+      <div>
+        <webview
+          src={PRESSREADER_URL}
+          partition="persist:pressreader"
+          allowpopups="true"
+          style={{width:"100%", height:cardHeight, border:"none", borderRadius:6, background:"#fff"}}
+        />
+        <div onMouseDown={onResizeMouseDown}
+          style={{height:6,marginTop:2,marginLeft:-14,marginRight:-14,cursor:'ns-resize',
+            display:'flex',alignItems:'center',justifyContent:'center',userSelect:'none'}}>
+          <div style={{width:28,height:2,borderRadius:1,background:'rgba(255,255,255,0.1)'}}/>
+        </div>
+      </div>
+    )
+  };
+}
+
 // ── Microsoft To-Do widget ────────────────────────────────────────────────────
 function TodoWidget() {
   const auth = useMsAuth();
@@ -1451,8 +1508,10 @@ function WidgetCard({ id, categories, apiKeys, onSaveKey, colorIdx, onUnreadChan
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const mailData    = id==="mail"    ? MailWidget()   : null;
   // eslint-disable-next-line react-hooks/rules-of-hooks
+  const pressData   = id==="pressreader" ? PressReaderWidget() : null;
+  // eslint-disable-next-line react-hooks/rules-of-hooks
   const todoData    = id==="todo"    ? TodoWidget()   : null;
-  const d = newsData || weatherData || stocksData || calendarData || trafficData || clockData || agendaData || mailData || todoData;
+  const d = newsData || weatherData || stocksData || calendarData || trafficData || clockData || agendaData || mailData || pressData || todoData;
   if (!d) return null;
   return (
     <Shell color={d.color} title={d.title} sub={d.sub} badge={d.badge} lastUpdated={d.lastUpdated}
@@ -1824,6 +1883,7 @@ export default function App() {
     cols.agenda  = "right";
     cols.mail    = "right";
     cols.todo    = "right";
+    cols.pressreader = "mid";
     return cols;
   }
 
