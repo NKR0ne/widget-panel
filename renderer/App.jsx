@@ -209,7 +209,7 @@ async function storageLoad() {
 
 // ── Styles ───────────────────────────────────────────────────────────────────
 const C = {
-  card:  { background:"var(--card-bg,rgba(24,24,28,1))", borderRadius:12, border:"1px solid rgba(255,255,255,0.06)", overflow:"hidden" },
+  card:  { background:"var(--card-bg,rgba(38,40,50,1))", borderRadius:12, border:"1px solid rgba(255,255,255,0.06)", overflow:"hidden" },
   title: { fontSize:11, fontWeight:500, color:"#d0d0e0", textTransform:"uppercase", letterSpacing:0.9 },
   dot:   { width:6, height:6, borderRadius:"50%", flexShrink:0, display:"inline-block" },
   badge: { fontSize:10, padding:"1px 6px", borderRadius:4, fontWeight:500 },
@@ -1718,7 +1718,7 @@ export default function App() {
       if (opv) setOpacity(parseFloat(opv));
       const cardVal = cardv ? parseFloat(cardv) : 1;
       setCardOpacity(cardVal);
-      document.documentElement.style.setProperty('--card-bg', `rgba(24,24,28,${cardVal})`);
+      document.documentElement.style.setProperty('--card-bg', `rgba(38,40,50,${cardVal})`);
       if (pinnedv) setPinnedOpacity(parseFloat(pinnedv));
       if (locv) { try { setLocation(JSON.parse(locv)); } catch {} }
       api.store.get('wp-tv-symbols').then(v => {
@@ -1775,7 +1775,7 @@ export default function App() {
   useEffect(()=>{
     if (!storageReady) return;
     api.store.set('wp-card-opacity', String(cardOpacity));
-    document.documentElement.style.setProperty('--card-bg', `rgba(24,24,28,${cardOpacity})`);
+    document.documentElement.style.setProperty('--card-bg', `rgba(38,40,50,${cardOpacity})`);
   },[cardOpacity, storageReady]);
 
   useEffect(()=>{
@@ -1958,7 +1958,7 @@ export default function App() {
           width: browserPane.open ? browserPane.braveX : '100vw',
           overflow:"hidden",
           display:"flex",flexDirection:"row",
-          background:`rgba(75,80,100,${pinned ? pinnedOpacity : opacity})`,
+          background:`rgba(55,60,80,${pinned ? pinnedOpacity : opacity})`,
           transition:"width 280ms cubic-bezier(0.32,0,0.16,1)"}}>
 
           <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -2052,7 +2052,7 @@ export default function App() {
       {showMgr&&loaded&&<CategoryManager categories={categories} activeIds={activeIds} setActiveIds={setActiveIds} onClose={()=>{setShowMgr(false);api.modal.close();}} onReset={reset}/>}
       {showSettings&&<SettingsModal onClose={()=>{setShowSettings(false);api.modal.close();}}
         opacity={opacity} onOpacityChange={setOpacity}
-        cardOpacity={cardOpacity} onCardOpacityChange={v=>{ setCardOpacity(v); document.documentElement.style.setProperty('--card-bg',`rgba(24,24,28,${v})`); }}
+        cardOpacity={cardOpacity} onCardOpacityChange={v=>{ setCardOpacity(v); document.documentElement.style.setProperty('--card-bg',`rgba(38,40,50,${v})`); }}
         pinnedOpacity={pinnedOpacity} onPinnedOpacityChange={setPinnedOpacity}
         location={location} onLocationChange={setLocation}
         apiKeys={apiKeys} onApiKeyChange={(service,key)=>saveKey(service,key)}/>}
@@ -2061,7 +2061,7 @@ export default function App() {
       {browserPane.open && (
         <div style={{
           position: 'fixed', left: browserPane.braveX, top: 0, right: 0, bottom: 0,
-          background: `rgba(75,80,100,${pinned ? pinnedOpacity : opacity})`,
+          background: `rgba(55,60,80,${pinned ? pinnedOpacity : opacity})`,
           zIndex: 9998, pointerEvents: 'none',
         }} />
       )}
