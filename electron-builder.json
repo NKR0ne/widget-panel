@@ -16,8 +16,6 @@
   },
   "nsis": {
     "oneClick": true,
-    "perMachine": false,
-    "installerIcon": "assets/icon.ico",
-    "uninstallerIcon": "assets/icon.ico"
+    "perMachine": false
   }
 }

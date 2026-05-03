@@ -62,6 +62,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     browserLogin: ()      => ipcRenderer.invoke('tv-browser-login'),
     watchlists:   ()      => ipcRenderer.invoke('tv-watchlists'),
     logout:       ()      => ipcRenderer.invoke('tv-logout'),
+    chart:        (ticker)     => ipcRenderer.invoke('yahoo-chart', ticker),
   },
 
   log: (...args) => ipcRenderer.send('renderer-log', ...args),
