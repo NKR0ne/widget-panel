@@ -725,7 +725,7 @@ function CalendarWidget() {
   const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
   return (
-    <div style={{padding:'12px',background:'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',borderRadius:8,color:'white',fontSize:12}}>
+    <div style={{padding:'12px',color:'#e4e4f4',fontSize:12}}>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
         <div style={{display:'flex',gap:4}}>
           <button onClick={prevYear} style={{background:'rgba(255,255,255,0.2)',border:'none',color:'white',padding:'4px 8px',borderRadius:4,cursor:'pointer',fontSize:10}}>◀◀</button>
