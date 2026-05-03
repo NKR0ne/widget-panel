@@ -26,6 +26,7 @@ const SYS = [
   { id:"weather", label:"Weather",          note:"Open-Meteo · no key",           color:"#f7c94f" },
   { id:"traffic", label:"Traffic",          note:"TomTom · free key",             color:"#f77f4f" },
   { id:"stocks",  label:"Stocks",           note:"Finnhub · free key",            color:"#5cc8a8" },
+  { id:"calendar",label:"Calendar",         note:"No API needed",                 color:"#9c27b0" },
   { id:"clock",   label:"Clock",            note:"No API needed",                 color:"#e8e8f0" },
   { id:"agenda",  label:"Outlook Agenda",   note:"Microsoft Graph · OAuth",       color:"#0078d4" },
   { id:"todo",    label:"Microsoft To-Do",  note:"Microsoft Graph · OAuth",       color:"#2564cf" },
@@ -504,23 +505,8 @@ function TradingViewWidget() {
       await Promise.all(symbols.map(async ({ s }) => {
         const ticker = s.includes(':') ? s.split(':')[1] : s;
         try {
-          const res  = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=5d&interval=1d`);
-          const data = await res.json();
-          const meta   = data?.chart?.result?.[0]?.meta;
-          const closes = data?.chart?.result?.[0]?.indicators?.quote?.[0]?.close?.filter(Boolean) || [];
-          if (meta) {
-            const price = meta.regularMarketPrice;
-            const prev  = meta.chartPreviousClose ?? meta.regularMarketPreviousClose ?? meta.previousClose;
-            const pp    = closes.length >= 2 ? closes[closes.length - 2] : null;
-            results[ticker] = {
-              price, prev,
-              change: price - prev, pct: (price - prev) / prev * 100,
-              prevChange: pp != null ? prev - pp : null,
-              prevPct:    pp != null ? (prev - pp) / pp * 100 : null,
-              name: meta.longName || meta.shortName || '',
-              date: new Date((meta.regularMarketTime || Date.now()/1000) * 1000),
-            };
-          }
+          const q = await api.tv.chart(ticker);
+          if (q) results[ticker] = q;
         } catch {}
       }));
       if (!cancelled) { setQuotes(results); setLastFetch(Date.now()); }
@@ -591,47 +577,69 @@ function TradingViewWidget() {
     content:(
       <div>
         {tabs}
-        <div style={{display:'flex',alignItems:'center',gap:6,padding:'0 0 4px',
-          borderBottom:'1px solid rgba(255,255,255,0.08)',marginBottom:2,
-          fontVariantNumeric:'tabular-nums'}}>
-          <div style={{width:16,flexShrink:0}}/>
-          <div style={{width:46,flexShrink:0,fontSize:9,color:'#444'}}/>
-          <div style={{width:52,flexShrink:0,textAlign:'right',fontSize:9,color:'#444'}}>Prev</div>
-          <div style={{width:52,flexShrink:0,textAlign:'right',fontSize:9,color:'#444'}}>%</div>
-          <div style={{width:52,flexShrink:0,textAlign:'right',fontSize:9,color:'#444'}}>Price</div>
-          <div style={{width:52,flexShrink:0,textAlign:'right',fontSize:9,color:'#444'}}>%</div>
-        </div>
         <div style={{height:listHeight,overflowY:'auto',marginRight:-4,paddingRight:4}}>
           {symbols.map(({ s, d }) => {
             const ticker = s.includes(':') ? s.split(':')[1] : s;
             const q = quotes[ticker];
+            const change = q?.change ?? 0;
+            const pct = q?.pct ?? 0;
+            const color = change >= 0 ? '#4caf73' : '#ef5350';
+            const arrow = change >= 0 ? '▲' : '▼';
+
+            // Mini sparkline: 30 points
+            const points = q?.closes?.slice(-30) || [];
+            const minPrice = points.length ? Math.min(...points) : q?.price ?? 0;
+            const maxPrice = points.length ? Math.max(...points) : q?.price ?? 0;
+            const range = Math.max(maxPrice - minPrice, 0.01);
+            const sparklinePoints = points.map((p, i) => {
+              const x = (i / Math.max(points.length - 1, 1)) * 100;
+              const y = 20 - ((p - minPrice) / range) * 20;
+              return `${x},${y}`;
+            }).join(' ');
+
             return (
-              <div key={s} style={{display:'flex',alignItems:'center',gap:6,
-                padding:'2px 0',borderBottom:'1px solid rgba(255,255,255,0.04)',cursor:'pointer',
+              <div key={s} style={{display:'flex',alignItems:'center',gap:8,
+                padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.05)',cursor:'pointer',
                 fontVariantNumeric:'tabular-nums'}}
                 onClick={()=>api.browser.open(`https://www.tradingview.com/chart/?symbol=${s}`)}>
 
-                <TickerAvatar ticker={ticker} size={16}/>
-
-                <div style={{width:46,flexShrink:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',
-                  fontSize:11,fontWeight:600,color:'#eeeef8'}}>
-                  {ticker}
+                {/* Left: Arrow + Ticker + Name */}
+                <div style={{display:'flex',alignItems:'center',gap:6,minWidth:100}}>
+                  <div style={{fontSize:13,color,fontWeight:700,width:12}}>{arrow}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:10,fontWeight:700,color:'#eeeef8',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',lineHeight:1.2}}>
+                      {ticker}
+                    </div>
+                    <div style={{fontSize:7,color:'#999',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:85,lineHeight:1.1}}>
+                      {(q?.name || d).substring(0, 20)}
+                    </div>
+                  </div>
                 </div>
 
-                <div style={{width:52,flexShrink:0,textAlign:'right',fontSize:9,color:'#777',whiteSpace:'nowrap'}}>
-                  ☀️ {fmtP(q?.prev)}
-                </div>
+                {/* Center: Sparkline */}
+                {sparklinePoints ? (
+                  <svg width="40" height="20" style={{flexShrink:0}}>
+                    <defs>
+                      <linearGradient id={`grad-${ticker}`} x1="0%" y1="0%" x2="0%" y2="100%">
+                        <stop offset="0%" stopColor={color} stopOpacity="0.4"/>
+                        <stop offset="100%" stopColor={color} stopOpacity="0.05"/>
+                      </linearGradient>
+                    </defs>
+                    <polyline points={sparklinePoints} fill="none" stroke={color} strokeWidth="1.2" vectorEffect="non-scaling-stroke" opacity="0.8"/>
+                    <polyline points={sparklinePoints + ' 100,16 0,16'} fill={`url(#grad-${ticker})`} opacity="0.3"/>
+                  </svg>
+                ) : (
+                  <div style={{width:40,height:20,flexShrink:0}}/>
+                )}
 
-                <div style={{width:52,flexShrink:0,textAlign:'right',fontSize:9,whiteSpace:'nowrap',color:clr(q?.prevChange)}}>
-                  {q?.prevChange!=null ? fmtPct(q.prevPct) : ''}
-                </div>
-
-                <div style={{width:52,flexShrink:0,textAlign:'right',fontSize:11,fontWeight:600,color:'#eeeef8',whiteSpace:'nowrap'}}>
-                  {fmtP(q?.price)}
-                </div>
-
-                <div style={{width:52,flexShrink:0,textAlign:'right',fontSize:9,whiteSpace:'nowrap',color:clr(q?.change)}}>
-                  {q?.change!=null ? fmtPct(q.pct) : ''}
+                {/* Right: Price + Variation */}
+                <div style={{width:70,flexShrink:0,textAlign:'right'}}>
+                  <div style={{fontSize:11,fontWeight:700,color:'#eeeef8',whiteSpace:'nowrap',lineHeight:1.2}}>
+                    {fmtP(q?.price)}
+                  </div>
+                  <div style={{fontSize:9,whiteSpace:'nowrap',color,fontWeight:600,lineHeight:1.1}}>
+                    {q?.change!=null ? `${change>0?'+':''}${fmtP(change)}` : '–'}
+                  </div>
                 </div>
               </div>
             );
@@ -654,6 +662,70 @@ function TradingViewWidget() {
       </div>
     )
   };
+}
+
+// ── Calendar widget (year/month navigation) ──────────────────────────────────
+function CalendarWidget() {
+  const [date, setDate] = useState(new Date());
+  const month = date.getMonth();
+  const year = date.getFullYear();
+
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDayOfMonth = new Date(year, month, 1).getDay();
+
+  const days = [];
+  for (let i = 0; i < firstDayOfMonth; i++) days.push(null);
+  for (let i = 1; i <= daysInMonth; i++) days.push(i);
+
+  const prevMonth = () => setDate(new Date(year, month - 1, 1));
+  const nextMonth = () => setDate(new Date(year, month + 1, 1));
+  const prevYear = () => setDate(new Date(year - 1, month, 1));
+  const nextYear = () => setDate(new Date(year + 1, month, 1));
+
+  const isToday = (d) => {
+    if (!d) return false;
+    const today = new Date();
+    return d === today.getDate() && month === today.getMonth() && year === today.getFullYear();
+  };
+
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  return (
+    <div style={{padding:'12px',background:'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',borderRadius:8,color:'white',fontSize:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+        <div style={{display:'flex',gap:4}}>
+          <button onClick={prevYear} style={{background:'rgba(255,255,255,0.2)',border:'none',color:'white',padding:'4px 8px',borderRadius:4,cursor:'pointer',fontSize:10}}>◀◀</button>
+          <button onClick={prevMonth} style={{background:'rgba(255,255,255,0.2)',border:'none',color:'white',padding:'4px 8px',borderRadius:4,cursor:'pointer',fontSize:10}}>◀</button>
+        </div>
+        <div style={{fontWeight:600,textAlign:'center'}}>
+          <div>{monthNames[month]}</div>
+          <div style={{fontSize:10,opacity:0.8}}>{year}</div>
+        </div>
+        <div style={{display:'flex',gap:4}}>
+          <button onClick={nextMonth} style={{background:'rgba(255,255,255,0.2)',border:'none',color:'white',padding:'4px 8px',borderRadius:4,cursor:'pointer',fontSize:10}}>▶</button>
+          <button onClick={nextYear} style={{background:'rgba(255,255,255,0.2)',border:'none',color:'white',padding:'4px 8px',borderRadius:4,cursor:'pointer',fontSize:10}}>▶▶</button>
+        </div>
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'repeat(7, 1fr)',gap:2,marginBottom:8}}>
+        {dayNames.map(d => <div key={d} style={{textAlign:'center',fontWeight:600,fontSize:9,opacity:0.7}}>{d}</div>)}
+        {days.map((d, i) => (
+          <div key={i} style={{
+            textAlign:'center',
+            padding:'4px',
+            borderRadius:3,
+            background:isToday(d) ? 'rgba(255,255,255,0.3)' : 'transparent',
+            fontWeight:isToday(d) ? 600 : 400,
+            opacity:d ? 1 : 0.3,
+            fontSize:10,
+          }}>
+            {d}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 // ── Leaflet traffic widget (ESRI satellite + TomTom flow tiles) ───────────────
@@ -1190,6 +1262,7 @@ function WidgetCard({ id, categories, apiKeys, onSaveKey, colorIdx, onUnreadChan
   const newsData    = id.startsWith("cat:") ? NewsWidget({ category: categories.find(c=>c.label===id.slice(4)), colorIdx, onUnreadChange, onOpenUrl, expanded, onToggle }) : null;
   const weatherData = id==="weather" ? WeatherWidget({ location, expanded, onToggle }) : null;
   const stocksData  = id==="stocks"  ? TradingViewWidget({ expanded, onToggle }) : null;
+  const calendarData= id==="calendar"? { color:"#9c27b0", title:"Calendar", content:<CalendarWidget/> } : null;
   const trafficData = id==="traffic" ? GoogleTrafficWidget({ location, apiKey: apiKeys?.traffic || '', expanded, onToggle }) : null;
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const clockData   = id==="clock"   ? ClockWidget() : null;
@@ -1197,7 +1270,7 @@ function WidgetCard({ id, categories, apiKeys, onSaveKey, colorIdx, onUnreadChan
   const agendaData  = id==="agenda"  ? AgendaWidget() : null;
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const todoData    = id==="todo"    ? TodoWidget()   : null;
-  const d = newsData || weatherData || stocksData || trafficData || clockData || agendaData || todoData;
+  const d = newsData || weatherData || stocksData || calendarData || trafficData || clockData || agendaData || todoData;
   if (!d) return null;
   return (
     <Shell color={d.color} title={d.title} sub={d.sub} badge={d.badge} lastUpdated={d.lastUpdated}
@@ -1857,7 +1930,7 @@ export default function App() {
           width: browserPane.open ? browserPane.braveX : '100vw',
           overflow:"hidden",
           display:"flex",flexDirection:"row",
-          background:`rgba(55,55,70,${pinned ? pinnedOpacity : opacity})`,
+          background:`rgba(95,100,120,${pinned ? pinnedOpacity : opacity})`,
           transition:"width 280ms cubic-bezier(0.32,0,0.16,1)"}}>
 
           <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -1960,7 +2033,7 @@ export default function App() {
       {browserPane.open && (
         <div style={{
           position: 'fixed', left: browserPane.braveX, top: 0, right: 0, bottom: 0,
-          background: `rgba(55,55,70,${pinned ? pinnedOpacity : opacity})`,
+          background: `rgba(95,100,120,${pinned ? pinnedOpacity : opacity})`,
           zIndex: 9998, pointerEvents: 'none',
         }} />
       )}
