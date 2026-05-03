@@ -24,10 +24,10 @@ const SK_MS_TOKENS = "wp-ms-tokens";
 const PALETTE = ["#4f8ef7","#5cc8a8","#b07ef7","#f7a64f","#f74f7e","#4ff7c8","#f7f74f","#c8f74f"];
 const SYS = [
   { id:"weather", label:"Weather",          note:"Open-Meteo · no key",           color:"#f7c94f" },
-  { id:"traffic", label:"Traffic",          note:"TomTom · free key",             color:"#f77f4f" },
-  { id:"stocks",  label:"Stocks",           note:"Finnhub · free key",            color:"#5cc8a8" },
-  { id:"calendar",label:"Calendar",         note:"No API needed",                 color:"#9c27b0" },
-  { id:"clock",   label:"Clock",            note:"No API needed",                 color:"#e8e8f0" },
+  { id:"traffic", label:"Circulation",      note:"TomTom · free key",             color:"#f77f4f" },
+  { id:"stocks",  label:"Marchés",          note:"Finnhub · free key",            color:"#5cc8a8" },
+  { id:"calendar",label:"Calendrier",       note:"No API needed",                 color:"#9c27b0" },
+  { id:"clock",   label:"Horloge",          note:"No API needed",                 color:"#e8e8f0" },
   { id:"agenda",  label:"Outlook Agenda",   note:"Microsoft Graph · OAuth",       color:"#0078d4" },
   { id:"mail",    label:"Outlook Mail",     note:"Microsoft Graph · OAuth",       color:"#0078d4" },
   { id:"todo",    label:"Microsoft To-Do",  note:"Microsoft Graph · OAuth",       color:"#2564cf" },
@@ -573,7 +573,7 @@ function TradingViewWidget() {
   const clr    = n => (n ?? 0) >= 0 ? '#4caf73' : '#ef5350';
   const fmtDate = d => d ? `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}` : '';
 
-  if (auth === false) return { color:'#5cc8a8', title:'Markets', sub:'TradingView',
+  if (auth === false) return { color:'#5cc8a8', title:'Marchés', sub:'TradingView',
     content:(
       <div style={{paddingTop:4}}>
         <div style={{fontSize:11,color:'#666',marginBottom:12}}>Sign in to load your TradingView watchlists</div>
@@ -585,7 +585,7 @@ function TradingViewWidget() {
     )
   };
 
-  if (auth === null) return { color:'#5cc8a8', title:'Markets', sub:'TradingView',
+  if (auth === null) return { color:'#5cc8a8', title:'Marchés', sub:'TradingView',
     content:<div style={{color:'#444',fontSize:11,paddingTop:8}}>Loading…</div>
   };
 
@@ -606,7 +606,7 @@ function TradingViewWidget() {
     </div>
   );
 
-  return { color:'#5cc8a8', title: 'Markets', sub: updatedAt ? `Last updated: ${updatedAt}` : 'TradingView',
+  return { color:'#5cc8a8', title: 'Marchés', sub: updatedAt ? `Last updated: ${updatedAt}` : 'TradingView',
     lastUpdated: lastFetch || undefined,
     content:(
       <div>
@@ -800,7 +800,7 @@ function GoogleTrafficWidget({ location = DEFAULT_LOC, apiKey = '' }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.lat, location.lon, apiKey]);
 
-  return { color:'#f77f4f', title:'Traffic', sub: `Satellite · ${location.name}`,
+  return { color:'#f77f4f', title:'Circulation', sub: `Satellite · ${location.name}`,
     content:(
       <div style={{margin:'4px -2px 0',borderRadius:10,overflow:'hidden',lineHeight:0}}>
         <iframe
@@ -827,7 +827,7 @@ function ClockWidget() {
   const minA = (m * 6 + s * 0.1 - 90) * Math.PI / 180;
   const secA = (s * 6 - 90) * Math.PI / 180;
 
-  return { color:"#e8e8f0", title:"Clock",
+  return { color:"#e8e8f0", title:"Horloge",
     content:(
       <div style={{display:"flex",flexDirection:"column",alignItems:"center",paddingTop:6,paddingBottom:2}}>
         <svg width={128} height={128} viewBox="0 0 128 128" style={{display:"block"}}>
@@ -1444,7 +1444,7 @@ function WidgetCard({ id, categories, apiKeys, onSaveKey, colorIdx, onUnreadChan
   const newsData    = id.startsWith("cat:") ? NewsWidget({ category: categories.find(c=>c.label===id.slice(4)), colorIdx, onUnreadChange, onOpenUrl, expanded, onToggle }) : null;
   const weatherData = id==="weather" ? WeatherWidget({ location, expanded, onToggle }) : null;
   const stocksData  = id==="stocks"  ? TradingViewWidget({ expanded, onToggle }) : null;
-  const calendarData= id==="calendar"? { color:"#9c27b0", title:"Calendar", content:<CalendarWidget/> } : null;
+  const calendarData= id==="calendar"? { color:"#9c27b0", title:"Calendrier", content:<CalendarWidget/> } : null;
   const trafficData = id==="traffic" ? GoogleTrafficWidget({ location, apiKey: apiKeys?.traffic || '', expanded, onToggle }) : null;
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const clockData   = id==="clock"   ? ClockWidget() : null;
