@@ -937,12 +937,35 @@ function AgendaWidget() {
   const [demo,        setDemo]        = useState(false);
   const [loading,     setLoading]     = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [cardHeight,  setCardHeight]  = useState(360);
 
   useEffect(() => {
     api.store.get('wp-agenda-cal-ids').then(v => {
       if (v) try { setSelCals(new Set(JSON.parse(v))); } catch {}
     });
+    api.store.get('wp-agenda-height').then(v => {
+      const h = parseInt(v || '0');
+      if (h >= 80) setCardHeight(h);
+    });
   }, []);
+
+  const onResizeMouseDown = (e) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = cardHeight;
+    let cur = startH;
+    const onMove = (ev) => {
+      cur = Math.max(80, startH + (ev.clientY - startY));
+      setCardHeight(cur);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      api.store.set('wp-agenda-height', String(cur));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
 
   useEffect(() => {
     if (auth.step !== 'ok' || !auth.tokens) return;
@@ -1062,7 +1085,7 @@ function AgendaWidget() {
                 {Object.keys(groups).length === 0 && (
                   <div style={{paddingTop:10,fontSize:11,color:"#dcdcec",textAlign:"center"}}>Aucun événement à venir</div>
                 )}
-                <div style={{maxHeight:360,overflowY:"auto",paddingRight:2}}>
+                <div style={{maxHeight:cardHeight,overflowY:"auto",paddingRight:2}}>
                 {Object.entries(groups).map(([day, evs], gi) => (
                   <div key={day} style={{marginTop: gi > 0 ? 12 : 0}}>
                     {day === "Aujourd'hui" ? (
@@ -1102,6 +1125,11 @@ function AgendaWidget() {
                     })}
                   </div>
                 ))}
+                </div>
+                <div onMouseDown={onResizeMouseDown}
+                  style={{height:6,marginTop:2,marginLeft:-14,marginRight:-14,cursor:'ns-resize',
+                    display:'flex',alignItems:'center',justifyContent:'center',userSelect:'none'}}>
+                  <div style={{width:28,height:2,borderRadius:1,background:'rgba(255,255,255,0.1)'}}/>
                 </div>
                 <button onClick={auth.signOut} style={{marginTop:14,background:"none",border:"none",fontSize:9,color:"#222228",cursor:"pointer",padding:0}}>Déconnecter</button>
               </div>
