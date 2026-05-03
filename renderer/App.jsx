@@ -605,48 +605,47 @@ function TradingViewWidget() {
             }).join(' ');
 
             return (
-              <div key={s} style={{display:'flex',alignItems:'center',gap:8,
-                padding:'4px 0',borderBottom:'1px solid rgba(255,255,255,0.05)',cursor:'pointer',
-                fontVariantNumeric:'tabular-nums'}}
+              <div key={s} style={{display:'flex',alignItems:'center',gap:10,
+                padding:'9px 0',cursor:'pointer',fontVariantNumeric:'tabular-nums'}}
                 onClick={()=>api.browser.open(`https://www.tradingview.com/chart/?symbol=${s}`)}>
 
-                {/* Left: Arrow + Ticker + Name */}
-                <div style={{display:'flex',alignItems:'center',gap:6,minWidth:100}}>
-                  <div style={{fontSize:13,color,fontWeight:700,width:12}}>{arrow}</div>
-                  <div style={{flex:1,minWidth:0}}>
-                    <div style={{fontSize:10,fontWeight:700,color:'#eeeef8',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',lineHeight:1.2}}>
-                      {ticker}
-                    </div>
-                    <div style={{fontSize:7,color:'#999',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:85,lineHeight:1.1}}>
-                      {(q?.name || d).substring(0, 20)}
-                    </div>
+                {/* Left: Ticker + Name */}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:14,fontWeight:700,color:'#fff',lineHeight:1.15,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                    {ticker}
+                  </div>
+                  <div style={{fontSize:10,color:'#888',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',lineHeight:1.25,marginTop:1}}>
+                    {q?.name || d}
                   </div>
                 </div>
 
                 {/* Center: Sparkline */}
                 {sparklinePoints ? (
-                  <svg width="40" height="20" style={{flexShrink:0}}>
+                  <svg width="56" height="28" viewBox="0 0 100 24" preserveAspectRatio="none" style={{flexShrink:0}}>
                     <defs>
                       <linearGradient id={`grad-${ticker}`} x1="0%" y1="0%" x2="0%" y2="100%">
-                        <stop offset="0%" stopColor={color} stopOpacity="0.4"/>
+                        <stop offset="0%" stopColor={color} stopOpacity="0.45"/>
                         <stop offset="100%" stopColor={color} stopOpacity="0.05"/>
                       </linearGradient>
                     </defs>
-                    <polyline points={sparklinePoints} fill="none" stroke={color} strokeWidth="1.2" vectorEffect="non-scaling-stroke" opacity="0.8"/>
-                    <polyline points={sparklinePoints + ' 100,16 0,16'} fill={`url(#grad-${ticker})`} opacity="0.3"/>
+                    <polyline points={sparklinePoints + ' 100,24 0,24'} fill={`url(#grad-${ticker})`}/>
+                    <polyline points={sparklinePoints} fill="none" stroke={color} strokeWidth="1.4" vectorEffect="non-scaling-stroke"/>
                   </svg>
                 ) : (
-                  <div style={{width:40,height:20,flexShrink:0}}/>
+                  <div style={{width:56,height:28,flexShrink:0}}/>
                 )}
 
-                {/* Right: Price + Variation */}
-                <div style={{width:70,flexShrink:0,textAlign:'right'}}>
-                  <div style={{fontSize:11,fontWeight:700,color:'#eeeef8',whiteSpace:'nowrap',lineHeight:1.2}}>
+                {/* Right: Price + delta pill */}
+                <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:3,minWidth:72,flexShrink:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:'#fff',whiteSpace:'nowrap',lineHeight:1.1}}>
                     {fmtP(q?.price)}
                   </div>
-                  <div style={{fontSize:9,whiteSpace:'nowrap',color,fontWeight:600,lineHeight:1.1}}>
-                    {q?.change!=null ? `${change>0?'+':''}${fmtP(change)}` : '–'}
-                  </div>
+                  {q?.change!=null && (
+                    <div style={{fontSize:10,fontWeight:600,color:'#fff',background:color,
+                      padding:'2px 7px',borderRadius:5,lineHeight:1.1,whiteSpace:'nowrap'}}>
+                      {change>=0?'+':''}{fmtP(change)}
+                    </div>
+                  )}
                 </div>
               </div>
             );
