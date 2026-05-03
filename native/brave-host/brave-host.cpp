@@ -374,7 +374,12 @@ static bool LaunchBrave(const std::string& url, const std::vector<HWND>& snapBef
         L" --no-default-browser-check"
         L" --force-dark-mode"
         L" --enable-features=WebContentsForceDark"
+        // Recent Chromium versions silently disable CDP without an explicit
+        // origin allowlist; --remote-allow-origins=* permits the localhost
+        // WebSocket upgrade we need for Page.navigate.
+        L" --remote-allow-origins=*"
         L" --remote-debugging-port=" + port;
+    Log("[brave] args=" + std::string(args.begin(), args.end()));
 
     STARTUPINFOW si{ sizeof(si) };
     si.dwFlags = STARTF_USESHOWWINDOW;
