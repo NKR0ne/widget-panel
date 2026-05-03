@@ -23,7 +23,7 @@ const SK_MS_TOKENS = "wp-ms-tokens";
 // ── Palette & system widget defs ─────────────────────────────────────────────
 const PALETTE = ["#4f8ef7","#5cc8a8","#b07ef7","#f7a64f","#f74f7e","#4ff7c8","#f7f74f","#c8f74f"];
 const SYS = [
-  { id:"weather", label:"Weather",          note:"Open-Meteo · no key",           color:"#f7c94f" },
+  { id:"weather", label:"Prévisions",       note:"Open-Meteo · no key",           color:"#f7c94f" },
   { id:"traffic", label:"Circulation",      note:"TomTom · free key",             color:"#f77f4f" },
   { id:"stocks",  label:"Marchés",          note:"Finnhub · free key",            color:"#5cc8a8" },
   { id:"calendar",label:"Calendrier",       note:"No API needed",                 color:"#9c27b0" },
@@ -400,7 +400,7 @@ function WeatherWidget({ location = DEFAULT_LOC }) {
   const nowIdx=hourly?Math.max(0,hourly.time.findIndex(t=>new Date(t)>new Date())-1):0;
   const [cond,icon]=cur?wmo(cur.weather_code):["","⛅"];
 
-  return { color:"#f7c94f", title:"Weather", sub:location.name, lastUpdated,
+  return { color:"#f7c94f", title:"Prévisions", sub:location.name, lastUpdated,
     content:(
       <div>
         {status==="loading"&&<Skel n={2}/>}
@@ -617,7 +617,8 @@ function TradingViewWidget() {
             const q = quotes[ticker];
             const change = q?.change ?? 0;
             const pct = q?.pct ?? 0;
-            const color = change >= 0 ? '#4caf73' : '#ef5350';
+            const color = change >= 0 ? '#4caf73' : '#ef5350';   // sparkline tint
+            const deltaColor = change > 0 ? '#4caf73' : change < 0 ? '#ef5350' : '#888';
             const arrow = change >= 0 ? '▲' : '▼';
 
             // Mini sparkline: 30 points
@@ -662,15 +663,14 @@ function TradingViewWidget() {
                   <div style={{width:46,height:18,flexShrink:0}}/>
                 )}
 
-                {/* Right: Price + delta pill */}
+                {/* Right: Price + delta (text color encodes direction) */}
                 <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:1,minWidth:60,flexShrink:0}}>
-                  <div style={{fontSize:11,fontWeight:600,color:'#fff',whiteSpace:'nowrap',lineHeight:1.1}}>
+                  <div style={{fontSize:11,color:'#fff',whiteSpace:'nowrap',lineHeight:1.1}}>
                     {fmtP(q?.price)}
                   </div>
                   {q?.change!=null && (
-                    <div style={{fontSize:8,fontWeight:600,color:'#fff',background:color,
-                      padding:'1px 5px',borderRadius:4,lineHeight:1.2,whiteSpace:'nowrap'}}>
-                      {change>=0?'+':''}{fmtP(change)}
+                    <div style={{fontSize:9,color:deltaColor,whiteSpace:'nowrap',lineHeight:1.2}}>
+                      {change>0?'+':''}{fmtP(change)}
                     </div>
                   )}
                 </div>
