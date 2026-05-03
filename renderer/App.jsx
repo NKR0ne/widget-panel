@@ -561,7 +561,6 @@ function TradingViewWidget() {
     content:<div style={{color:'#444',fontSize:11,paddingTop:8}}>Loading…</div>
   };
 
-  const listName  = lists[listIdx]?.name || 'Markets';
   const updatedAt = lastFetch
     ? new Date(lastFetch).toLocaleTimeString('en-CA',{hour:'2-digit',minute:'2-digit',hour12:false})
     : '';
@@ -579,7 +578,7 @@ function TradingViewWidget() {
     </div>
   );
 
-  return { color:'#5cc8a8', title: listName, sub: updatedAt ? `Last updated: ${updatedAt}` : 'TradingView',
+  return { color:'#5cc8a8', title: 'Markets', sub: updatedAt ? `Last updated: ${updatedAt}` : 'TradingView',
     lastUpdated: lastFetch || undefined,
     content:(
       <div>
@@ -605,23 +604,23 @@ function TradingViewWidget() {
             }).join(' ');
 
             return (
-              <div key={s} style={{display:'flex',alignItems:'center',gap:10,
-                padding:'9px 0',cursor:'pointer',fontVariantNumeric:'tabular-nums'}}
+              <div key={s} style={{display:'flex',alignItems:'center',gap:8,
+                padding:'3px 0',cursor:'pointer',fontVariantNumeric:'tabular-nums'}}
                 onClick={()=>api.browser.open(`https://www.tradingview.com/chart/?symbol=${s}`)}>
 
                 {/* Left: Ticker + Name */}
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:14,fontWeight:700,color:'#fff',lineHeight:1.15,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                  <div style={{fontSize:11,fontWeight:700,color:'#fff',lineHeight:1.1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                     {ticker}
                   </div>
-                  <div style={{fontSize:10,color:'#888',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',lineHeight:1.25,marginTop:1}}>
+                  <div style={{fontSize:8,color:'#888',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',lineHeight:1.1,marginTop:1}}>
                     {q?.name || d}
                   </div>
                 </div>
 
                 {/* Center: Sparkline */}
                 {sparklinePoints ? (
-                  <svg width="56" height="28" viewBox="0 0 100 24" preserveAspectRatio="none" style={{flexShrink:0}}>
+                  <svg width="46" height="18" viewBox="0 0 100 24" preserveAspectRatio="none" style={{flexShrink:0}}>
                     <defs>
                       <linearGradient id={`grad-${ticker}`} x1="0%" y1="0%" x2="0%" y2="100%">
                         <stop offset="0%" stopColor={color} stopOpacity="0.45"/>
@@ -632,17 +631,17 @@ function TradingViewWidget() {
                     <polyline points={sparklinePoints} fill="none" stroke={color} strokeWidth="1.4" vectorEffect="non-scaling-stroke"/>
                   </svg>
                 ) : (
-                  <div style={{width:56,height:28,flexShrink:0}}/>
+                  <div style={{width:46,height:18,flexShrink:0}}/>
                 )}
 
                 {/* Right: Price + delta pill */}
-                <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:3,minWidth:72,flexShrink:0}}>
-                  <div style={{fontSize:13,fontWeight:600,color:'#fff',whiteSpace:'nowrap',lineHeight:1.1}}>
+                <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:1,minWidth:60,flexShrink:0}}>
+                  <div style={{fontSize:11,fontWeight:600,color:'#fff',whiteSpace:'nowrap',lineHeight:1.1}}>
                     {fmtP(q?.price)}
                   </div>
                   {q?.change!=null && (
-                    <div style={{fontSize:10,fontWeight:600,color:'#fff',background:color,
-                      padding:'2px 7px',borderRadius:5,lineHeight:1.1,whiteSpace:'nowrap'}}>
+                    <div style={{fontSize:8,fontWeight:600,color:'#fff',background:color,
+                      padding:'1px 5px',borderRadius:4,lineHeight:1.2,whiteSpace:'nowrap'}}>
                       {change>=0?'+':''}{fmtP(change)}
                     </div>
                   )}

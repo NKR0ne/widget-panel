@@ -2,6 +2,7 @@ const { app, BrowserWindow, session, globalShortcut, screen, ipcMain, nativeImag
 const path   = require('path')
 const fs     = require('fs')
 const net    = require('net')
+const https  = require('https')
 const { exec, spawn } = require('child_process')
 const { getStore, setStore, deleteStore } = require('./store')
 
@@ -453,6 +454,51 @@ ipcMain.on('panel-renderer-ready', () => {
 
 // panel-hide-done is handled inline in hidePanel() via ipcMain.once
 
+// ── Yahoo Finance handler (no CORS restrictions in main process) ────────────────
+ipcMain.handle('yahoo-chart', async (_e, ticker) => {
+  return new Promise((resolve) => {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=5d&interval=1d`;
+    const options = {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    };
+    https.get(url, options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(data);
+          const meta = json?.chart?.result?.[0]?.meta;
+          const closes = json?.chart?.result?.[0]?.indicators?.quote?.[0]?.close?.filter(Boolean) || [];
+          if (meta) {
+            const price = meta.regularMarketPrice;
+            const prev = meta.chartPreviousClose ?? meta.regularMarketPreviousClose ?? meta.previousClose;
+            const pp = closes.length >= 2 ? closes[closes.length - 2] : null;
+            resolve({
+              price, prev,
+              change: price - prev, pct: (price - prev) / prev * 100,
+              prevChange: pp != null ? prev - pp : null,
+              prevPct: pp != null ? (prev - pp) / pp * 100 : null,
+              name: meta.longName || meta.shortName || '',
+              date: new Date((meta.regularMarketTime || Date.now()/1000) * 1000),
+              closes: closes,
+            });
+          } else {
+            resolve(null);
+          }
+        } catch (e) {
+          log('[yahoo-chart] parse error for', ticker, ':', e.message);
+          resolve(null);
+        }
+      });
+    }).on('error', (e) => {
+      log('[yahoo-chart] error for', ticker, ':', e.message);
+      resolve(null);
+    });
+  });
+});
+
 // ── Brave host TCP server (port 47322) ────────────────────────────────────────
 let braveServer    = null
 let braveSocket    = null
@@ -671,7 +717,6 @@ app.whenReady().then(() => {
 })
 
 // ── Microsoft Graph proxy (avoids CORS in renderer) ──────────────────────────
-const https = require('https')
 
 function httpsRequest(options, body) {
   return new Promise((resolve, reject) => {
@@ -935,8 +980,12 @@ async function fetchColoredList(color) {
       .filter(s => typeof s === 'string' && !s.startsWith('###'))
       .map(s => ({ s, d: s.includes(':') ? s.split(':')[1] : s }))
     if (!symbols.length) return null
-    log('[tv-api] colored/', color, 'symbols=', symbols.length)
-    return { id: `colored_${color}`, name: color.charAt(0).toUpperCase() + color.slice(1), symbols }
+    // TradingView allows renaming a colored list; prefer the user's name if present.
+    const userName = (typeof json?.name === 'string' && json.name.trim()) || (typeof json?.title === 'string' && json.title.trim())
+    const fallback = color.charAt(0).toUpperCase() + color.slice(1)
+    const name = userName || fallback
+    log('[tv-api] colored/', color, 'name=', name, 'symbols=', symbols.length)
+    return { id: `colored_${color}`, name, symbols }
   } catch (e) { log('[tv-api] colored error', color, e.message); return null }
 }
 
