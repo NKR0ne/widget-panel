@@ -29,6 +29,7 @@ const SYS = [
   { id:"calendar",label:"Calendar",         note:"No API needed",                 color:"#9c27b0" },
   { id:"clock",   label:"Clock",            note:"No API needed",                 color:"#e8e8f0" },
   { id:"agenda",  label:"Outlook Agenda",   note:"Microsoft Graph · OAuth",       color:"#0078d4" },
+  { id:"mail",    label:"Outlook Mail",     note:"Microsoft Graph · OAuth",       color:"#0078d4" },
   { id:"todo",    label:"Microsoft To-Do",  note:"Microsoft Graph · OAuth",       color:"#2564cf" },
 ];
 
@@ -90,6 +91,12 @@ const MOCK_TASKS = [
   { id:"t2", title:"Update architecture docs",status:"notStarted", importance:"normal" },
   { id:"t3", title:"Deploy to staging",       status:"inProgress", importance:"normal" },
   { id:"t4", title:"Write sprint retro notes",status:"notStarted", importance:"low" },
+];
+const MOCK_MAIL = [
+  { id:"m1", subject:"Sprint planning agenda", from:{emailAddress:{name:"Marie Tremblay"}}, bodyPreview:"Hi team, here's the agenda for tomorrow's planning session…", receivedDateTime:new Date(Date.now()-1800000).toISOString(), isRead:false },
+  { id:"m2", subject:"Re: PR #247 — feedback", from:{emailAddress:{name:"Olivier Lapointe"}}, bodyPreview:"Looks good overall, just a few minor comments on the auth flow.", receivedDateTime:new Date(Date.now()-7200000).toISOString(), isRead:false },
+  { id:"m3", subject:"Weekly report — Apr 25",  from:{emailAddress:{name:"Reports"}},        bodyPreview:"Performance summary for the week including key metrics…", receivedDateTime:new Date(Date.now()-86400000).toISOString(),isRead:true },
+  { id:"m4", subject:"Lunch tomorrow?",         from:{emailAddress:{name:"Pierre"}},         bodyPreview:"Free for a quick bite around 12:30?",                       receivedDateTime:new Date(Date.now()-90000000).toISOString(),isRead:true },
 ];
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -879,7 +886,7 @@ function useMsAuth() {
   }
 
   async function startAuth(cid) {
-    const scopes = ['Calendars.Read', 'Tasks.ReadWrite', 'offline_access', 'User.Read'];
+    const scopes = ['Calendars.Read', 'Mail.Read', 'Tasks.ReadWrite', 'offline_access', 'User.Read'];
     setCid(cid);
     api.store.set(SK_MS_CLIENT, cid);
     setStep('authenticating');
@@ -914,7 +921,7 @@ function MsSetupPane({ step, cidDraft, setCidDraft, startAuth }) {
         {cidDraft && <button onClick={()=>startAuth(cidDraft)} style={C.btn}>→</button>}
       </div>
       <div style={{fontSize:9,color:"#252530",marginTop:8,lineHeight:1.7}}>
-        portal.azure.com → App registrations → New → grant <em>Calendars.Read</em> + <em>Tasks.ReadWrite</em> → enable public client flows
+        portal.azure.com → App registrations → New → grant <em>Calendars.Read</em> + <em>Mail.Read</em> + <em>Tasks.ReadWrite</em> → enable public client flows
       </div>
     </div>
   );
@@ -1141,6 +1148,127 @@ function AgendaWidget() {
   };
 }
 
+// ── Outlook Mail widget ──────────────────────────────────────────────────────
+function MailWidget() {
+  const auth = useMsAuth();
+  const [messages,    setMessages]    = useState([]);
+  const [demo,        setDemo]        = useState(false);
+  const [loading,     setLoading]     = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const [cardHeight,  setCardHeight]  = useState(360);
+
+  useEffect(() => {
+    api.store.get('wp-mail-height').then(v => {
+      const h = parseInt(v || '0');
+      if (h >= 80) setCardHeight(h);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (auth.step !== 'ok' || !auth.tokens) return;
+    const go = () => fetchAll(auth.tokens.accessToken);
+    go();
+    const t = setInterval(go, 5 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [auth.step, auth.tokens?.accessToken]);
+
+  async function fetchAll(token) {
+    setLoading(true);
+    try {
+      const res = await window.electronAPI.msGraph.fetch(
+        'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top=50&$select=subject,from,receivedDateTime,bodyPreview,isRead,importance', token);
+      if (res.status === 401) { auth.signOut(); setLoading(false); return; }
+      const msgs = res.body?.value || [];
+      setMessages(msgs); setDemo(false);
+    } catch { setMessages(MOCK_MAIL); setDemo(true); }
+    setLoading(false); setLastUpdated(Date.now());
+  }
+
+  const onResizeMouseDown = (e) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = cardHeight;
+    let cur = startH;
+    const onMove = (ev) => {
+      cur = Math.max(80, startH + (ev.clientY - startY));
+      setCardHeight(cur);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      api.store.set('wp-mail-height', String(cur));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  function fmtTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const now = new Date();
+    const isToday = d.toDateString() === now.toDateString();
+    if (isToday) return d.toLocaleTimeString("fr-CA", { hour:"2-digit", minute:"2-digit" });
+    const diffDays = Math.floor((now - d) / 86400000);
+    if (diffDays < 7) return d.toLocaleDateString("fr-CA", { weekday:"short" });
+    return d.toLocaleDateString("fr-CA", { day:"numeric", month:"short" });
+  }
+
+  const showAuth = ['loading','setup','authenticating','error'].includes(auth.step);
+  const unreadCount = messages.filter(m => !m.isRead).length;
+
+  return { color:"#0078d4", title:"Outlook Mail", lastUpdated,
+    badge: unreadCount > 0 ? <span style={{ ...C.badge, background:"#0078d4", color:"#fff" }}>{unreadCount}</span> : null,
+    content:(
+      <div>
+        {showAuth && <MsSetupPane {...auth}/>}
+        {auth.step === 'ok' && (
+          <div>
+            {loading && <Skel n={3}/>}
+            {!loading && (
+              <div>
+                {demo && <DemoBadge/>}
+                {messages.length === 0 && (
+                  <div style={{paddingTop:10,fontSize:11,color:"#dcdcec",textAlign:"center"}}>Aucun message</div>
+                )}
+                <div style={{height:cardHeight,overflowY:"auto",paddingRight:2}}>
+                  {messages.map((msg, i) => (
+                    <div key={msg.id} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"7px 0",
+                      borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none",opacity:msg.isRead?0.65:1}}>
+                      <div style={{width:6,height:6,borderRadius:"50%",background:msg.isRead?"transparent":"#0078d4",flexShrink:0,marginTop:6}}/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"baseline"}}>
+                          <div style={{fontSize:11,color:"#d8d8e8",fontWeight:msg.isRead?400:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                            {msg.from?.emailAddress?.name || msg.from?.emailAddress?.address || 'Unknown'}
+                          </div>
+                          <div style={{fontSize:9,color:"#dcdcec",fontFamily:"DM Mono,monospace",flexShrink:0}}>{fmtTime(msg.receivedDateTime)}</div>
+                        </div>
+                        <div style={{fontSize:11,color:"#dcdcec",fontWeight:msg.isRead?400:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>
+                          {msg.subject || '(Sans objet)'}
+                        </div>
+                        {msg.bodyPreview && (
+                          <div style={{fontSize:10,color:"#888",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginTop:1}}>
+                            {msg.bodyPreview}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div onMouseDown={onResizeMouseDown}
+                  style={{height:6,marginTop:2,marginLeft:-14,marginRight:-14,cursor:'ns-resize',
+                    display:'flex',alignItems:'center',justifyContent:'center',userSelect:'none'}}>
+                  <div style={{width:28,height:2,borderRadius:1,background:'rgba(255,255,255,0.1)'}}/>
+                </div>
+                <button onClick={auth.signOut} style={{marginTop:14,background:"none",border:"none",fontSize:9,color:"#222228",cursor:"pointer",padding:0}}>Déconnecter</button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    )
+  };
+}
+
 // ── Microsoft To-Do widget ────────────────────────────────────────────────────
 function TodoWidget() {
   const auth = useMsAuth();
@@ -1297,8 +1425,10 @@ function WidgetCard({ id, categories, apiKeys, onSaveKey, colorIdx, onUnreadChan
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const agendaData  = id==="agenda"  ? AgendaWidget() : null;
   // eslint-disable-next-line react-hooks/rules-of-hooks
+  const mailData    = id==="mail"    ? MailWidget()   : null;
+  // eslint-disable-next-line react-hooks/rules-of-hooks
   const todoData    = id==="todo"    ? TodoWidget()   : null;
-  const d = newsData || weatherData || stocksData || calendarData || trafficData || clockData || agendaData || todoData;
+  const d = newsData || weatherData || stocksData || calendarData || trafficData || clockData || agendaData || mailData || todoData;
   if (!d) return null;
   return (
     <Shell color={d.color} title={d.title} sub={d.sub} badge={d.badge} lastUpdated={d.lastUpdated}
@@ -1668,6 +1798,7 @@ export default function App() {
     cols.traffic = "left";
     cols.clock   = "left";
     cols.agenda  = "right";
+    cols.mail    = "right";
     cols.todo    = "right";
     return cols;
   }
