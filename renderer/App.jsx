@@ -47,6 +47,25 @@ const DEFAULT_TV_SYMBOLS = [
   {s:'NASDAQ:AMD', d:'AMD'},
 ];
 
+// Built-in "Marchés" overview — replaces TV's default "Liste de surveillance"
+// tab. Tickers after the colon must be Yahoo-compatible (ETFs work; raw indices
+// like ^GSPC don't because TV symbols don't carry the ^).
+const MARKETS_OVERVIEW_LIST = {
+  id:   'wp-markets-overview',
+  name: 'Marchés',
+  symbols: [
+    {s:'AMEX:SPY',    d:'S&P 500'},
+    {s:'NASDAQ:QQQ',  d:'NASDAQ 100'},
+    {s:'AMEX:DIA',    d:'Dow Jones'},
+    {s:'AMEX:IWM',    d:'Russell 2000'},
+    {s:'NASDAQ:IBIT', d:'Bitcoin'},
+    {s:'AMEX:GLD',    d:'Gold'},
+    {s:'AMEX:USO',    d:'Crude Oil'},
+    {s:'NASDAQ:TLT',  d:'20Y Treasury'},
+    {s:'AMEX:UUP',    d:'US Dollar'},
+  ],
+};
+
 // ── Mock fallback data ───────────────────────────────────────────────────────
 const MOCK_NEWS = [
   { id:"1", title:"RISC-V chips are closing the gap with x86 in datacenter benchmarks",   source:"arstechnica.com", link:"#", time:"12m", image:null },
@@ -502,7 +521,14 @@ function TradingViewWidget() {
     window.addEventListener('mouseup', onUp);
   };
 
-  const symbols = lists[listIdx]?.symbols || [];
+  // Build the effective list set: prepend the built-in "Marchés" overview and
+  // drop TV's default "Liste de surveillance" entry (the user's renamed lists
+  // pass through unchanged).
+  const effectiveLists = [
+    MARKETS_OVERVIEW_LIST,
+    ...lists.filter(l => (l?.name || '').trim().toLowerCase() !== 'liste de surveillance'),
+  ];
+  const symbols = effectiveLists[listIdx]?.symbols || [];
 
   useEffect(() => {
     if (!symbols.length) return;
@@ -565,9 +591,9 @@ function TradingViewWidget() {
     ? new Date(lastFetch).toLocaleTimeString('en-CA',{hour:'2-digit',minute:'2-digit',hour12:false})
     : '';
 
-  const tabs = lists.length > 1 && (
+  const tabs = effectiveLists.length > 1 && (
     <div style={{display:'flex',gap:4,marginBottom:8,overflowX:'auto'}}>
-      {lists.map((l,i) => (
+      {effectiveLists.map((l,i) => (
         <button key={l.id||i} onClick={()=>{ setListIdx(i); api.store.set('wp-tv-list-idx', String(i)); }}
           style={{background:i===listIdx?'rgba(255,255,255,0.1)':'none',border:'none',
             borderRadius:5,color:i===listIdx?'#e4e4f4':'#555',
