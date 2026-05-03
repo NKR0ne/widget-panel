@@ -357,8 +357,19 @@ static bool LaunchBrave(const std::string& url, const std::vector<HWND>& snapBef
     if (g_bravePath.empty()) { Log("[brave] exe not found"); return false; }
     std::wstring wurl(url.begin(), url.end());
     std::wstring port = std::to_wstring(CDP_PORT);
+
+    // Force a dedicated Brave instance with its own profile. Without this, if
+    // the user already has Brave running normally, our launch reuses the
+    // existing process and --remote-debugging-port is silently ignored —
+    // CDP /json times out and navigations fail.
+    wchar_t local[MAX_PATH] = {};
+    SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, local);
+    std::wstring dataDir = std::wstring(local) + L"\\WidgetPanel\\BraveProfile";
+    SHCreateDirectoryExW(NULL, dataDir.c_str(), NULL);
+
     std::wstring args = L"\"" + g_bravePath + L"\""
         L" --app=" + wurl +
+        L" --user-data-dir=\"" + dataDir + L"\""
         L" --no-first-run"
         L" --no-default-browser-check"
         L" --force-dark-mode"
