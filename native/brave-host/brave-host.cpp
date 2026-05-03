@@ -198,60 +198,48 @@ static std::string FindPageTarget(const std::string& jsonArray) {
     return "";
 }
 
-// Cached CDP WebSocket — set up on first navigate, reused for subsequent ones.
-// Each navigate previously did /json poll + WS upgrade + send + WAIT for ack +
-// close. Caching the connection and skipping the ack wait drops navigation
-// latency from ~1–3s to a few ms.
-static HINTERNET g_cdpSess = NULL;
-static HINTERNET g_cdpConn = NULL;
-static HINTERNET g_cdpWs   = NULL;
-static int       g_cdpId   = 0;
-
-static void CloseCachedCdp() {
-    if (g_cdpWs)   { WinHttpCloseHandle(g_cdpWs);   g_cdpWs = NULL; }
-    if (g_cdpConn) { WinHttpCloseHandle(g_cdpConn); g_cdpConn = NULL; }
-    if (g_cdpSess) { WinHttpCloseHandle(g_cdpSess); g_cdpSess = NULL; }
-    g_cdpId = 0;
-}
-
-static bool OpenCachedCdp() {
-    if (g_cdpWs) return true;
-
+// Per-call CDP navigate: fetch /json, open a fresh WebSocket to the current
+// page target, send Page.navigate, close. No caching — the page target can
+// change across cross-origin navigations, and a stale cached socket sends
+// data that Brave silently drops. Cost is ~100ms per navigate (acceptable);
+// we skip the receive-after-send so we don't block on a potentially slow
+// Brave response.
+static bool NavigateViaCDP(const std::string& url) {
     std::string json = CdpGetJson(8000);
     if (json.empty()) { Log("[cdp] /json timeout"); return false; }
+
     std::string wsUrlFull = FindPageTarget(json);
     if (wsUrlFull.empty()) { Log("[cdp] no page target found"); return false; }
+
     auto pathPos = wsUrlFull.find("/devtools");
     if (pathPos == std::string::npos) { Log("[cdp] bad wsUrl"); return false; }
     std::string wsPath = wsUrlFull.substr(pathPos);
     std::wstring wsPathW(wsPath.begin(), wsPath.end());
 
-    g_cdpSess = WinHttpOpen(L"wp", WINHTTP_ACCESS_TYPE_NO_PROXY, NULL, NULL, 0);
-    if (!g_cdpSess) return false;
-    g_cdpConn = WinHttpConnect(g_cdpSess, L"localhost", CDP_PORT, 0);
-    if (!g_cdpConn) { CloseCachedCdp(); return false; }
-    HINTERNET hReq = WinHttpOpenRequest(g_cdpConn, L"GET", wsPathW.c_str(), NULL, NULL, NULL, 0);
-    if (!hReq) { CloseCachedCdp(); return false; }
+    HINTERNET hSess = WinHttpOpen(L"wp", WINHTTP_ACCESS_TYPE_NO_PROXY, NULL, NULL, 0);
+    if (!hSess) return false;
+    HINTERNET hConn = WinHttpConnect(hSess, L"localhost", CDP_PORT, 0);
+    if (!hConn) { WinHttpCloseHandle(hSess); return false; }
+    HINTERNET hReq = WinHttpOpenRequest(hConn, L"GET", wsPathW.c_str(), NULL, NULL, NULL, 0);
+    if (!hReq) { WinHttpCloseHandle(hConn); WinHttpCloseHandle(hSess); return false; }
 
     WinHttpSetOption(hReq, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, NULL, 0);
     if (!WinHttpSendRequest(hReq, NULL, 0, NULL, 0, 0, 0) ||
         !WinHttpReceiveResponse(hReq, NULL)) {
         Log("[cdp] ws upgrade failed");
         WinHttpCloseHandle(hReq);
-        CloseCachedCdp();
+        WinHttpCloseHandle(hConn);
+        WinHttpCloseHandle(hSess);
         return false;
     }
 
-    g_cdpWs = WinHttpWebSocketCompleteUpgrade(hReq, NULL);
+    HINTERNET hWs = WinHttpWebSocketCompleteUpgrade(hReq, NULL);
     WinHttpCloseHandle(hReq);
-    if (!g_cdpWs) { Log("[cdp] ws complete failed"); CloseCachedCdp(); return false; }
-
-    Log("[cdp] ws cached and reusable");
-    return true;
-}
-
-static bool NavigateViaCDP(const std::string& url) {
-    if (!OpenCachedCdp()) return false;
+    if (!hWs) {
+        WinHttpCloseHandle(hConn);
+        WinHttpCloseHandle(hSess);
+        return false;
+    }
 
     std::string safeUrl;
     for (char c : url) {
@@ -259,23 +247,18 @@ static bool NavigateViaCDP(const std::string& url) {
         else if (c == '\\') safeUrl += "\\\\";
         else safeUrl += c;
     }
-    g_cdpId++;
-    std::string msg = "{\"id\":" + std::to_string(g_cdpId)
-        + ",\"method\":\"Page.navigate\",\"params\":{\"url\":\"" + safeUrl + "\"}}";
-    DWORD result = WinHttpWebSocketSend(g_cdpWs, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
+    std::string msg = "{\"id\":1,\"method\":\"Page.navigate\",\"params\":{\"url\":\"" + safeUrl + "\"}}";
+    DWORD result = WinHttpWebSocketSend(hWs, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
                                         (PVOID)msg.c_str(), (DWORD)msg.size());
     Log("[cdp] Page.navigate sent, result=" + std::to_string(result));
 
-    if (result != ERROR_SUCCESS) {
-        // Connection lost — clear cache so the next call rebuilds it.
-        CloseCachedCdp();
-        return false;
-    }
-
-    // Fire-and-forget: the page navigates asynchronously; the CDP ack is just
-    // a frameId we don't use. Skipping the receive call keeps the brave-host
-    // main loop responsive to follow-up messages (close, navigate again, etc.)
-    return true;
+    // Fire-and-forget: don't wait for the ack. Closing the WS immediately is
+    // fine — the navigate command is already processed by Chromium.
+    WinHttpWebSocketClose(hWs, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, NULL, 0);
+    WinHttpCloseHandle(hWs);
+    WinHttpCloseHandle(hConn);
+    WinHttpCloseHandle(hSess);
+    return result == ERROR_SUCCESS;
 }
 
 // Forward declaration (g_brave defined in Global state section below)
@@ -357,9 +340,6 @@ static void DestroyShell() {
 
 static void KillBrave() {
     g_launched = false;
-    // The cached CDP WebSocket is bound to the dying Brave process — drop it so
-    // the next navigate after relaunch rebuilds against the new process.
-    CloseCachedCdp();
     if (g_brave && IsWindow(g_brave)) {
         SetParent(g_brave, NULL);
         ShowWindow(g_brave, SW_HIDE);
