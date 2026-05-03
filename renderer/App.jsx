@@ -2131,10 +2131,12 @@ export default function App() {
               <div style={{display:"flex",gap:4,alignItems:"center",marginTop:2}}>
                 <button onClick={()=>api.browser?.open?.(PRESSREADER_URL)} title="PressReader"
                   style={{background:"none",border:"1px solid transparent",borderRadius:6,
-                    cursor:"pointer",padding:"2px 4px",lineHeight:1,display:"flex",alignItems:"center"}}>
-                  <span style={{display:"inline-block",background:"#c8102e",color:"#fff",
-                    fontWeight:800,fontSize:11,padding:"2px 5px",borderRadius:3,
-                    fontFamily:"'DM Sans',sans-serif",lineHeight:1,letterSpacing:0}}>P</span>
+                    cursor:"pointer",padding:"3px 4px",lineHeight:1,display:"flex",alignItems:"center"}}>
+                  <svg width="16" height="16" viewBox="0 0 32 32" style={{display:"block"}}>
+                    <path d="M6,4 H26 A4,4 0 0 1 30,8 V20 A4,4 0 0 1 26,24 H22 L24,30 L16,24 H6 A4,4 0 0 1 2,20 V8 A4,4 0 0 1 6,4 Z" fill="#1FAA8C"/>
+                    <text x="16" y="15" fontSize="14" fontWeight="800" fill="#fff" textAnchor="middle"
+                      fontFamily="'DM Sans',sans-serif" dominantBaseline="central">P</text>
+                  </svg>
                 </button>
                 <button onClick={togglePin} title={pinned?"Unpin":"Pin to desktop"}
                   style={{background:pinned?"color-mix(in srgb, var(--accent) 15%, transparent)":"none",border:pinned?"1px solid color-mix(in srgb, var(--accent) 30%, transparent)":"1px solid transparent",
