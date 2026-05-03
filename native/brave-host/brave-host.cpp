@@ -205,7 +205,10 @@ static std::string FindPageTarget(const std::string& jsonArray) {
 // we skip the receive-after-send so we don't block on a potentially slow
 // Brave response.
 static bool NavigateViaCDP(const std::string& url) {
-    std::string json = CdpGetJson(8000);
+    // 15s timeout — with --user-data-dir creating a fresh profile, Brave's
+    // CDP takes longer to come online than with a warm profile. 8s wasn't
+    // enough on the first post-open navigate.
+    std::string json = CdpGetJson(15000);
     if (json.empty()) { Log("[cdp] /json timeout"); return false; }
 
     std::string wsUrlFull = FindPageTarget(json);
@@ -510,6 +513,10 @@ static void HandleMessage(const std::string& line) {
                          SWP_NOZORDER | SWP_NOACTIVATE);
     }
     else if (type == "close") {
+        // Hide the shell first for instant visual feedback. KillBrave's
+        // process-tree cleanup (renderers, GPU, etc.) can take a moment
+        // and would otherwise delay the apparent panel dismissal.
+        if (g_shell && IsWindow(g_shell)) ShowWindow(g_shell, SW_HIDE);
         KillBrave();
         DestroyShell();
     }

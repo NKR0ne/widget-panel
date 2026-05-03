@@ -507,13 +507,15 @@ let navLoadTimer   = null   // auto-clears the loading spinner if brave-host nev
 const TOOLBAR_H = 42
 
 // Clear the brave-loading spinner after a timeout in case brave-host doesn't
-// send 'ready' after navigation.
+// send 'ready' after navigation. 12s aligns with brave-host's 15s CDP /json
+// poll budget so the spinner stays visible long enough for a slow first-
+// post-open navigate to land.
 function armNavLoadTimer() {
   if (navLoadTimer) clearTimeout(navLoadTimer)
   navLoadTimer = setTimeout(() => {
     navLoadTimer = null
     if (win && !win.isDestroyed() && browserEmbedded) win.webContents.send('brave-loading', false)
-  }, 5000)
+  }, 12000)
 }
 
 function sendToBrave(obj) {
