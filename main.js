@@ -573,33 +573,40 @@ function openBraveInPanel(url) {
   const panelW = win.getSize()[0]
   if (!browserEmbedded) panelOnlyWidth = panelW
 
-  // Panel window is inset PANEL_GAP from the left; Brave starts right after the panel at screen x=PANEL_GAP+panelW
-  // Window also leaves PANEL_GAP on the right side, matching the panel's left gap to the screen
-  const panelScreenRight = PANEL_GAP + panelW   // screen x where panel ends (physical = *sf)
-  const physPanelRight  = Math.round(panelScreenRight * sf)
-  const physScreenRight = Math.round(bounds.width * sf)
-  const physRightGap    = Math.round(PANEL_GAP * sf)
-  const braveW = Math.floor((physScreenRight - physPanelRight - physRightGap) / sf)
-  const totalW = panelW + braveW
-  const braveH = workArea.height - PANEL_GAP * 2
+  // When the browser is embedded, the window extends to the screen right edge
+  // and to the workArea bottom — eliminating the desktop-wallpaper sliver that
+  // showed as a 'black border' against bright web content. Top and left keep
+  // their PANEL_GAP so the panel itself looks unchanged.
+  const panelScreenRight = PANEL_GAP + panelW
+  const winY    = workArea.y + PANEL_GAP                // 10px gap at top
+  const winH    = workArea.height - PANEL_GAP           // bottom flush with workArea
+  const totalW  = bounds.width - PANEL_GAP              // right flush with screen
+  const braveW  = totalW - panelW
 
   currentUrl = url
   lastBrowserOpenTime = Date.now()
 
-  win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: totalW, height: braveH })
+  win.setBounds({ x: PANEL_GAP, y: winY, width: totalW, height: winH })
   browserEmbedded = true
 
   win.webContents.send('browser-pane-show', { url, braveX: panelW })
   win.webContents.send('brave-loading', true)
   win.webContents.send('brave-url', url)
 
-  // BRAVE_M: margin around the shell, so the panel-color backdrop is visible as a frame
+  // Shell: small left gap (BRAVE_M) keeps the panel-color frame visible
+  // between the panel and Brave; right and bottom edges flush with the window
+  // (which is now flush with the screen on those sides). Top reserves
+  // TOOLBAR_H for the buttons.
   const BRAVE_M = 8
+  const shellX = panelScreenRight + BRAVE_M
+  const shellY = winY + TOOLBAR_H
+  const shellW = bounds.width - shellX
+  const shellH = (winY + winH) - shellY
   sendToBrave({ type: 'open', hwnd: 0,
-    x: Math.round((panelScreenRight + BRAVE_M) * sf),
-    y: Math.round((workArea.y + PANEL_GAP + TOOLBAR_H) * sf),
-    w: Math.round((braveW - BRAVE_M * 2) * sf),
-    h: Math.round((braveH - TOOLBAR_H - BRAVE_M) * sf),
+    x: Math.round(shellX * sf),
+    y: Math.round(shellY * sf),
+    w: Math.round(shellW * sf),
+    h: Math.round(shellH * sf),
     url })
   notifyHelperHwnds()
 }
