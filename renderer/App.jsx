@@ -1314,58 +1314,98 @@ function CameraWidget() {
     });
   }, []);
 
-  // Strip the web client chrome once the camera tile has rendered. We probe
-  // for the SDK's custom element so the login screen (and any other non-camera
-  // page) still shows their normal UI.
+  // Walk up from the video tile and hide every sibling at every level so only
+  // the video remains visible — works regardless of how deeply nested the
+  // SDK puts the tile. A MutationObserver re-applies whenever the DOM changes
+  // (the SDK frequently re-renders the camera area).
   useEffect(() => {
     const wv = webviewRef.current;
     if (!wv) return;
 
-    const cameraOnlyCSS = `
-      html, body { overflow: hidden !important; background: #000 !important; margin: 0 !important; padding: 0 !important; }
-      /* Hide every body child except the video manager and its ancestors. */
-      body > *:not(videos-video-connection-manager):not(script):not(style) { display: none !important; }
-      /* Force the video manager and the inner stream component to fill. */
-      videos-video-connection-manager,
-      videos-video-connection-manager > *,
-      video-connection,
-      video-connection > * {
-        position: fixed !important;
-        top: 0 !important; left: 0 !important;
-        width: 100vw !important; height: 100vh !important;
-        z-index: 9999 !important;
-      }
-    `;
-    let cssKey = null;
+    const isolateScript = `
+      (() => {
+        if (window.__wpCameraIsolateInstalled) return;
+        window.__wpCameraIsolateInstalled = true;
 
-    const sync = async () => {
-      try {
-        const hasCam = await wv.executeJavaScript(
-          "!!document.querySelector('videos-video-connection-manager, video-connection')"
-        );
-        if (hasCam && cssKey == null) {
-          cssKey = await wv.insertCSS(cameraOnlyCSS);
-        } else if (!hasCam && cssKey != null) {
-          await wv.removeInsertedCSS(cssKey);
-          cssKey = null;
+        const FLAG = '__wpCamHide';
+
+        function findVideoTile() {
+          // Most specific to least: tile elements > video manager > raw <video>/<canvas>
+          const sels = [
+            'video-connection',
+            'videos-video-connection-manager',
+            'videos-video-stream-component',
+            'videos-video-stream',
+            'video',
+            'canvas',
+          ];
+          for (const sel of sels) {
+            const el = document.querySelector(sel);
+            if (el && el.offsetWidth > 80 && el.offsetHeight > 60) return el;
+          }
+          return null;
         }
-      } catch {}
+
+        function isolate() {
+          const tile = findVideoTile();
+          if (!tile) return;
+
+          // Walk up from tile to <body>, hide every sibling at each level.
+          let el = tile;
+          while (el && el !== document.body && el.parentElement) {
+            for (const sib of el.parentElement.children) {
+              if (sib !== el && !sib[FLAG] && sib.tagName !== 'SCRIPT' && sib.tagName !== 'STYLE') {
+                sib.style.setProperty('display', 'none', 'important');
+                sib[FLAG] = true;
+              }
+            }
+            el = el.parentElement;
+          }
+          // Stretch the tile and its ancestors to fill viewport.
+          let cur = tile;
+          while (cur && cur !== document.body && cur.parentElement) {
+            cur.style.setProperty('position', 'fixed', 'important');
+            cur.style.setProperty('top', '0', 'important');
+            cur.style.setProperty('left', '0', 'important');
+            cur.style.setProperty('width', '100vw', 'important');
+            cur.style.setProperty('height', '100vh', 'important');
+            cur.style.setProperty('z-index', '9999', 'important');
+            cur.style.setProperty('margin', '0', 'important');
+            cur.style.setProperty('padding', '0', 'important');
+            cur = cur.parentElement;
+          }
+          document.body.style.cssText = 'margin:0!important;padding:0!important;background:#000!important;overflow:hidden!important';
+          document.documentElement.style.cssText = 'margin:0!important;padding:0!important;background:#000!important';
+        }
+
+        // Initial pass + observe further DOM changes.
+        isolate();
+        const obs = new MutationObserver(() => isolate());
+        obs.observe(document.body, { childList: true, subtree: true });
+
+        // Also poll briefly in case the SDK reattaches asynchronously.
+        let n = 0;
+        const tick = setInterval(() => {
+          isolate();
+          if (++n > 60) clearInterval(tick); // ~60s
+        }, 1000);
+      })();
+    `;
+
+    const inject = () => {
+      try { wv.executeJavaScript(isolateScript); } catch {}
     };
 
-    wv.addEventListener('dom-ready', sync);
-    wv.addEventListener('did-finish-load', sync);
-    wv.addEventListener('did-navigate-in-page', sync);
-    // The SDK creates the custom element dynamically after auth — poll for a
-    // few seconds in case no navigation event fires.
-    const poll = setInterval(sync, 1500);
+    wv.addEventListener('dom-ready', inject);
+    wv.addEventListener('did-finish-load', inject);
+    wv.addEventListener('did-navigate-in-page', inject);
 
     return () => {
       try {
-        wv.removeEventListener('dom-ready', sync);
-        wv.removeEventListener('did-finish-load', sync);
-        wv.removeEventListener('did-navigate-in-page', sync);
+        wv.removeEventListener('dom-ready', inject);
+        wv.removeEventListener('did-finish-load', inject);
+        wv.removeEventListener('did-navigate-in-page', inject);
       } catch {}
-      clearInterval(poll);
     };
   }, []);
 
