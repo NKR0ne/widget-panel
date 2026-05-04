@@ -689,6 +689,20 @@ function writeLaunchPath() {
   try { fs.writeFileSync(pathFile, launchPath, 'utf8') } catch {}
 }
 
+// ── Self-signed cert allowance for the local Security Center camera webview.
+// Scope is host-restricted: only securitycenter.local is auto-accepted.
+app.on('certificate-error', (event, _webContents, url, _error, _certificate, callback) => {
+  try {
+    const u = new URL(url)
+    if (u.hostname === 'securitycenter.local') {
+      event.preventDefault()
+      callback(true)
+      return
+    }
+  } catch {}
+  callback(false)
+})
+
 // ── App ready ─────────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   disableNativeWidgets()

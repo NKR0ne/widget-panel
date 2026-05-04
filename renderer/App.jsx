@@ -31,7 +31,10 @@ const SYS = [
   { id:"agenda",  label:"Outlook Agenda",   note:"Microsoft Graph · OAuth",       color:"#0078d4" },
   { id:"mail",    label:"Outlook Mail",     note:"Microsoft Graph · OAuth",       color:"#0078d4" },
   { id:"todo",    label:"Microsoft To-Do",  note:"Microsoft Graph · OAuth",       color:"#2564cf" },
+  { id:"camera",  label:"Caméra",           note:"Security Center · local",       color:"#5e8af5" },
 ];
+
+const CAMERA_URL = "https://securitycenter.local:8082/index.html#group=c73dce52-b1d5-4e77-a694-014a52e63d71&cam=11ae9771-dcc4-430b-b47c-20caa6175566";
 
 const PRESSREADER_URL = "https://www.pressreader.com.ezproxy.bibliothequedequebec.qc.ca/fr/catalog/featured";
 
@@ -1295,6 +1298,60 @@ function MailWidget() {
   };
 }
 
+// ── Camera widget (Genetec Security Center web client) ──────────────────────
+function CameraWidget() {
+  const [cardHeight, setCardHeight] = useState(300);
+
+  useEffect(() => {
+    api.store.get('wp-camera-height').then(v => {
+      const h = parseInt(v || '0');
+      if (h >= 150) setCardHeight(h);
+    });
+  }, []);
+
+  const onResizeMouseDown = (e) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = cardHeight;
+    let cur = startH;
+    const onMove = (ev) => {
+      cur = Math.max(150, startH + (ev.clientY - startY));
+      setCardHeight(cur);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      api.store.set('wp-camera-height', String(cur));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  const externalBtn = (
+    <button onClick={e=>{ e.stopPropagation(); api.browser?.open?.(CAMERA_URL); }}
+      title="Open in browser"
+      style={{background:"none",border:"none",color:"#666",fontSize:12,cursor:"pointer",padding:"0 2px",lineHeight:1}}>↗</button>
+  );
+
+  return { color:"#5e8af5", title:"Caméra", badge: externalBtn,
+    content:(
+      <div>
+        <webview
+          src={CAMERA_URL}
+          partition="persist:cameras"
+          allowpopups="true"
+          style={{width:"100%", height:cardHeight, border:"none", borderRadius:6, background:"#000"}}
+        />
+        <div onMouseDown={onResizeMouseDown}
+          style={{height:6,marginTop:2,marginLeft:-14,marginRight:-14,cursor:'ns-resize',
+            display:'flex',alignItems:'center',justifyContent:'center',userSelect:'none'}}>
+          <div style={{width:28,height:2,borderRadius:1,background:'rgba(255,255,255,0.1)'}}/>
+        </div>
+      </div>
+    )
+  };
+}
+
 // ── Microsoft To-Do widget ────────────────────────────────────────────────────
 function TodoWidget() {
   const auth = useMsAuth();
@@ -1453,8 +1510,10 @@ function WidgetCard({ id, categories, apiKeys, onSaveKey, colorIdx, onUnreadChan
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const mailData    = id==="mail"    ? MailWidget()   : null;
   // eslint-disable-next-line react-hooks/rules-of-hooks
+  const cameraData  = id==="camera"  ? CameraWidget() : null;
+  // eslint-disable-next-line react-hooks/rules-of-hooks
   const todoData    = id==="todo"    ? TodoWidget()   : null;
-  const d = newsData || weatherData || stocksData || calendarData || trafficData || clockData || agendaData || mailData || todoData;
+  const d = newsData || weatherData || stocksData || calendarData || trafficData || clockData || agendaData || mailData || cameraData || todoData;
   if (!d) return null;
   return (
     <Shell color={d.color} title={d.title} sub={d.sub} badge={d.badge} lastUpdated={d.lastUpdated}
@@ -1825,6 +1884,7 @@ export default function App() {
     cols.clock   = "left";
     cols.agenda  = "right";
     cols.mail    = "right";
+    cols.camera  = "left";
     cols.todo    = "right";
     return cols;
   }
@@ -2002,7 +2062,7 @@ export default function App() {
   // 'pressreader' or removed cat:* left over in saved activeIds. Without
   // this, WidgetCard returns null but renderCol still renders the wrapping
   // .wi div, taking up space in whichever column the phantom ID was placed.
-  const KNOWN_SYS = new Set(['weather','traffic','stocks','calendar','clock','agenda','mail','todo']);
+  const KNOWN_SYS = new Set(['weather','traffic','stocks','calendar','clock','agenda','mail','camera','todo']);
   const isKnownId = (id) =>
     KNOWN_SYS.has(id) ||
     (id.startsWith('cat:') && (categories||[]).some(c => c.label === id.slice(4)));
