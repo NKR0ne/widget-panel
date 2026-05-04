@@ -1998,11 +1998,20 @@ export default function App() {
   }
 
   const loaded = !!categories;
-  const leftIds  = activeIds.filter(id => getColFor(id) === "left");
-  const midIds   = activeIds.filter(id => getColFor(id) === "mid");
-  const feedIds  = activeIds.filter(id => getColFor(id) === "feed");
-  const rightIds = activeIds.filter(id => getColFor(id) === "right");
-  const newsIds  = activeIds.filter(id => id.startsWith("cat:"));
+  // Filter out IDs that don't map to a known widget type — e.g. an old
+  // 'pressreader' or removed cat:* left over in saved activeIds. Without
+  // this, WidgetCard returns null but renderCol still renders the wrapping
+  // .wi div, taking up space in whichever column the phantom ID was placed.
+  const KNOWN_SYS = new Set(['weather','traffic','stocks','calendar','clock','agenda','mail','todo']);
+  const isKnownId = (id) =>
+    KNOWN_SYS.has(id) ||
+    (id.startsWith('cat:') && (categories||[]).some(c => c.label === id.slice(4)));
+  const visibleIds = activeIds.filter(isKnownId);
+  const leftIds  = visibleIds.filter(id => getColFor(id) === "left");
+  const midIds   = visibleIds.filter(id => getColFor(id) === "mid");
+  const feedIds  = visibleIds.filter(id => getColFor(id) === "feed");
+  const rightIds = visibleIds.filter(id => getColFor(id) === "right");
+  const newsIds  = visibleIds.filter(id => id.startsWith("cat:"));
 
   const onUnread = useCallback((id, count)=>{
     setUnreadMap(p=>({...p,[id]:count}));
