@@ -1315,42 +1315,72 @@ function CameraWidget() {
   }, []);
 
   // Walk up from the video tile and hide every sibling at every level so only
-  // the video remains visible — works regardless of how deeply nested the
-  // SDK puts the tile. A MutationObserver re-applies whenever the DOM changes
-  // (the SDK frequently re-renders the camera area).
+  // the video remains visible. Logs diagnostics back to the host console via
+  // the webview's console-message event.
   useEffect(() => {
     const wv = webviewRef.current;
     if (!wv) return;
+
+    // Forward webview console to the host DevTools so we can see what the
+    // injected script reports.
+    const onConsole = (e) => {
+      try { console.log('[wv-camera]', e.level, e.message); } catch {}
+    };
+    wv.addEventListener('console-message', onConsole);
 
     const isolateScript = `
       (() => {
         if (window.__wpCameraIsolateInstalled) return;
         window.__wpCameraIsolateInstalled = true;
 
+        const log = (...args) => console.log('[wp-cam]', ...args);
+        log('isolate script installed at', location.href);
+
         const FLAG = '__wpCamHide';
 
         function findVideoTile() {
-          // Most specific to least: tile elements > video manager > raw <video>/<canvas>
+          // Probe specific selectors first, then any large canvas/video.
           const sels = [
             'video-connection',
             'videos-video-connection-manager',
             'videos-video-stream-component',
             'videos-video-stream',
-            'video',
-            'canvas',
+            'videos-camera-tile',
+            'video-tile',
           ];
           for (const sel of sels) {
             const el = document.querySelector(sel);
+            if (el) { log('matched selector', sel, el.offsetWidth+'x'+el.offsetHeight); }
             if (el && el.offsetWidth > 80 && el.offsetHeight > 60) return el;
           }
-          return null;
+          // Fallback: largest <video> or <canvas>.
+          let best = null, bestArea = 0;
+          for (const el of document.querySelectorAll('video, canvas')) {
+            const a = el.offsetWidth * el.offsetHeight;
+            if (a > bestArea) { best = el; bestArea = a; }
+          }
+          if (best) log('fallback to', best.tagName, best.offsetWidth+'x'+best.offsetHeight);
+          return best && bestArea > 80*60 ? best : null;
+        }
+
+        function dumpDom() {
+          const out = [];
+          const walk = (el, depth) => {
+            if (!el || depth > 4) return;
+            const tag = el.tagName.toLowerCase();
+            const cls = el.className && typeof el.className === 'string' ? '.'+el.className.split(' ').slice(0,2).join('.') : '';
+            const size = el.offsetWidth+'x'+el.offsetHeight;
+            out.push('  '.repeat(depth) + tag + cls + ' [' + size + ']');
+            for (const c of el.children) walk(c, depth + 1);
+          };
+          walk(document.body, 0);
+          log('DOM tree:\\n' + out.join('\\n'));
         }
 
         function isolate() {
           const tile = findVideoTile();
-          if (!tile) return;
+          if (!tile) return false;
 
-          // Walk up from tile to <body>, hide every sibling at each level.
           let el = tile;
           while (el && el !== document.body && el.parentElement) {
             for (const sib of el.parentElement.children) {
@@ -1361,7 +1391,6 @@ function CameraWidget() {
             }
             el = el.parentElement;
           }
-          // Stretch the tile and its ancestors to fill viewport.
           let cur = tile;
           while (cur && cur !== document.body && cur.parentElement) {
             cur.style.setProperty('position', 'fixed', 'important');
@@ -1376,24 +1405,27 @@ function CameraWidget() {
           }
           document.body.style.cssText = 'margin:0!important;padding:0!important;background:#000!important;overflow:hidden!important';
           document.documentElement.style.cssText = 'margin:0!important;padding:0!important;background:#000!important';
+          log('isolated tile', tile.tagName);
+          return true;
         }
 
-        // Initial pass + observe further DOM changes.
-        isolate();
         const obs = new MutationObserver(() => isolate());
         obs.observe(document.body, { childList: true, subtree: true });
 
-        // Also poll briefly in case the SDK reattaches asynchronously.
         let n = 0;
         const tick = setInterval(() => {
-          isolate();
-          if (++n > 60) clearInterval(tick); // ~60s
+          if (isolate()) { /* keep observing for re-renders */ }
+          if (++n === 5 || n === 15 || n === 30) dumpDom();
+          if (n > 60) clearInterval(tick);
         }, 1000);
+
+        // First pass.
+        if (!isolate()) dumpDom();
       })();
     `;
 
     const inject = () => {
-      try { wv.executeJavaScript(isolateScript); } catch {}
+      try { wv.executeJavaScript(isolateScript); } catch (e) { console.warn('[wv-camera] inject failed', e); }
     };
 
     wv.addEventListener('dom-ready', inject);
@@ -1402,6 +1434,7 @@ function CameraWidget() {
 
     return () => {
       try {
+        wv.removeEventListener('console-message', onConsole);
         wv.removeEventListener('dom-ready', inject);
         wv.removeEventListener('did-finish-load', inject);
         wv.removeEventListener('did-navigate-in-page', inject);

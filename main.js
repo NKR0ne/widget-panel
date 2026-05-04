@@ -691,6 +691,13 @@ function writeLaunchPath() {
 
 // ── Self-signed cert allowance for the local Security Center camera webview.
 // Scope is host-restricted: only securitycenter.local is auto-accepted.
+//
+// Two layers because Electron's network stack rejects unknown CAs before the
+// certificate-error event has a chance to override:
+//   1. setCertificateVerifyProc on the camera webview's session — this runs
+//      at the verification layer and is the actual fix.
+//   2. app.on('certificate-error') as a backstop for any other surface that
+//      might hit the same host.
 app.on('certificate-error', (event, _webContents, url, _error, _certificate, callback) => {
   try {
     const u = new URL(url)
@@ -703,8 +710,17 @@ app.on('certificate-error', (event, _webContents, url, _error, _certificate, cal
   callback(false)
 })
 
+function configureCameraSession() {
+  const camSession = session.fromPartition('persist:cameras')
+  camSession.setCertificateVerifyProc((request, callback) => {
+    // 0 = trust this cert. -3 = use Chromium's default verification result.
+    callback(request.hostname === 'securitycenter.local' ? 0 : -3)
+  })
+}
+
 // ── App ready ─────────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
+  configureCameraSession()
   disableNativeWidgets()
   writeLaunchPath()
   createPipeServer()   // taskbar-btn IPC on port 47321
