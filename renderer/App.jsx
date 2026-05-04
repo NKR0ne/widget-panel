@@ -1380,71 +1380,58 @@ function CameraWidget() {
       const sdk = window.XPMobileSDK;
       const settings = window.XPMobileSDKSettings || (window.XPMobileSDKSettings = {});
       settings.MobileServerURL = CAMERA_BASE_URL;
-      // Force basic auth — the server keeps rejecting RequestChallenges with
-      // NotAllowedInThisState (error 23), which means CHAP isn't accepted on
-      // this Mobile Server even though the client default has supportsCHAP=true.
-      settings.supportsCHAP = false;
-      console.log('[camera] SDK methods:', sdk && Object.keys(sdk));
-      console.log('[camera] SDK settings:', settings);
 
-      // Catch-all observer — logs whatever fires so we can see the actual
-      // event names if the ones below don't match this SDK build.
-      const allEventNames = [
-        'connectionStateChanged','onConnectionStateChanged',
-        'connectSuccess','onConnect','onConnectSuccess',
-        'connectError','onConnectError','connectionFailed',
-        'loginSuccessful','onLogin','onLoginSuccess',
-        'loginError','onLoginError','loginFailed',
-        'requestStreamSuccess','onRequestStream',
-        'requestStreamError','onRequestStreamError',
-        'liveMessage','onLiveMessage',
-      ];
+      // Diagnostic observer — names taken straight from
+      // XPMobileSDK.interfaces.ConnectionObserver in the SDK source.
       const debugObs = {};
-      allEventNames.forEach(n => debugObs[n] = (...a) => console.log('[camera evt]', n, a));
+      [
+        'connectionStateChanged',
+        'connectionDidConnect','connectionFailedToConnect',
+        'connectionDidConnectWithId','connectionFailedToConnectWithId',
+        'connectionRequiresCode','connectionCodeError',
+        'connectionDidLogIn','connectionFailedToLogIn',
+        'connectionLostConnection','connectionProcessingDisconnect','connectionDidDisconnect',
+      ].forEach(n => debugObs[n] = (...a) => console.log('[camera evt]', n, a));
       sdk.addObserver(debugObs);
 
-      // Connect → Login → RequestStream, observer-pattern.
-      const connectP = eventToPromise(
-        sdk,
-        ['onConnect','onConnectSuccess','connectSuccess','connectionStateChanged'],
-        ['onConnectError','connectError','connectionFailed']
-      );
+      // ── Connect ──────────────────────────────────────────────────────────
+      const connectP = eventToPromise(sdk, ['connectionDidConnect'], ['connectionFailedToConnect']);
       console.log('[camera] sdk.connect()');
       sdk.connect();
       await connectP;
       console.log('[camera] connected');
 
-      const loginP = eventToPromise(
-        sdk,
-        ['onLogin','onLoginSuccess','loginSuccessful'],
-        ['onLoginError','loginError','loginFailed']
-      );
-      console.log('[camera] sdk.login()');
-      sdk.login({ Username: username, Password: password });
+      // ── Login (positional args!) ─────────────────────────────────────────
+      const loginP = eventToPromise(sdk, ['connectionDidLogIn'], ['connectionFailedToLogIn']);
+      console.log('[camera] sdk.login(username, password)');
+      sdk.login(username, password);
       await loginP;
       console.log('[camera] logged in');
 
       await api.store.set('wp-camera-auth', JSON.stringify({ u: username, p: password }));
 
-      const streamP = eventToPromise(
-        sdk,
-        ['onRequestStream','requestStreamSuccess'],
-        ['onRequestStreamError','requestStreamError']
-      );
-      console.log('[camera] sdk.requestStream()');
-      sdk.requestStream(
-        { CameraId: CAMERA_ID, DestWidth: 800, DestHeight: 450, SignalType: 'Live' },
-        { cameraId: CAMERA_ID, signal: 'live', reuseConnection: true }
-      );
-      const response = await streamP;
+      // ── RequestStream uses callbacks, not observer pattern ───────────────
+      console.log('[camera] sdk.requestStream(', CAMERA_ID, ')');
+      const response = await new Promise((resolve, reject) => {
+        sdk.requestStream(
+          CAMERA_ID,
+          { width: 800, height: 450 },
+          { signalType: 'Live', reuseConnection: true },
+          (resp) => resolve(resp),
+          (err)  => reject(new Error('requestStream failed: ' + JSON.stringify(err)))
+        );
+      });
       console.log('[camera] stream response', response);
 
-      // Create VideoStream — the class lives alongside the SDK as Lib/VideoStream.js
-      const Vs = window.VideoStream;
-      if (!Vs) throw new Error('VideoStream class not on window — check SDK init');
+      // VideoStream needs a <videos-video-connection-manager> in the DOM —
+      // it appends a <video-connection> child to it. The host element exists
+      // because we render <videos-video-connection-manager> in our widget tree.
+      const Vs = window.VideoStream || (window.XPMobileSDK?.library?.VideoStream);
+      if (!Vs) throw new Error('VideoStream class not exposed by SDK');
       const videoId = response?.outputParameters?.VideoId
-                    || response?.VideoId
-                    || response?.videoId;
+                    || response?.params?.VideoId
+                    || response?.VideoId;
+      if (!videoId) { console.warn('[camera] no videoId in response', response); }
       const stream = new Vs(videoId, response, {});
       stream.addObserver({ videoConnectionReceivedFrame: onFrame });
       stream.open();
@@ -1541,6 +1528,11 @@ function CameraWidget() {
     content:(
       <div>
         {body}
+        {/* VideoStream constructor appends a <video-connection> tile to this
+            element; we don't render the tile ourselves — frames arrive via the
+            observer's videoConnectionReceivedFrame and we paint them into the
+            <img> above. */}
+        <videos-video-connection-manager style={{display:'none'}} />
         <div onMouseDown={onResizeMouseDown}
           style={{height:6,marginTop:2,marginLeft:-14,marginRight:-14,cursor:'ns-resize',
             display:'flex',alignItems:'center',justifyContent:'center',userSelect:'none'}}>
@@ -2106,7 +2098,14 @@ export default function App() {
     ]).then(([saved, opv, cardv, pinnedv, locv]) => {
       if (saved?.categories?.length) {
         setCategories(saved.categories);
-        setActiveIds(saved.activeIds||[]);
+        // Strip orphan IDs (e.g. 'pressreader' left over from earlier sessions
+        // when it was a widget). KNOWN_SYS in the column-split logic also
+        // filters these out at render time, but persisting them clean here
+        // means they stop being written back to wp-config.
+        const VALID_SYS = new Set(['weather','traffic','stocks','calendar','clock','agenda','mail','camera','todo']);
+        const knownCats = new Set((saved.categories||[]).map(c => 'cat:' + c.label));
+        const cleaned = (saved.activeIds||[]).filter(id => VALID_SYS.has(id) || knownCats.has(id));
+        setActiveIds(cleaned);
         const cols = saved.columns || {};
         const stale = cols.weather==="right" || cols.stocks==="right" || cols.traffic==="right";
         const hasMid = Object.values(cols).some(v => v === "mid");
