@@ -11,6 +11,13 @@
     "assets/**/*",
     "renderer/dist/**/*"
   ],
+  "extraResources": [
+    {
+      "from": "native/bin",
+      "to": "native/bin",
+      "filter": ["*.exe", "*.dll"]
+    }
+  ],
   "win": {
     "target": "nsis"
   },

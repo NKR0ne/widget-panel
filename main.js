@@ -9,7 +9,13 @@ const { getStore, setStore, deleteStore } = require('./store')
 const PANEL_GAP = 10   // px gap between window edge and screen; window is inset so the gap shows raw desktop
 
 const isDev  = !!process.env.VITE_DEV
-const LOG_SRC = path.join(__dirname, 'native', 'bin', 'electron.log')
+// Native binaries (brave-host.exe, taskbar-btn.exe, taskbar-hook.dll, panel.path)
+// live next to main.js in dev, but are unpacked to resources/ in the
+// installer (see electron-builder.json `extraResources`).
+const NATIVE_BIN = app.isPackaged
+  ? path.join(process.resourcesPath, 'native', 'bin')
+  : path.join(__dirname, 'native', 'bin')
+const LOG_SRC = path.join(NATIVE_BIN, 'electron.log')
 // Fallback to userData in case __dirname is inside a read-only asar
 let LOG = LOG_SRC
 try { fs.writeFileSync(LOG_SRC, '') }  // works in dev / unpackaged
@@ -222,7 +228,7 @@ function notifyHelperHwnds() {
 // ── Spawn taskbar-btn.exe ─────────────────────────────────────────────────────
 function spawnTaskbarBtn() {
   // Installed build output: native/bin/taskbar-btn.exe
-  const helperPath = path.join(__dirname, 'native', 'bin', 'taskbar-btn.exe')
+  const helperPath = path.join(NATIVE_BIN, 'taskbar-btn.exe')
   if (!fs.existsSync(helperPath)) {
     console.log('[taskbar-btn] not built yet — run: cd native/taskbar-btn && powershell -File build.ps1')
     return
@@ -563,7 +569,7 @@ function createBraveServer() {
 }
 
 function spawnBraveHost() {
-  const helperPath = path.join(__dirname, 'native', 'bin', 'brave-host.exe')
+  const helperPath = path.join(NATIVE_BIN, 'brave-host.exe')
   if (!fs.existsSync(helperPath)) { log('[brave-host] not built yet'); return }
   const child = spawn(helperPath, [], { detached: false, stdio: 'ignore' })
   child.on('exit', code => log(`[brave-host] exited (${code})`))
@@ -679,7 +685,7 @@ function writeLaunchPath() {
     const electronExe = path.join(__dirname, 'node_modules', 'electron', 'dist', 'electron.exe')
     launchPath = `"${electronExe}" "${__dirname}"`
   }
-  const pathFile = path.join(__dirname, 'native', 'bin', 'panel.path')
+  const pathFile = path.join(NATIVE_BIN, 'panel.path')
   try { fs.writeFileSync(pathFile, launchPath, 'utf8') } catch {}
 }
 
