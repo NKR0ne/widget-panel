@@ -711,9 +711,14 @@ app.on('certificate-error', (event, _webContents, url, _error, _certificate, cal
 })
 
 function configureCameraSession() {
+  // Webview partition (legacy fallback if we ever go back to webview).
   const camSession = session.fromPartition('persist:cameras')
   camSession.setCertificateVerifyProc((request, callback) => {
-    // 0 = trust this cert. -3 = use Chromium's default verification result.
+    callback(request.hostname === 'securitycenter.local' ? 0 : -3)
+  })
+  // Main renderer also needs this — direct XPMobileSDK integration loads the
+  // SDK script and opens streams over HTTPS to securitycenter.local.
+  session.defaultSession.setCertificateVerifyProc((request, callback) => {
     callback(request.hostname === 'securitycenter.local' ? 0 : -3)
   })
 }

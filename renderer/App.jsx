@@ -34,7 +34,9 @@ const SYS = [
   { id:"camera",  label:"Caméra",           note:"Security Center · local",       color:"#5e8af5" },
 ];
 
-const CAMERA_URL = "https://securitycenter.local:8082/index.html#group=c73dce52-b1d5-4e77-a694-014a52e63d71&cam=11ae9771-dcc4-430b-b47c-20caa6175566";
+const CAMERA_BASE_URL = "https://securitycenter.local:8082";
+const CAMERA_SDK_URL  = `${CAMERA_BASE_URL}/XPMobileSDK/XPMobileSDK.js`;
+const CAMERA_ID       = "11ae9771-dcc4-430b-b47c-20caa6175566";
 
 const PRESSREADER_URL = "https://www.pressreader.com.ezproxy.bibliothequedequebec.qc.ca/fr/catalog/featured";
 
@@ -1298,14 +1300,20 @@ function MailWidget() {
   };
 }
 
-// ── Camera widget (Milestone XProtect Mobile web client) ────────────────────
-// The mobile web client hosts a custom element <videos-video-connection-manager>
-// that holds <video-connection> tiles streaming from XPMobileSDK. We strip the
-// surrounding chrome via insertCSS so only the live tile is visible — full-
-// screen-mode equivalent without needing user interaction inside the iframe.
+// ── Camera widget — direct XPMobileSDK integration ──────────────────────────
+// Loads the SDK script from the Mobile Server, authenticates with stored
+// credentials, and renders incoming frames into an <img> sized to the widget.
+// No webview, no chrome to strip. Credentials prompted on first use, stored
+// in wp-camera-auth for subsequent sessions.
 function CameraWidget() {
   const [cardHeight, setCardHeight] = useState(300);
-  const webviewRef = useRef(null);
+  const [status, setStatus] = useState('init');   // 'init' | 'login' | 'connecting' | 'streaming' | 'error'
+  const [errMsg, setErrMsg] = useState('');
+  const [user, setUser] = useState('');
+  const [pass, setPass] = useState('');
+  const imgRef = useRef(null);
+  const streamRef = useRef(null);
+  const lastBlobUrlRef = useRef(null);
 
   useEffect(() => {
     api.store.get('wp-camera-height').then(v => {
@@ -1314,138 +1322,135 @@ function CameraWidget() {
     });
   }, []);
 
-  // Walk up from the video tile and hide every sibling at every level so only
-  // the video remains visible. Logs diagnostics back to the host console via
-  // the webview's console-message event.
+  // Frame handler — replaces the <img> src and revokes the previous blob URL.
+  const onFrame = useCallback((frame) => {
+    if (!imgRef.current) return;
+    let url;
+    if (frame instanceof Blob) {
+      url = URL.createObjectURL(frame);
+    } else if (frame instanceof ArrayBuffer) {
+      url = URL.createObjectURL(new Blob([frame], { type: 'image/jpeg' }));
+    } else if (typeof frame === 'string') {
+      url = frame; // already a URL
+    } else {
+      console.warn('[camera] unexpected frame type', frame);
+      return;
+    }
+    imgRef.current.src = url;
+    if (lastBlobUrlRef.current && lastBlobUrlRef.current.startsWith('blob:')) {
+      try { URL.revokeObjectURL(lastBlobUrlRef.current); } catch {}
+    }
+    lastBlobUrlRef.current = url;
+  }, []);
+
+  async function loadSdk() {
+    if (window.XPMobileSDK) return;
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = CAMERA_SDK_URL;
+      s.async = true;
+      s.onload  = () => resolve();
+      s.onerror = (e) => reject(new Error('SDK script load failed: ' + CAMERA_SDK_URL));
+      document.head.appendChild(s);
+    });
+  }
+
+  async function connectAndStream(username, password) {
+    setStatus('connecting'); setErrMsg('');
+    try {
+      await loadSdk();
+      const sdk = window.XPMobileSDK;
+      const settings = window.XPMobileSDKSettings || (window.XPMobileSDKSettings = {});
+      settings.MobileServerURL = CAMERA_BASE_URL;
+      console.log('[camera] SDK loaded, settings=', settings);
+
+      // The exact API surface depends on SDK version. The XProtect Mobile SDK
+      // typically exposes connect()/login()/requestStream(); wire those up
+      // and surface the actual error if the call shape differs.
+      await new Promise((resolve, reject) => {
+        if (!sdk.connect) { resolve(); return; }
+        try {
+          sdk.connect(CAMERA_BASE_URL, () => resolve(), (err) => reject(err));
+        } catch (e) { reject(e); }
+      });
+
+      await new Promise((resolve, reject) => {
+        if (!sdk.login) { reject(new Error('SDK has no login()')); return; }
+        sdk.login(
+          { Username: username, Password: password },
+          (resp) => resolve(resp),
+          (err)  => reject(err)
+        );
+      });
+
+      await api.store.set('wp-camera-auth', JSON.stringify({ u: username, p: password }));
+
+      await new Promise((resolve, reject) => {
+        if (!sdk.requestStream) { reject(new Error('SDK has no requestStream()')); return; }
+        sdk.requestStream(
+          { CameraId: CAMERA_ID, DestWidth: 800, DestHeight: 450 },
+          { cameraId: CAMERA_ID, signal: 'live', reuseConnection: true },
+          (response) => {
+            try {
+              // VideoStream class is expected to be exposed alongside the SDK.
+              const Vs = window.VideoStream;
+              if (!Vs) { reject(new Error('VideoStream class not on window')); return; }
+              const videoId = response?.outputParameters?.VideoId
+                            || response?.VideoId
+                            || response?.videoId;
+              const stream = new Vs(videoId, response, {});
+              stream.addObserver({ videoConnectionReceivedFrame: onFrame });
+              stream.open();
+              streamRef.current = stream;
+              setStatus('streaming');
+              resolve();
+            } catch (e) { reject(e); }
+          },
+          (err) => reject(err)
+        );
+      });
+    } catch (e) {
+      console.error('[camera] error', e);
+      setErrMsg(String(e?.message || e));
+      setStatus(status === 'streaming' ? 'streaming' : 'login');
+    }
+  }
+
+  // Auto-attempt login if credentials are stored.
   useEffect(() => {
-    const wv = webviewRef.current;
-    if (!wv) return;
-
-    // Forward webview console to the host DevTools so we can see what the
-    // injected script reports.
-    const onConsole = (e) => {
-      try { console.log('[wv-camera]', e.level, e.message); } catch {}
-    };
-    wv.addEventListener('console-message', onConsole);
-
-    const isolateScript = `
-      (() => {
-        if (window.__wpCameraIsolateInstalled) return;
-        window.__wpCameraIsolateInstalled = true;
-
-        const log = (...args) => console.log('[wp-cam]', ...args);
-        log('isolate script installed at', location.href);
-
-        const FLAG = '__wpCamHide';
-
-        function findVideoTile() {
-          // XPMobileSDK renders frames as <img.thumbnailImage> with blob: src;
-          // try that first, then SDK custom elements, then raw video/canvas.
-          const sels = [
-            'img.thumbnailImage',
-            'img#thumbnailTemplate_thumbnailImage',
-            'img.tmpl_thumbnailImage',
-            'video-connection',
-            'videos-video-connection-manager',
-            'videos-video-stream-component',
-            'videos-video-stream',
-            'videos-camera-tile',
-            'video-tile',
-          ];
-          for (const sel of sels) {
-            const el = document.querySelector(sel);
-            if (el) { log('matched selector', sel, el.offsetWidth+'x'+el.offsetHeight); }
-            if (el && el.offsetWidth > 80 && el.offsetHeight > 60) return el;
+    api.store.get('wp-camera-auth').then(saved => {
+      if (saved) {
+        try {
+          const c = JSON.parse(saved);
+          if (c.u && c.p) {
+            setUser(c.u); setPass(c.p);
+            connectAndStream(c.u, c.p);
+            return;
           }
-          // Fallback: largest <video>, <canvas>, or <img> with a blob: src.
-          let best = null, bestArea = 0;
-          for (const el of document.querySelectorAll('video, canvas, img')) {
-            if (el.tagName === 'IMG' && !(el.src || '').startsWith('blob:')) continue;
-            const a = el.offsetWidth * el.offsetHeight;
-            if (a > bestArea) { best = el; bestArea = a; }
-          }
-          if (best) log('fallback to', best.tagName, best.offsetWidth+'x'+best.offsetHeight);
-          return best && bestArea > 80*60 ? best : null;
-        }
-
-        function dumpDom() {
-          const out = [];
-          const walk = (el, depth) => {
-            if (!el || depth > 4) return;
-            const tag = el.tagName.toLowerCase();
-            const cls = el.className && typeof el.className === 'string' ? '.'+el.className.split(' ').slice(0,2).join('.') : '';
-            const size = el.offsetWidth+'x'+el.offsetHeight;
-            out.push('  '.repeat(depth) + tag + cls + ' [' + size + ']');
-            for (const c of el.children) walk(c, depth + 1);
-          };
-          walk(document.body, 0);
-          log('DOM tree:\\n' + out.join('\\n'));
-        }
-
-        function isolate() {
-          const tile = findVideoTile();
-          if (!tile) return false;
-
-          let el = tile;
-          while (el && el !== document.body && el.parentElement) {
-            for (const sib of el.parentElement.children) {
-              if (sib !== el && !sib[FLAG] && sib.tagName !== 'SCRIPT' && sib.tagName !== 'STYLE') {
-                sib.style.setProperty('display', 'none', 'important');
-                sib[FLAG] = true;
-              }
-            }
-            el = el.parentElement;
-          }
-          let cur = tile;
-          while (cur && cur !== document.body && cur.parentElement) {
-            cur.style.setProperty('position', 'fixed', 'important');
-            cur.style.setProperty('top', '0', 'important');
-            cur.style.setProperty('left', '0', 'important');
-            cur.style.setProperty('width', '100vw', 'important');
-            cur.style.setProperty('height', '100vh', 'important');
-            cur.style.setProperty('z-index', '9999', 'important');
-            cur.style.setProperty('margin', '0', 'important');
-            cur.style.setProperty('padding', '0', 'important');
-            cur = cur.parentElement;
-          }
-          document.body.style.cssText = 'margin:0!important;padding:0!important;background:#000!important;overflow:hidden!important';
-          document.documentElement.style.cssText = 'margin:0!important;padding:0!important;background:#000!important';
-          log('isolated tile', tile.tagName);
-          return true;
-        }
-
-        const obs = new MutationObserver(() => isolate());
-        obs.observe(document.body, { childList: true, subtree: true });
-
-        let n = 0;
-        const tick = setInterval(() => {
-          if (isolate()) { /* keep observing for re-renders */ }
-          if (++n === 5 || n === 15 || n === 30) dumpDom();
-          if (n > 60) clearInterval(tick);
-        }, 1000);
-
-        // First pass.
-        if (!isolate()) dumpDom();
-      })();
-    `;
-
-    const inject = () => {
-      try { wv.executeJavaScript(isolateScript); } catch (e) { console.warn('[wv-camera] inject failed', e); }
-    };
-
-    wv.addEventListener('dom-ready', inject);
-    wv.addEventListener('did-finish-load', inject);
-    wv.addEventListener('did-navigate-in-page', inject);
-
+        } catch {}
+      }
+      setStatus('login');
+    });
+    // Cleanup the stream on unmount.
     return () => {
-      try {
-        wv.removeEventListener('console-message', onConsole);
-        wv.removeEventListener('dom-ready', inject);
-        wv.removeEventListener('did-finish-load', inject);
-        wv.removeEventListener('did-navigate-in-page', inject);
-      } catch {}
+      if (streamRef.current) { try { streamRef.current.close(); } catch {} streamRef.current = null; }
+      if (lastBlobUrlRef.current && lastBlobUrlRef.current.startsWith('blob:')) {
+        try { URL.revokeObjectURL(lastBlobUrlRef.current); } catch {}
+      }
     };
   }, []);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!user || !pass) return;
+    connectAndStream(user, pass);
+  };
+
+  const handleLogout = async () => {
+    if (streamRef.current) { try { streamRef.current.close(); } catch {} streamRef.current = null; }
+    await api.store.delete('wp-camera-auth');
+    setUser(''); setPass(''); setStatus('login'); setErrMsg('');
+  };
 
   const onResizeMouseDown = (e) => {
     e.preventDefault();
@@ -1465,22 +1470,36 @@ function CameraWidget() {
     window.addEventListener('mouseup', onUp);
   };
 
-  const externalBtn = (
-    <button onClick={e=>{ e.stopPropagation(); api.browser?.open?.(CAMERA_URL); }}
-      title="Open in browser"
-      style={{background:"none",border:"none",color:"#666",fontSize:12,cursor:"pointer",padding:"0 2px",lineHeight:1}}>↗</button>
-  );
+  let body;
+  if (status === 'init' || status === 'connecting') {
+    body = <div style={{height:cardHeight,display:'flex',alignItems:'center',justifyContent:'center',color:'#888',fontSize:11,background:'#000',borderRadius:6}}>
+      {status === 'connecting' ? 'Connexion…' : 'Initialisation…'}
+    </div>;
+  } else if (status === 'login') {
+    body = (
+      <form onSubmit={handleSubmit} style={{display:'flex',flexDirection:'column',gap:8,padding:'8px 0'}}>
+        <input value={user} onChange={e=>setUser(e.target.value)}
+               placeholder="Username" autoComplete="username" style={{...C.inp}} />
+        <input type="password" value={pass} onChange={e=>setPass(e.target.value)}
+               placeholder="Password" autoComplete="current-password" style={{...C.inp}} />
+        {errMsg && <div style={{fontSize:10,color:'#ef5350'}}>{errMsg}</div>}
+        <button type="submit" style={{...C.btn}}>Connect</button>
+      </form>
+    );
+  } else {
+    body = <img ref={imgRef} alt="" style={{width:'100%',height:cardHeight,display:'block',borderRadius:6,background:'#000',objectFit:'cover'}} />;
+  }
 
-  return { color:"#5e8af5", title:"Caméra", badge: externalBtn,
+  const logoutBtn = streamRef.current
+    ? <button onClick={e=>{ e.stopPropagation(); handleLogout(); }}
+        title="Sign out"
+        style={{background:"none",border:"none",color:"#444",fontSize:10,cursor:"pointer",padding:"0 2px",lineHeight:1}}>×</button>
+    : null;
+
+  return { color:"#5e8af5", title:"Caméra", badge: logoutBtn,
     content:(
       <div>
-        <webview
-          ref={webviewRef}
-          src={CAMERA_URL}
-          partition="persist:cameras"
-          allowpopups="true"
-          style={{width:"100%", height:cardHeight, border:"none", borderRadius:6, background:"#000"}}
-        />
+        {body}
         <div onMouseDown={onResizeMouseDown}
           style={{height:6,marginTop:2,marginLeft:-14,marginRight:-14,cursor:'ns-resize',
             display:'flex',alignItems:'center',justifyContent:'center',userSelect:'none'}}>
