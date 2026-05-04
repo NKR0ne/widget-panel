@@ -1339,8 +1339,12 @@ function CameraWidget() {
         const FLAG = '__wpCamHide';
 
         function findVideoTile() {
-          // Probe specific selectors first, then any large canvas/video.
+          // XPMobileSDK renders frames as <img.thumbnailImage> with blob: src;
+          // try that first, then SDK custom elements, then raw video/canvas.
           const sels = [
+            'img.thumbnailImage',
+            'img#thumbnailTemplate_thumbnailImage',
+            'img.tmpl_thumbnailImage',
             'video-connection',
             'videos-video-connection-manager',
             'videos-video-stream-component',
@@ -1353,9 +1357,10 @@ function CameraWidget() {
             if (el) { log('matched selector', sel, el.offsetWidth+'x'+el.offsetHeight); }
             if (el && el.offsetWidth > 80 && el.offsetHeight > 60) return el;
           }
-          // Fallback: largest <video> or <canvas>.
+          // Fallback: largest <video>, <canvas>, or <img> with a blob: src.
           let best = null, bestArea = 0;
-          for (const el of document.querySelectorAll('video, canvas')) {
+          for (const el of document.querySelectorAll('video, canvas, img')) {
+            if (el.tagName === 'IMG' && !(el.src || '').startsWith('blob:')) continue;
             const a = el.offsetWidth * el.offsetHeight;
             if (a > bestArea) { best = el; bestArea = a; }
           }
