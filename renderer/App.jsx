@@ -1362,18 +1362,13 @@ function CameraWidget() {
       const sdk = window.XPMobileSDK;
       const settings = window.XPMobileSDKSettings || (window.XPMobileSDKSettings = {});
       settings.MobileServerURL = CAMERA_BASE_URL;
-      console.log('[camera] SDK loaded, settings=', settings);
+      // One-time API surface dump for debugging — visible in DevTools.
+      console.log('[camera] SDK methods:', sdk && Object.keys(sdk));
+      console.log('[camera] SDK settings:', settings);
 
-      // The exact API surface depends on SDK version. The XProtect Mobile SDK
-      // typically exposes connect()/login()/requestStream(); wire those up
-      // and surface the actual error if the call shape differs.
-      await new Promise((resolve, reject) => {
-        if (!sdk.connect) { resolve(); return; }
-        try {
-          sdk.connect(CAMERA_BASE_URL, () => resolve(), (err) => reject(err));
-        } catch (e) { reject(e); }
-      });
-
+      // login() drives the full Connect → RequestChallenges → LogIn handshake
+      // internally. Calling connect() separately puts the state machine into a
+      // weird state and triggers NotAllowedInThisState (error 23).
       await new Promise((resolve, reject) => {
         if (!sdk.login) { reject(new Error('SDK has no login()')); return; }
         sdk.login(
