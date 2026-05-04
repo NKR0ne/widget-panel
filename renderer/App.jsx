@@ -1356,11 +1356,13 @@ function CameraWidget() {
   }
 
   // Bridge an observer-pattern SDK method to a Promise. Resolves on the first
-  // success-event method, rejects on the first error-event method.
-  function eventToPromise(sdk, successNames, errorNames) {
+  // success-event method, rejects on the first error-event method or timeout.
+  function eventToPromise(sdk, successNames, errorNames, timeoutMs = 15000) {
     return new Promise((resolve, reject) => {
       const obs = {};
-      const cleanup = () => { try { sdk.removeObserver(obs); } catch {} };
+      let timer;
+      const cleanup = () => { try { sdk.removeObserver(obs); } catch {} clearTimeout(timer); };
+      timer = setTimeout(() => { cleanup(); reject(new Error('Timeout waiting for ' + successNames.join('/'))); }, timeoutMs);
       successNames.forEach(name => {
         obs[name] = (...args) => { console.log('[camera obs]', name, args); cleanup(); resolve(args[0]); };
       });
@@ -1378,6 +1380,10 @@ function CameraWidget() {
       const sdk = window.XPMobileSDK;
       const settings = window.XPMobileSDKSettings || (window.XPMobileSDKSettings = {});
       settings.MobileServerURL = CAMERA_BASE_URL;
+      // Force basic auth — the server keeps rejecting RequestChallenges with
+      // NotAllowedInThisState (error 23), which means CHAP isn't accepted on
+      // this Mobile Server even though the client default has supportsCHAP=true.
+      settings.supportsCHAP = false;
       console.log('[camera] SDK methods:', sdk && Object.keys(sdk));
       console.log('[camera] SDK settings:', settings);
 
