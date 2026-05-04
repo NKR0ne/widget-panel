@@ -1355,6 +1355,22 @@ function CameraWidget() {
     });
   }
 
+  // Bridge an observer-pattern SDK method to a Promise. Resolves on the first
+  // success-event method, rejects on the first error-event method.
+  function eventToPromise(sdk, successNames, errorNames) {
+    return new Promise((resolve, reject) => {
+      const obs = {};
+      const cleanup = () => { try { sdk.removeObserver(obs); } catch {} };
+      successNames.forEach(name => {
+        obs[name] = (...args) => { console.log('[camera obs]', name, args); cleanup(); resolve(args[0]); };
+      });
+      errorNames.forEach(name => {
+        obs[name] = (...args) => { console.error('[camera obs]', name, args); cleanup(); reject(new Error(name + ': ' + JSON.stringify(args[0] || {}))); };
+      });
+      sdk.addObserver(obs);
+    });
+  }
+
   async function connectAndStream(username, password) {
     setStatus('connecting'); setErrMsg('');
     try {
@@ -1362,52 +1378,76 @@ function CameraWidget() {
       const sdk = window.XPMobileSDK;
       const settings = window.XPMobileSDKSettings || (window.XPMobileSDKSettings = {});
       settings.MobileServerURL = CAMERA_BASE_URL;
-      // One-time API surface dump for debugging — visible in DevTools.
       console.log('[camera] SDK methods:', sdk && Object.keys(sdk));
       console.log('[camera] SDK settings:', settings);
 
-      // login() drives the full Connect → RequestChallenges → LogIn handshake
-      // internally. Calling connect() separately puts the state machine into a
-      // weird state and triggers NotAllowedInThisState (error 23).
-      await new Promise((resolve, reject) => {
-        if (!sdk.login) { reject(new Error('SDK has no login()')); return; }
-        sdk.login(
-          { Username: username, Password: password },
-          (resp) => resolve(resp),
-          (err)  => reject(err)
-        );
-      });
+      // Catch-all observer — logs whatever fires so we can see the actual
+      // event names if the ones below don't match this SDK build.
+      const allEventNames = [
+        'connectionStateChanged','onConnectionStateChanged',
+        'connectSuccess','onConnect','onConnectSuccess',
+        'connectError','onConnectError','connectionFailed',
+        'loginSuccessful','onLogin','onLoginSuccess',
+        'loginError','onLoginError','loginFailed',
+        'requestStreamSuccess','onRequestStream',
+        'requestStreamError','onRequestStreamError',
+        'liveMessage','onLiveMessage',
+      ];
+      const debugObs = {};
+      allEventNames.forEach(n => debugObs[n] = (...a) => console.log('[camera evt]', n, a));
+      sdk.addObserver(debugObs);
+
+      // Connect → Login → RequestStream, observer-pattern.
+      const connectP = eventToPromise(
+        sdk,
+        ['onConnect','onConnectSuccess','connectSuccess','connectionStateChanged'],
+        ['onConnectError','connectError','connectionFailed']
+      );
+      console.log('[camera] sdk.connect()');
+      sdk.connect();
+      await connectP;
+      console.log('[camera] connected');
+
+      const loginP = eventToPromise(
+        sdk,
+        ['onLogin','onLoginSuccess','loginSuccessful'],
+        ['onLoginError','loginError','loginFailed']
+      );
+      console.log('[camera] sdk.login()');
+      sdk.login({ Username: username, Password: password });
+      await loginP;
+      console.log('[camera] logged in');
 
       await api.store.set('wp-camera-auth', JSON.stringify({ u: username, p: password }));
 
-      await new Promise((resolve, reject) => {
-        if (!sdk.requestStream) { reject(new Error('SDK has no requestStream()')); return; }
-        sdk.requestStream(
-          { CameraId: CAMERA_ID, DestWidth: 800, DestHeight: 450 },
-          { cameraId: CAMERA_ID, signal: 'live', reuseConnection: true },
-          (response) => {
-            try {
-              // VideoStream class is expected to be exposed alongside the SDK.
-              const Vs = window.VideoStream;
-              if (!Vs) { reject(new Error('VideoStream class not on window')); return; }
-              const videoId = response?.outputParameters?.VideoId
-                            || response?.VideoId
-                            || response?.videoId;
-              const stream = new Vs(videoId, response, {});
-              stream.addObserver({ videoConnectionReceivedFrame: onFrame });
-              stream.open();
-              streamRef.current = stream;
-              setStatus('streaming');
-              resolve();
-            } catch (e) { reject(e); }
-          },
-          (err) => reject(err)
-        );
-      });
+      const streamP = eventToPromise(
+        sdk,
+        ['onRequestStream','requestStreamSuccess'],
+        ['onRequestStreamError','requestStreamError']
+      );
+      console.log('[camera] sdk.requestStream()');
+      sdk.requestStream(
+        { CameraId: CAMERA_ID, DestWidth: 800, DestHeight: 450, SignalType: 'Live' },
+        { cameraId: CAMERA_ID, signal: 'live', reuseConnection: true }
+      );
+      const response = await streamP;
+      console.log('[camera] stream response', response);
+
+      // Create VideoStream — the class lives alongside the SDK as Lib/VideoStream.js
+      const Vs = window.VideoStream;
+      if (!Vs) throw new Error('VideoStream class not on window — check SDK init');
+      const videoId = response?.outputParameters?.VideoId
+                    || response?.VideoId
+                    || response?.videoId;
+      const stream = new Vs(videoId, response, {});
+      stream.addObserver({ videoConnectionReceivedFrame: onFrame });
+      stream.open();
+      streamRef.current = stream;
+      setStatus('streaming');
     } catch (e) {
       console.error('[camera] error', e);
       setErrMsg(String(e?.message || e));
-      setStatus(status === 'streaming' ? 'streaming' : 'login');
+      setStatus('login');
     }
   }
 
