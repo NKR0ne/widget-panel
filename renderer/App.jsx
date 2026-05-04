@@ -1298,15 +1298,75 @@ function MailWidget() {
   };
 }
 
-// ── Camera widget (Genetec Security Center web client) ──────────────────────
+// ── Camera widget (Milestone XProtect Mobile web client) ────────────────────
+// The mobile web client hosts a custom element <videos-video-connection-manager>
+// that holds <video-connection> tiles streaming from XPMobileSDK. We strip the
+// surrounding chrome via insertCSS so only the live tile is visible — full-
+// screen-mode equivalent without needing user interaction inside the iframe.
 function CameraWidget() {
   const [cardHeight, setCardHeight] = useState(300);
+  const webviewRef = useRef(null);
 
   useEffect(() => {
     api.store.get('wp-camera-height').then(v => {
       const h = parseInt(v || '0');
       if (h >= 150) setCardHeight(h);
     });
+  }, []);
+
+  // Strip the web client chrome once the camera tile has rendered. We probe
+  // for the SDK's custom element so the login screen (and any other non-camera
+  // page) still shows their normal UI.
+  useEffect(() => {
+    const wv = webviewRef.current;
+    if (!wv) return;
+
+    const cameraOnlyCSS = `
+      html, body { overflow: hidden !important; background: #000 !important; margin: 0 !important; padding: 0 !important; }
+      /* Hide every body child except the video manager and its ancestors. */
+      body > *:not(videos-video-connection-manager):not(script):not(style) { display: none !important; }
+      /* Force the video manager and the inner stream component to fill. */
+      videos-video-connection-manager,
+      videos-video-connection-manager > *,
+      video-connection,
+      video-connection > * {
+        position: fixed !important;
+        top: 0 !important; left: 0 !important;
+        width: 100vw !important; height: 100vh !important;
+        z-index: 9999 !important;
+      }
+    `;
+    let cssKey = null;
+
+    const sync = async () => {
+      try {
+        const hasCam = await wv.executeJavaScript(
+          "!!document.querySelector('videos-video-connection-manager, video-connection')"
+        );
+        if (hasCam && cssKey == null) {
+          cssKey = await wv.insertCSS(cameraOnlyCSS);
+        } else if (!hasCam && cssKey != null) {
+          await wv.removeInsertedCSS(cssKey);
+          cssKey = null;
+        }
+      } catch {}
+    };
+
+    wv.addEventListener('dom-ready', sync);
+    wv.addEventListener('did-finish-load', sync);
+    wv.addEventListener('did-navigate-in-page', sync);
+    // The SDK creates the custom element dynamically after auth — poll for a
+    // few seconds in case no navigation event fires.
+    const poll = setInterval(sync, 1500);
+
+    return () => {
+      try {
+        wv.removeEventListener('dom-ready', sync);
+        wv.removeEventListener('did-finish-load', sync);
+        wv.removeEventListener('did-navigate-in-page', sync);
+      } catch {}
+      clearInterval(poll);
+    };
   }, []);
 
   const onResizeMouseDown = (e) => {
@@ -1337,6 +1397,7 @@ function CameraWidget() {
     content:(
       <div>
         <webview
+          ref={webviewRef}
           src={CAMERA_URL}
           partition="persist:cameras"
           allowpopups="true"
