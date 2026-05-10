@@ -1344,9 +1344,14 @@ function CameraWidget() {
   }, []);
 
   async function loadSdk() {
-    // The XPMobileSDK script loads ~30 sub-scripts (incl. Lib/VideoStream.js)
-    // asynchronously after its own <script>'s onload fires. We must wait for
-    // XPMobileSDK.isLoaded() before any sub-script class is usable.
+    // MobileServerURL must be set BEFORE the SDK script runs its initialize().
+    // Connection.js does `self.server = XPMobileSDKSettings.MobileServerURL ||
+    // window.location.origin` once during init and caches it. If we set the
+    // URL afterward, every XHR goes to localhost:5173 (or wherever the panel
+    // is loaded from) and fails with "Invalid URL".
+    window.XPMobileSDKSettings = window.XPMobileSDKSettings || {};
+    window.XPMobileSDKSettings.MobileServerURL = CAMERA_BASE_URL;
+
     if (!window.XPMobileSDK) {
       await new Promise((resolve, reject) => {
         const s = document.createElement('script');
@@ -1357,6 +1362,9 @@ function CameraWidget() {
         document.head.appendChild(s);
       });
     }
+    // Belt-and-suspenders: re-apply in case the SDK's own defaults overwrote it.
+    window.XPMobileSDKSettings.MobileServerURL = CAMERA_BASE_URL;
+
     if (window.XPMobileSDK.isLoaded?.()) return;
     await new Promise((resolve) => {
       const prev = window.XPMobileSDK.onLoad;
@@ -1390,8 +1398,6 @@ function CameraWidget() {
     try {
       await loadSdk();
       const sdk = window.XPMobileSDK;
-      const settings = window.XPMobileSDKSettings || (window.XPMobileSDKSettings = {});
-      settings.MobileServerURL = CAMERA_BASE_URL;
 
       // Diagnostic observer — names taken straight from
       // XPMobileSDK.interfaces.ConnectionObserver in the SDK source.
