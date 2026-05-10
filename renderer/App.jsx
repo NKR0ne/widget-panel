@@ -34,9 +34,10 @@ const SYS = [
   { id:"camera",  label:"Caméra",           note:"Security Center · local",       color:"#5e8af5" },
 ];
 
-const CAMERA_BASE_URL = "https://securitycenter.local:8082";
-const CAMERA_SDK_URL  = `${CAMERA_BASE_URL}/XPMobileSDK/XPMobileSDK.js`;
-const CAMERA_ID       = "11ae9771-dcc4-430b-b47c-20caa6175566";
+const CAMERA_BASE_URL    = "https://securitycenter.local:8082";
+const CAMERA_SDK_URL     = `${CAMERA_BASE_URL}/XPMobileSDK/XPMobileSDK.js`;
+const CAMERA_ID          = "11ae9771-dcc4-430b-b47c-20caa6175566";
+const CAMERA_NAME_HINT   = "HikVision";  // substring of the desired camera name
 
 const PRESSREADER_URL = "https://www.pressreader.com.ezproxy.bibliothequedequebec.qc.ca/fr/catalog/featured";
 
@@ -1525,7 +1526,15 @@ function CameraWidget() {
       };
       const allCams = flatten(camList);
       console.log('[camera] flat list (', allCams.length, ' cameras)', allCams);
+      // Pick the camera by name match first — different accounts have rights
+      // to different cameras, and allCams[0] often picks one we can't stream
+      // (which manifests as SecurityError 19 on requestStream). Match the
+      // configured CAMERA_NAME_HINT (case-insensitive substring) before
+      // falling back to ID/index.
+      const nameMatch = (c) =>
+        CAMERA_NAME_HINT && (c.Name || '').toLowerCase().includes(CAMERA_NAME_HINT.toLowerCase());
       const pick = allCams.find(c => c.Id === savedCamId)
+                || allCams.find(nameMatch)
                 || allCams.find(c => c.Id === CAMERA_ID)
                 || allCams[0];
       if (!pick) throw new Error('No cameras available to this account (flatten found 0 of type=Camera)');
