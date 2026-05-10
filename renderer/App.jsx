@@ -1451,18 +1451,11 @@ function CameraWidget() {
       console.log('[camera] Connection.server =', sdk.library?.Connection?.server);
       console.log('[camera] settings.MobileServerURL =', window.XPMobileSDKSettings.MobileServerURL);
 
-      // Disable CHAP completely — this Mobile Server rejects RequestChallenges
-      // with NotAllowedInThisState (23) even after a successful Connect, so the
-      // SDK's auto-CHAP-refresh observer just generates noise and stops requests.
-      window.XPMobileSDKSettings.supportsCHAP = false;
-      if (sdk.library?.CHAP) {
-        sdk.library.CHAP.cleanUp = () => {};
-        sdk.library.CHAP.request = () => {};
-        sdk.library.CHAP.connectionRequestSucceeded = () => {};
-      }
-      // Also override the server-side CHAPSupported flag once Connection exists
-      // so sendCommand never tries to attach Challenge/ChalAnswer to commands.
-      if (sdk.library?.Connection) sdk.library.Connection.CHAPSupported = 'No';
+      // Stop the auto-RequestChallenges loop (server rejects with error 23)
+      // without breaking login itself. Login uses DH (separate from CHAP);
+      // only the auto-refresh observer needs to be neutered.
+      if (sdk.requestChallenges) sdk.requestChallenges = () => {};
+      if (window.XPMobileSDK?.requestChallenges) window.XPMobileSDK.requestChallenges = () => {};
 
       // Diagnostic observer — names taken straight from
       // XPMobileSDK.interfaces.ConnectionObserver in the SDK source.
@@ -1499,7 +1492,7 @@ function CameraWidget() {
       // had zero rights (every subsequent command returned SecurityError 19).
       // The user can log in successfully through the Web Client UI, so the
       // account is most likely a Windows/AD user.
-      const loginP = eventToPromise(sdk, ['connectionDidLogIn'], ['connectionFailedToLogIn']);
+      const loginP = eventToPromise(sdk, ['connectionDidLogIn'], ['connectionFailedToLogIn'], 30000);
       console.log('[camera] sdk.login(username, password, "Windows")');
       sdk.login(username, password, 'Windows');
       await loginP;
