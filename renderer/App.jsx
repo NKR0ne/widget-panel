@@ -1319,6 +1319,8 @@ function CameraWidget() {
   const watchdogRef = useRef(null);
   const reconnectTimerRef = useRef(null);
   const credsRef = useRef({ u: '', p: '' });
+  const pendingFrameRef = useRef(null);   // buffers a frame that arrives before <img> mounts
+  const debugObsRef = useRef(null);       // holds the diagnostic observer so reconnect can remove it
   const STALE_FRAME_MS = 30000;       // no frame for 30s → reconnect
   const RECONNECT_DELAY_MS = 5000;    // backoff before reconnect attempt
 
@@ -1330,18 +1332,31 @@ function CameraWidget() {
   }, []);
 
   // Frame handler — replaces the <img> src and revokes the previous blob URL.
+  // XPMobileSDK's VideoHeaderParser delivers frames as objects with .blob
+  // (the JPEG payload). Older paths may give a raw Blob/ArrayBuffer/string.
   const onFrame = useCallback((frame) => {
     lastFrameAtRef.current = Date.now();
-    if (!imgRef.current) return;
     let url;
     if (frame instanceof Blob) {
       url = URL.createObjectURL(frame);
+    } else if (frame?.blob instanceof Blob) {
+      url = URL.createObjectURL(frame.blob);
+    } else if (typeof frame?.imageURL === 'string') {
+      url = frame.imageURL;
     } else if (frame instanceof ArrayBuffer) {
       url = URL.createObjectURL(new Blob([frame], { type: 'image/jpeg' }));
+    } else if (frame?.data instanceof ArrayBuffer || ArrayBuffer.isView(frame?.data)) {
+      url = URL.createObjectURL(new Blob([frame.data], { type: 'image/jpeg' }));
     } else if (typeof frame === 'string') {
-      url = frame; // already a URL
+      url = frame;
     } else {
       console.warn('[camera] unexpected frame type', frame);
+      return;
+    }
+    // If <img> isn't mounted yet (status switched to streaming this tick but
+    // React hasn't committed), buffer the frame for when it appears.
+    if (!imgRef.current) {
+      pendingFrameRef.current = url;
       return;
     }
     imgRef.current.src = url;
@@ -1350,6 +1365,14 @@ function CameraWidget() {
     }
     lastBlobUrlRef.current = url;
   }, []);
+
+  // Drain the pending frame once <img> mounts (status === 'streaming').
+  useEffect(() => {
+    if (status !== 'streaming' || !imgRef.current || !pendingFrameRef.current) return;
+    imgRef.current.src = pendingFrameRef.current;
+    lastBlobUrlRef.current = pendingFrameRef.current;
+    pendingFrameRef.current = null;
+  }, [status]);
 
   // Schedule a reconnect using the stored credentials. Coalesces multiple
   // triggers (lost-connection event + stale-frame watchdog) into a single
@@ -1444,6 +1467,29 @@ function CameraWidget() {
       await loadSdk();
       const sdk = window.XPMobileSDK;
 
+      // ── Cleanup any prior session before a fresh connect ────────────────
+      // Without this, a reconnect attempt stacks a new login on top of the old
+      // session, which the Mobile Server rejects with SecurityError on
+      // subsequent commands.
+      if (streamRef.current) {
+        try { streamRef.current.close(); } catch {}
+        streamRef.current = null;
+      }
+      if (lastBlobUrlRef.current && lastBlobUrlRef.current.startsWith('blob:')) {
+        try { URL.revokeObjectURL(lastBlobUrlRef.current); } catch {}
+        lastBlobUrlRef.current = null;
+      }
+      if (debugObsRef.current) {
+        try { sdk.removeObserver(debugObsRef.current); } catch {}
+        debugObsRef.current = null;
+      }
+      if (sdk.library?.Connection?.connectionId) {
+        try { sdk.disconnect?.(); } catch (e) { console.warn('[camera] disconnect failed', e); }
+      }
+      if (sdk.library?.VideoConnectionPool) {
+        try { sdk.library.VideoConnectionPool.pool = {}; } catch {}
+      }
+
       // Belt-and-suspenders: force the Connection's cached server URL even if
       // settings.MobileServerURL got overwritten by the SDK's defaults during
       // its own var-redeclaration.
@@ -1470,6 +1516,7 @@ function CameraWidget() {
         'connectionLostConnection','connectionProcessingDisconnect','connectionDidDisconnect',
       ].forEach(n => debugObs[n] = (...a) => console.log('[camera evt]', n, a));
       sdk.addObserver(debugObs);
+      debugObsRef.current = debugObs;
 
       // Auto-reconnect on lost connection (overnight equipment resets, etc).
       const reconnectObs = {
@@ -1542,39 +1589,51 @@ function CameraWidget() {
       console.log('[camera] using camera', pick.Name || camId, camId);
       await api.store.set('wp-camera-id', camId);
 
-      // ── RequestStream uses callbacks, not observer pattern ───────────────
-      // The SDK constructs a VideoStream itself in requestStreamCallback (it
-      // can — `class VideoStream` is lexical *inside* the SDK's own scope) and
-      // passes the live instance to our success callback.
-      console.log('[camera] sdk.requestStream(', camId, ')');
+      // ── RequestStream in Pull mode ──────────────────────────────────────
+      // The high-level sdk.requestStream() forces MethodType:'Push' which
+      // opens wss://.../XProtectMobile/Video/<id>/ — that handshake fails
+      // with HTTP 400 on this server. Use the low-level sdk.RequestStream
+      // with MethodType:'Pull' so the SDK routes via PullConnection (AJAX)
+      // instead of PushConnection (WebSocket).
+      console.log('[camera] sdk.RequestStream Pull(', camId, pick.Name, ')');
       const videoStream = await new Promise((resolve, reject) => {
-        sdk.requestStream(
-          camId,
-          { width: 800, height: 450 },
-          { signalType: 'Live', reuseConnection: false },
+        sdk.RequestStream(
+          {
+            CameraId: camId,
+            DestWidth: 800,
+            DestHeight: 450,
+            SignalType: 'Live',
+            MethodType: 'Pull',
+            Fps: 10,
+            ComprLevel: 70,
+            KeyFramesOnly: 'No',
+            RequestSize: 'Yes',
+            StreamType: 'Transcoded',
+          },
           (vs)  => resolve(vs),
-          (err) => reject(new Error('requestStream failed: ' + JSON.stringify(err)))
+          (err) => reject(new Error('RequestStream failed: ' + JSON.stringify(err)))
         );
       });
       console.log('[camera] VideoStream', videoStream);
       console.log('[camera] videoId', videoStream?.videoId);
-      if (!videoStream) throw new Error('requestStream succeeded with null VideoStream');
+      if (!videoStream) throw new Error('RequestStream succeeded with null VideoStream');
 
       videoStream.addObserver({ videoConnectionReceivedFrame: onFrame });
-      videoStream.open();
       streamRef.current = videoStream;
       setStatus('streaming');
+      // Wait one animation frame so React commits the streaming-state render
+      // (the <img> element) before we ask the SDK to start delivering frames.
+      // Otherwise the first few frames arrive while imgRef.current is null
+      // — pendingFrameRef catches that case as a backstop.
+      await new Promise(resolve => requestAnimationFrame(resolve));
+      videoStream.open();
 
       // First-frame watchdog: if the stream opens but no frames arrive within
-      // 8 seconds, the underlying video channel was rejected by the server
-      // (often with SecurityError on LiveMessage). Surface that clearly
-      // instead of staring at a black <img> forever.
+      // 8 seconds, the underlying video channel was rejected by the server.
       const t0 = Date.now();
       setTimeout(() => {
-        if (status !== 'streaming') return;
         if (lastFrameAtRef.current >= t0) return; // got at least one frame
         console.warn('[camera] no frames within 8s of open()');
-        setErrMsg('Stream opened but no frames received — check XProtect server permissions for this account');
       }, 8000);
     } catch (e) {
       console.error('[camera] error', e);
