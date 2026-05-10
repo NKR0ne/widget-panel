@@ -1314,6 +1314,12 @@ function CameraWidget() {
   const imgRef = useRef(null);
   const streamRef = useRef(null);
   const lastBlobUrlRef = useRef(null);
+  const lastFrameAtRef = useRef(0);
+  const watchdogRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+  const credsRef = useRef({ u: '', p: '' });
+  const STALE_FRAME_MS = 30000;       // no frame for 30s → reconnect
+  const RECONNECT_DELAY_MS = 5000;    // backoff before reconnect attempt
 
   useEffect(() => {
     api.store.get('wp-camera-height').then(v => {
@@ -1324,6 +1330,7 @@ function CameraWidget() {
 
   // Frame handler — replaces the <img> src and revokes the previous blob URL.
   const onFrame = useCallback((frame) => {
+    lastFrameAtRef.current = Date.now();
     if (!imgRef.current) return;
     let url;
     if (frame instanceof Blob) {
@@ -1342,6 +1349,43 @@ function CameraWidget() {
     }
     lastBlobUrlRef.current = url;
   }, []);
+
+  // Schedule a reconnect using the stored credentials. Coalesces multiple
+  // triggers (lost-connection event + stale-frame watchdog) into a single
+  // attempt with a small backoff.
+  function scheduleReconnect() {
+    if (reconnectTimerRef.current) return;
+    reconnectTimerRef.current = setTimeout(async () => {
+      reconnectTimerRef.current = null;
+      const { u, p } = credsRef.current;
+      if (!u || !p) { console.warn('[camera] no creds for reconnect'); return; }
+      console.log('[camera] reconnecting…');
+      try {
+        if (streamRef.current) { try { streamRef.current.close(); } catch {} streamRef.current = null; }
+        await connectAndStream(u, p);
+      } catch (e) {
+        console.error('[camera] reconnect failed', e);
+        scheduleReconnect(); // try again
+      }
+    }, RECONNECT_DELAY_MS);
+  }
+
+  // Watchdog — if the last frame is older than STALE_FRAME_MS while we're in
+  // the streaming state, the upstream stopped (camera/equipment reset). Drop
+  // the dead stream and reconnect.
+  useEffect(() => {
+    if (status !== 'streaming') return;
+    lastFrameAtRef.current = Date.now();
+    watchdogRef.current = setInterval(() => {
+      if (Date.now() - lastFrameAtRef.current > STALE_FRAME_MS) {
+        console.warn('[camera] no frames for', STALE_FRAME_MS, 'ms — reconnecting');
+        clearInterval(watchdogRef.current); watchdogRef.current = null;
+        scheduleReconnect();
+      }
+    }, 5000);
+    return () => { if (watchdogRef.current) { clearInterval(watchdogRef.current); watchdogRef.current = null; } };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
 
   async function loadSdk() {
     // MobileServerURL must be set BEFORE the SDK script runs its initialize().
@@ -1399,6 +1443,14 @@ function CameraWidget() {
       await loadSdk();
       const sdk = window.XPMobileSDK;
 
+      // Belt-and-suspenders: force the Connection's cached server URL even if
+      // settings.MobileServerURL got overwritten by the SDK's defaults during
+      // its own var-redeclaration.
+      window.XPMobileSDKSettings.MobileServerURL = CAMERA_BASE_URL;
+      if (sdk.library?.Connection) sdk.library.Connection.server = CAMERA_BASE_URL;
+      console.log('[camera] Connection.server =', sdk.library?.Connection?.server);
+      console.log('[camera] settings.MobileServerURL =', window.XPMobileSDKSettings.MobileServerURL);
+
       // Diagnostic observer — names taken straight from
       // XPMobileSDK.interfaces.ConnectionObserver in the SDK source.
       const debugObs = {};
@@ -1411,6 +1463,15 @@ function CameraWidget() {
         'connectionLostConnection','connectionProcessingDisconnect','connectionDidDisconnect',
       ].forEach(n => debugObs[n] = (...a) => console.log('[camera evt]', n, a));
       sdk.addObserver(debugObs);
+
+      // Auto-reconnect on lost connection (overnight equipment resets, etc).
+      const reconnectObs = {
+        connectionLostConnection: () => {
+          console.warn('[camera] connection lost — scheduling reconnect');
+          scheduleReconnect();
+        },
+      };
+      sdk.addObserver(reconnectObs);
 
       // ── Connect ──────────────────────────────────────────────────────────
       const connectP = eventToPromise(sdk, ['connectionDidConnect'], ['connectionFailedToConnect']);
@@ -1432,6 +1493,7 @@ function CameraWidget() {
       console.log('[camera] logged in');
 
       await api.store.set('wp-camera-auth', JSON.stringify({ u: username, p: password }));
+      credsRef.current = { u: username, p: password };
 
       // ── Discover cameras the account actually has access to ─────────────
       // The hardcoded GUID hit SecurityError 19 (insufficient rights). Picking
