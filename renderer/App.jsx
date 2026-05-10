@@ -806,7 +806,7 @@ function GoogleTrafficWidget({ location = DEFAULT_LOC, apiKey = '' }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.lat, location.lon, apiKey]);
 
-  return { color:'#f77f4f', title:'Circulation', sub: `Satellite · ${location.name}`,
+  return { color:'#f77f4f', title:'Circulation', sub: `Plan · ${location.name}`,
     content:(
       <div style={{margin:'4px -2px 0',borderRadius:10,overflow:'hidden',lineHeight:0}}>
         <iframe

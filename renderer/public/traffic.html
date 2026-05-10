@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+html,body,#map{margin:0;padding:0;width:100%;height:100%;background:#111}
+.leaflet-control-zoom{display:none}
+.leaflet-control-attribution{font-size:8px!important;background:rgba(0,0,0,0.4)!important;color:#aaa!important}
+.leaflet-control-attribution a{color:#888!important}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const p      = new URLSearchParams(location.search);
+const lat    = parseFloat(p.get('lat')  || '46.81228');
+const lon    = parseFloat(p.get('lon')  || '-71.21454');
+const zoom   = parseInt(p.get('zoom')   || '11');
+const apiKey = p.get('apiKey')          || '';
+
+const map = L.map('map', { zoomControl:false, attributionControl:true })
+             .setView([lat, lon], zoom);
+
+// 1. Carto Dark Matter — dark-themed street map base. Streets and labels are
+//    baked into the tile, so we no longer need a separate transportation overlay.
+L.tileLayer(
+  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+  { attribution:'© OpenStreetMap, © CARTO', maxZoom:20, subdomains:'abcd' }
+).addTo(map);
+
+// 3. TomTom real-time traffic flow (green/yellow/red speed vs free-flow)
+if (apiKey) {
+  L.tileLayer(
+    'https://api.tomtom.com/traffic/map/4/tile/flow/relative0/{z}/{x}/{y}.png?key=' + apiKey + '&tileSize=256',
+    { maxZoom:18, opacity:0.8, attribution:'© TomTom' }
+  ).addTo(map);
+}
+
+map.on('zoomend', function() {
+  try { window.parent.postMessage({ type:'trafficZoom', zoom: map.getZoom() }, '*'); } catch(e) {}
+});
+</script>
+</body>
+</html>
