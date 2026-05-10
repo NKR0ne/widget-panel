@@ -1508,12 +1508,23 @@ function CameraWidget() {
       console.log('[camera] cameras', cameras);
       const savedCamId = await api.store.get('wp-camera-id');
       const camList = Array.isArray(cameras) ? cameras : (cameras?.items || cameras?.cameras || []);
-      const pick = camList.find(c => (c.Id || c.id) === savedCamId)
-                || camList.find(c => (c.Id || c.id) === CAMERA_ID)
-                || camList[0];
-      if (!pick) throw new Error('No cameras available to this account');
-      const camId = pick.Id || pick.id;
-      console.log('[camera] using camera', pick.Name || pick.name || camId, camId);
+      // GetItems returns a hierarchy (groups → sub-groups → cameras). Recurse
+      // and keep only Type==='Camera' leaves so we don't pick a group GUID.
+      const flatten = (items, acc = []) => {
+        for (const it of items || []) {
+          if (it && it.Type === 'Camera' && it.Id) acc.push(it);
+          if (Array.isArray(it?.Items)) flatten(it.Items, acc);
+        }
+        return acc;
+      };
+      const allCams = flatten(camList);
+      console.log('[camera] flat list (', allCams.length, ' cameras)', allCams);
+      const pick = allCams.find(c => c.Id === savedCamId)
+                || allCams.find(c => c.Id === CAMERA_ID)
+                || allCams[0];
+      if (!pick) throw new Error('No cameras available to this account (flatten found 0 of type=Camera)');
+      const camId = pick.Id;
+      console.log('[camera] using camera', pick.Name || camId, camId);
       await api.store.set('wp-camera-id', camId);
 
       // ── RequestStream uses callbacks, not observer pattern ───────────────
