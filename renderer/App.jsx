@@ -1481,14 +1481,13 @@ function CameraWidget() {
       console.log('[camera] connected');
 
       // ── Login (positional args!) ─────────────────────────────────────────
+      // loginType: 'Basic' — XProtect Mobile's server treats a missing LoginType
+      // differently than 'Basic'; the Web Client always specifies one. Without
+      // it, commands after login (LiveMessage, getAllCameras, requestStream)
+      // were returning SecurityError (19) even though login itself succeeded.
       const loginP = eventToPromise(sdk, ['connectionDidLogIn'], ['connectionFailedToLogIn']);
-      console.log("[camera] sdk.login attempt");
-      console.log("[camera] username:", username);
-      console.log("[camera] password length:", password?.length);
-      console.log("[camera] password chars:", password?.split("").map(c => c.charCodeAt(0)).join(","));
-      console.log("[camera] CAMERA_BASE_URL:", CAMERA_BASE_URL);
-      console.log('[camera] sdk.login(username, password)');
-      sdk.login(username, password);
+      console.log('[camera] sdk.login(username, password, "Basic")');
+      sdk.login(username, password, 'Basic');
       await loginP;
       console.log('[camera] logged in');
 
