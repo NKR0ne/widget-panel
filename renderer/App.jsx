@@ -1540,19 +1540,40 @@ function CameraWidget() {
       });
       console.log('[camera] stream response', response);
 
-      // VideoStream needs a <videos-video-connection-manager> in the DOM —
-      // it appends a <video-connection> child to it. The host element exists
-      // because we render <videos-video-connection-manager> in our widget tree.
-      const Vs = window.VideoStream || (window.XPMobileSDK?.library?.VideoStream);
-      if (!Vs) throw new Error('VideoStream class not exposed by SDK');
+      // SDK's VideoStream class is declared `class VideoStream {}` at top of
+      // Lib/VideoStream.js — that's a *lexical* global, not on window, so we
+      // can't `new VideoStream(...)`. Inline the equivalent: build the same
+      // <video-connection> element, append to the manager, listen for
+      // onReceivedFrame, dispatch 'start'.
       const videoId = response?.outputParameters?.VideoId
                     || response?.params?.VideoId
                     || response?.VideoId;
-      if (!videoId) { console.warn('[camera] no videoId in response', response); }
-      const stream = new Vs(videoId, response, {});
-      stream.addObserver({ videoConnectionReceivedFrame: onFrame });
-      stream.open();
-      streamRef.current = stream;
+      if (!videoId) throw new Error('No videoId in requestStream response');
+
+      const manager = document.querySelector('videos-video-connection-manager')
+                   || (() => {
+                     const m = document.createElement('videos-video-connection-manager');
+                     m.style.display = 'none';
+                     document.body.appendChild(m);
+                     return m;
+                   })();
+      const conn = document.createElement('video-connection');
+      conn.videoId = videoId;
+      conn.location = window.XPMobileSDKSettings.MobileServerURL + window.XPMobileSDKSettings.videoChanel;
+      const frameListener = (event) => { onFrame(event.detail?.frame); };
+      conn.addEventListener('onReceivedFrame', frameListener);
+      manager.appendChild(conn);
+      conn.dispatchEvent(new CustomEvent('start'));
+
+      streamRef.current = {
+        videoId,
+        close: () => {
+          try { conn.dispatchEvent(new CustomEvent('destroy')); } catch {}
+          try { conn.removeEventListener('onReceivedFrame', frameListener); } catch {}
+          if (manager.contains(conn)) try { manager.removeChild(conn); } catch {}
+          try { sdk.closeStream?.(videoId); } catch {}
+        },
+      };
       setStatus('streaming');
     } catch (e) {
       console.error('[camera] error', e);
