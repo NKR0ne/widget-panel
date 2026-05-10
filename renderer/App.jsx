@@ -1506,6 +1506,8 @@ function CameraWidget() {
 
       // Diagnostic observer — names taken straight from
       // XPMobileSDK.interfaces.ConnectionObserver in the SDK source.
+      // Also include request-level events so we see when post-login commands
+      // (RequestStream, LiveMessage, etc.) succeed or fail.
       const debugObs = {};
       [
         'connectionStateChanged',
@@ -1514,6 +1516,8 @@ function CameraWidget() {
         'connectionRequiresCode','connectionCodeError',
         'connectionDidLogIn','connectionFailedToLogIn',
         'connectionLostConnection','connectionProcessingDisconnect','connectionDidDisconnect',
+        'connectionRequestSucceeded','connectionRequestFailed',
+        'connectionVideoStreamStarted','connectionVideoStreamFailed','connectionVideoStreamEnded',
       ].forEach(n => debugObs[n] = (...a) => console.log('[camera evt]', n, a));
       sdk.addObserver(debugObs);
       debugObsRef.current = debugObs;
@@ -1614,26 +1618,79 @@ function CameraWidget() {
           (err) => reject(new Error('RequestStream failed: ' + JSON.stringify(err)))
         );
       });
-      console.log('[camera] VideoStream', videoStream);
-      console.log('[camera] videoId', videoStream?.videoId);
+      console.log('[camera] VideoStream from SDK', videoStream);
       if (!videoStream) throw new Error('RequestStream succeeded with null VideoStream');
 
-      videoStream.addObserver({ videoConnectionReceivedFrame: onFrame });
-      streamRef.current = videoStream;
+      // ── The trap we just escaped ─────────────────────────────────────────
+      // sdk.RequestStream's success callback returns an `XPMobileSDK.library`
+      // VideoStream (the NEW class, defined in Lib/VideoStream.js). That class
+      // wraps a <video-connection> custom element which ALWAYS opens a
+      // WebSocket — regardless of MethodType. So calling videoStream.open()
+      // here with our MethodType:'Pull' params would still try wss:// and
+      // fail with HTTP 400 → black card.
+      //
+      // Workaround: there's an OLDER class XPMobileSDK.library.VideoConnection
+      // (Lib/VideoConnection.js) that honors `request.parameters.MethodType`
+      // and internally constructs a PullConnection (AJAX) for 'Pull'. We
+      // extract the SDK-prepared request/response from the returned VideoStream
+      // and feed it to VideoConnection manually. Do NOT call open() on the
+      // discarded VideoStream — that would still kick off a WebSocket.
+      const VC = sdk.library?.VideoConnection;
+      if (typeof VC !== 'function') {
+        throw new Error('XPMobileSDK.library.VideoConnection unavailable on this SDK build');
+      }
+      const fakeReq = {
+        params:   videoStream.request?.parameters,
+        options:  videoStream.request?.options,
+        response: { outputParameters: videoStream.response?.parameters },
+      };
+      console.log('[camera] reconstructing VideoConnection from', fakeReq);
+      const videoConnection = new VC(videoStream.videoId, fakeReq);
+      console.log('[camera] VideoConnection', videoConnection,
+        'isPush=', videoConnection.isPush);
+
+      const vcObs = {
+        videoConnectionReceivedFrame: (frame) => {
+          // Only log frame metadata, not the binary blob itself.
+          if (lastFrameAtRef.current === 0) {
+            console.log('[camera vc] first frame', {
+              hasBlob: !!frame?.blob,
+              blobSize: frame?.blob?.size,
+              keys: frame && Object.keys(frame),
+            });
+          }
+          onFrame(frame);
+        },
+        videoConnectionFailed:           (...a) => console.error('[camera vc] failed', a),
+        videoConnectionTemporaryDown:    (...a) => console.warn('[camera vc] temporaryDown', a),
+        videoConnectionRecovered:        (...a) => console.log('[camera vc] recovered', a),
+        videoConnectionChangedState:     (...a) => console.log('[camera vc] stateChanged', a),
+        videoConnectionStreamingError:   (...a) => console.error('[camera vc] streamingError', a),
+      };
+      videoConnection.addObserver(vcObs);
+      streamRef.current = videoConnection;
       setStatus('streaming');
       // Wait one animation frame so React commits the streaming-state render
-      // (the <img> element) before we ask the SDK to start delivering frames.
-      // Otherwise the first few frames arrive while imgRef.current is null
-      // — pendingFrameRef catches that case as a backstop.
+      // (the <img> element) before frames start arriving.
       await new Promise(resolve => requestAnimationFrame(resolve));
-      videoStream.open();
+      console.log('[camera] videoConnection.open()');
+      videoConnection.open();
 
       // First-frame watchdog: if the stream opens but no frames arrive within
-      // 8 seconds, the underlying video channel was rejected by the server.
+      // 8 seconds, dump the live state so we can see whether the channel is
+      // running, closed, or stuck.
       const t0 = Date.now();
       setTimeout(() => {
-        if (lastFrameAtRef.current >= t0) return; // got at least one frame
+        if (lastFrameAtRef.current >= t0) return;
         console.warn('[camera] no frames within 8s of open()');
+        try {
+          console.warn('[camera] post-open VC state', {
+            videoId: videoConnection?.videoId,
+            cameraId: videoConnection?.cameraId,
+            isPush: videoConnection?.isPush,
+            communication: videoConnection?.communication?.constructor?.name,
+          });
+        } catch (e) { console.warn('[camera] post-open inspect failed', e); }
       }, 8000);
     } catch (e) {
       console.error('[camera] error', e);
@@ -1733,11 +1790,6 @@ function CameraWidget() {
     content:(
       <div>
         {body}
-        {/* VideoStream constructor appends a <video-connection> tile to this
-            element; we don't render the tile ourselves — frames arrive via the
-            observer's videoConnectionReceivedFrame and we paint them into the
-            <img> above. */}
-        <videos-video-connection-manager style={{display:'none'}} />
         <div onMouseDown={onResizeMouseDown}
           style={{height:6,marginTop:2,marginLeft:-14,marginRight:-14,cursor:'ns-resize',
             display:'flex',alignItems:'center',justifyContent:'center',userSelect:'none'}}>
