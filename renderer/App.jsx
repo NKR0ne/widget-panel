@@ -1403,6 +1403,11 @@ function CameraWidget() {
 
       // ── Login (positional args!) ─────────────────────────────────────────
       const loginP = eventToPromise(sdk, ['connectionDidLogIn'], ['connectionFailedToLogIn']);
+      console.log("[camera] sdk.login attempt");
+      console.log("[camera] username:", username);
+      console.log("[camera] password length:", password?.length);
+      console.log("[camera] password chars:", password?.split("").map(c => c.charCodeAt(0)).join(","));
+      console.log("[camera] CAMERA_BASE_URL:", CAMERA_BASE_URL);
       console.log('[camera] sdk.login(username, password)');
       sdk.login(username, password);
       await loginP;
@@ -1416,7 +1421,7 @@ function CameraWidget() {
         sdk.requestStream(
           CAMERA_ID,
           { width: 800, height: 450 },
-          { signalType: 'Live', reuseConnection: true },
+          { signalType: 'Live', reuseConnection: false },
           (resp) => resolve(resp),
           (err)  => reject(new Error('requestStream failed: ' + JSON.stringify(err)))
         );
@@ -1440,6 +1445,13 @@ function CameraWidget() {
     } catch (e) {
       console.error('[camera] error', e);
       setErrMsg(String(e?.message || e));
+      // SDK error code 15 = InvalidCredentials. Clear the stored creds so the
+      // login form shows blank inputs instead of auto-retrying bad creds.
+      const msg = String(e?.message || '');
+      if (msg.includes('"code":15')) {
+        await api.store.delete('wp-camera-auth');
+        setUser(''); setPass('');
+      }
       setStatus('login');
     }
   }
