@@ -1555,6 +1555,18 @@ function CameraWidget() {
       videoStream.open();
       streamRef.current = videoStream;
       setStatus('streaming');
+
+      // First-frame watchdog: if the stream opens but no frames arrive within
+      // 8 seconds, the underlying video channel was rejected by the server
+      // (often with SecurityError on LiveMessage). Surface that clearly
+      // instead of staring at a black <img> forever.
+      const t0 = Date.now();
+      setTimeout(() => {
+        if (status !== 'streaming') return;
+        if (lastFrameAtRef.current >= t0) return; // got at least one frame
+        console.warn('[camera] no frames within 8s of open()');
+        setErrMsg('Stream opened but no frames received — check XProtect server permissions for this account');
+      }, 8000);
     } catch (e) {
       console.error('[camera] error', e);
       setErrMsg(String(e?.message || e));
