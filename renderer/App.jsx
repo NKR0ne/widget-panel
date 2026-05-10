@@ -1344,14 +1344,26 @@ function CameraWidget() {
   }, []);
 
   async function loadSdk() {
-    if (window.XPMobileSDK) return;
-    return new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = CAMERA_SDK_URL;
-      s.async = true;
-      s.onload  = () => resolve();
-      s.onerror = (e) => reject(new Error('SDK script load failed: ' + CAMERA_SDK_URL));
-      document.head.appendChild(s);
+    // The XPMobileSDK script loads ~30 sub-scripts (incl. Lib/VideoStream.js)
+    // asynchronously after its own <script>'s onload fires. We must wait for
+    // XPMobileSDK.isLoaded() before any sub-script class is usable.
+    if (!window.XPMobileSDK) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = CAMERA_SDK_URL;
+        s.async = true;
+        s.onload  = () => resolve();
+        s.onerror = () => reject(new Error('SDK script load failed: ' + CAMERA_SDK_URL));
+        document.head.appendChild(s);
+      });
+    }
+    if (window.XPMobileSDK.isLoaded?.()) return;
+    await new Promise((resolve) => {
+      const prev = window.XPMobileSDK.onLoad;
+      window.XPMobileSDK.onLoad = function () {
+        try { prev && prev(); } catch {}
+        resolve();
+      };
     });
   }
 
@@ -1415,11 +1427,32 @@ function CameraWidget() {
 
       await api.store.set('wp-camera-auth', JSON.stringify({ u: username, p: password }));
 
+      // ── Discover cameras the account actually has access to ─────────────
+      // The hardcoded GUID hit SecurityError 19 (insufficient rights). Picking
+      // from getAllCameras gives us a GUID we know is accessible.
+      console.log('[camera] sdk.getAllCameras()');
+      const cameras = await new Promise((resolve, reject) => {
+        sdk.getAllCameras(
+          (cams) => resolve(cams),
+          (err)  => reject(new Error('getAllCameras failed: ' + JSON.stringify(err)))
+        );
+      });
+      console.log('[camera] cameras', cameras);
+      const savedCamId = await api.store.get('wp-camera-id');
+      const camList = Array.isArray(cameras) ? cameras : (cameras?.items || cameras?.cameras || []);
+      const pick = camList.find(c => (c.Id || c.id) === savedCamId)
+                || camList.find(c => (c.Id || c.id) === CAMERA_ID)
+                || camList[0];
+      if (!pick) throw new Error('No cameras available to this account');
+      const camId = pick.Id || pick.id;
+      console.log('[camera] using camera', pick.Name || pick.name || camId, camId);
+      await api.store.set('wp-camera-id', camId);
+
       // ── RequestStream uses callbacks, not observer pattern ───────────────
-      console.log('[camera] sdk.requestStream(', CAMERA_ID, ')');
+      console.log('[camera] sdk.requestStream(', camId, ')');
       const response = await new Promise((resolve, reject) => {
         sdk.requestStream(
-          CAMERA_ID,
+          camId,
           { width: 800, height: 450 },
           { signalType: 'Live', reuseConnection: false },
           (resp) => resolve(resp),
