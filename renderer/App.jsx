@@ -1534,52 +1534,26 @@ function CameraWidget() {
       await api.store.set('wp-camera-id', camId);
 
       // ── RequestStream uses callbacks, not observer pattern ───────────────
+      // The SDK constructs a VideoStream itself in requestStreamCallback (it
+      // can — `class VideoStream` is lexical *inside* the SDK's own scope) and
+      // passes the live instance to our success callback.
       console.log('[camera] sdk.requestStream(', camId, ')');
-      const response = await new Promise((resolve, reject) => {
+      const videoStream = await new Promise((resolve, reject) => {
         sdk.requestStream(
           camId,
           { width: 800, height: 450 },
           { signalType: 'Live', reuseConnection: false },
-          (resp) => resolve(resp),
-          (err)  => reject(new Error('requestStream failed: ' + JSON.stringify(err)))
+          (vs)  => resolve(vs),
+          (err) => reject(new Error('requestStream failed: ' + JSON.stringify(err)))
         );
       });
-      console.log('[camera] stream response', response);
+      console.log('[camera] VideoStream', videoStream);
+      console.log('[camera] videoId', videoStream?.videoId);
+      if (!videoStream) throw new Error('requestStream succeeded with null VideoStream');
 
-      // SDK's VideoStream class is declared `class VideoStream {}` at top of
-      // Lib/VideoStream.js — that's a *lexical* global, not on window, so we
-      // can't `new VideoStream(...)`. Inline the equivalent: build the same
-      // <video-connection> element, append to the manager, listen for
-      // onReceivedFrame, dispatch 'start'.
-      const videoId = response?.outputParameters?.VideoId
-                    || response?.params?.VideoId
-                    || response?.VideoId;
-      if (!videoId) throw new Error('No videoId in requestStream response');
-
-      const manager = document.querySelector('videos-video-connection-manager')
-                   || (() => {
-                     const m = document.createElement('videos-video-connection-manager');
-                     m.style.display = 'none';
-                     document.body.appendChild(m);
-                     return m;
-                   })();
-      const conn = document.createElement('video-connection');
-      conn.videoId = videoId;
-      conn.location = window.XPMobileSDKSettings.MobileServerURL + window.XPMobileSDKSettings.videoChanel;
-      const frameListener = (event) => { onFrame(event.detail?.frame); };
-      conn.addEventListener('onReceivedFrame', frameListener);
-      manager.appendChild(conn);
-      conn.dispatchEvent(new CustomEvent('start'));
-
-      streamRef.current = {
-        videoId,
-        close: () => {
-          try { conn.dispatchEvent(new CustomEvent('destroy')); } catch {}
-          try { conn.removeEventListener('onReceivedFrame', frameListener); } catch {}
-          if (manager.contains(conn)) try { manager.removeChild(conn); } catch {}
-          try { sdk.closeStream?.(videoId); } catch {}
-        },
-      };
+      videoStream.addObserver({ videoConnectionReceivedFrame: onFrame });
+      videoStream.open();
+      streamRef.current = videoStream;
       setStatus('streaming');
     } catch (e) {
       console.error('[camera] error', e);
