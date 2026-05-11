@@ -32,7 +32,11 @@ const SYS = [
   { id:"mail",    label:"Outlook Mail",     note:"Microsoft Graph · OAuth",       color:"#0078d4" },
   { id:"todo",    label:"Microsoft To-Do",  note:"Microsoft Graph · OAuth",       color:"#2564cf" },
   { id:"camera",  label:"Caméra",           note:"Security Center · local",       color:"#5e8af5" },
+  { id:"euronews",label:"Euronews",          note:"HLS · Antik",                   color:"#1e4ba8" },
 ];
+
+const EURONEWS_HLS_URL = 'https://dash4.antik.sk/live/test_euronews/playlist.m3u8';
+const HLS_JS_URL       = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js';
 
 const CAMERA_BASE_URL    = "https://securitycenter.local:8082";
 const CAMERA_SDK_URL     = `${CAMERA_BASE_URL}/XPMobileSDK/XPMobileSDK.js`;
@@ -56,22 +60,37 @@ const DEFAULT_TV_SYMBOLS = [
 ];
 
 // Built-in "Marchés" overview — replaces TV's default "Liste de surveillance"
-// tab. Tickers after the colon must be Yahoo-compatible (ETFs work; raw indices
-// like ^GSPC don't because TV symbols don't carry the ^).
+// tab. `s` is the TradingView symbol (used for the click-through to TV's chart);
+// `y` is the Yahoo Finance symbol (used for the quote/sparkline fetch). When
+// `y` is absent we fall back to the part after the colon in `s`.
 const MARKETS_OVERVIEW_LIST = {
   id:   'wp-markets-overview',
   name: 'Marchés',
   symbols: [
-    {s:'AMEX:SPY',    d:'S&P 500'},
-    {s:'NASDAQ:QQQ',  d:'NASDAQ 100'},
-    {s:'AMEX:DIA',    d:'Dow Jones'},
-    {s:'AMEX:IWM',    d:'Russell 2000'},
-    {s:'NASDAQ:IBIT', d:'Bitcoin'},
-    {s:'AMEX:GLD',    d:'Gold'},
-    {s:'AMEX:USO',    d:'Crude Oil'},
-    {s:'NASDAQ:TLT',  d:'20Y Treasury'},
-    {s:'AMEX:UUP',    d:'US Dollar'},
+    {s:'SP:SPX',        y:'^GSPC',   d:'S&P 500'},
+    {s:'DJ:DJI',        y:'^DJI',    d:'Dow Jones'},
+    {s:'NASDAQ:IXIC',   y:'^IXIC',   d:'NASDAQ Composite'},
+    {s:'TVC:NI225',     y:'^N225',   d:'Nikkei 225'},
+    {s:'TVC:UKX',       y:'^FTSE',   d:'FTSE 100'},
+    {s:'XETR:DAX',      y:'^GDAXI',  d:'DAX'},
+    {s:'EURONEXT:PX1',  y:'^FCHI',   d:'CAC 40'},
+    {s:'TSX:TSX',       y:'^GSPTSE', d:'S&P/TSX Composite'},
   ],
+};
+
+// Bloomberg Live — third tab in the Marchés card. bloomberg.com/live/us is
+// paywalled, and Bloomberg disables iframe embed on their YouTube live stream
+// (error 153). Workaround: load the full /watch?v= page and let the
+// VideoEmbed isolation script find the <video> and hide the YouTube chrome
+// (header, sidebar, recommendations, comments). The video ID is Bloomberg
+// Television's permanent 24/7 stream — if it rotates, fetch a fresh one from
+// https://www.youtube.com/channel/UCIALMKvObZNtJ6AmdCLP7Lg/live.
+const BLOOMBERG_LIVE_TAB = {
+  id:      'wp-bloomberg-live',
+  name:    'Bloomberg Live',
+  kind:    'video',
+  url:     'https://www.youtube.com/watch?v=iEpJwprxDdk',
+  isolate: true,
 };
 
 // ── Mock fallback data ───────────────────────────────────────────────────────
@@ -484,6 +503,518 @@ function TickerAvatar({ ticker, size=52 }) {
   );
 }
 
+// Embed an Electron <webview> for a video page. When the URL is a clean
+// embed (e.g., youtube.com/embed/...) the whole page IS the player — no
+// isolation needed. For a full news page like bloomberg.com/live, pass
+// `isolate` to inject a script that hides the page chrome around <video>.
+function VideoEmbed({ url, storeKey = 'wp-video-embed-height', isolate = false }) {
+  const wvRef = useRef(null);
+  const [cardHeight, setCardHeight] = useState(320);
+
+  // Load persisted height.
+  useEffect(() => {
+    api.store.get(storeKey).then(v => {
+      const h = parseInt(v || '0');
+      if (h >= 160) setCardHeight(h);
+    });
+  }, [storeKey]);
+
+  const onResizeMouseDown = (e) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = cardHeight;
+    let cur = startH;
+    const onMove = (ev) => {
+      cur = Math.max(160, startH + (ev.clientY - startY));
+      setCardHeight(cur);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      api.store.set(storeKey, String(cur));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  useEffect(() => {
+    const wv = wvRef.current;
+    if (!wv || !isolate) return;
+
+    // YouTube is a React SPA that re-renders aggressively. DOM-mutation
+    // isolation fights React and ends up blinking-then-blanking. Targeted
+    // CSS injection sidesteps the conflict because it doesn't touch the
+    // DOM — React happily re-renders elements that are still display:none
+    // because of our stylesheet.
+    const isYouTube = /(^|\.)youtube\.com$/i.test(new URL(url).hostname);
+    const youtubeCSS = `
+      /* Neutralize containing-block triggers on YouTube's layout containers,
+         otherwise our position:fixed on #player ends up relative to whichever
+         transformed ancestor wraps it (which is animated -> black flash). */
+      ytd-app, ytd-page-manager, ytd-watch-flexy, ytd-watch-flexy #primary,
+      #primary, #primary-inner, #columns, #content, #page-manager {
+        transform:none!important; filter:none!important;
+        perspective:none!important; contain:none!important;
+        will-change:auto!important; clip-path:none!important;
+        overflow:visible!important;
+      }
+      /* Hide everything around the player. */
+      ytd-masthead, #masthead-container, #masthead,
+      ytd-mini-guide-renderer, tp-yt-app-drawer, ytd-guide-renderer,
+      #secondary, #related, #comments, #chat, #chat-container,
+      ytd-watch-metadata, #below, #info, #info-contents, #meta, #meta-contents,
+      #top-row, #bottom-row, #description, #description-inline-expander,
+      ytd-merch-shelf-renderer, ytd-popup-container, ytd-toast,
+      ytd-engagement-panel-section-list-renderer,
+      ytd-live-chat-frame, .ytp-pause-overlay, .ytp-ce-element, .ytp-endscreen-content,
+      ytd-watch-next-secondary-results-renderer,
+      ytd-comments, ytd-comments-header-renderer,
+      ytd-promoted-sparkles-web-renderer,
+      ytd-banner-promo-renderer,
+      ytd-mealbar-promo-renderer,
+      ytd-consent-bump-v2-lightbox { display:none!important; }
+      html, body, ytd-app, ytd-page-manager, ytd-watch-flexy, #primary, #primary-inner {
+        background:#000!important; overflow:hidden!important;
+        margin:0!important; padding:0!important;
+        width:100vw!important; height:100vh!important;
+        max-width:none!important; max-height:none!important;
+      }
+      /* Stretch every plausible player wrapper to viewport. Multiple
+         selectors because YouTube swaps between layouts (theater, default,
+         minimized) and class names change with A/B tests. */
+      #player, #player-container, #player-container-outer, #player-container-inner,
+      #player-theater-container, #player-full-bleed-container,
+      #player.ytd-watch-flexy, #player-wide-container,
+      ytd-player, .html5-video-player, #movie_player {
+        position:fixed!important; top:0!important; left:0!important;
+        right:0!important; bottom:0!important;
+        width:100vw!important; height:100vh!important;
+        max-width:none!important; max-height:none!important;
+        min-width:0!important; min-height:0!important;
+        z-index:2147483647!important; background:#000!important;
+      }
+      .html5-video-container { width:100%!important; height:100%!important; }
+      video.html5-main-video, video {
+        width:100%!important; height:100%!important;
+        object-fit:contain!important; background:#000!important;
+      }
+    `;
+    // Diagnostic dump 5s after the page loads — if it stays black we can
+    // tell why (no <video>, transformed ancestor, hidden #player, etc.).
+    const diagJS = `
+      (function () {
+        setTimeout(function () {
+          var v = document.querySelector('video');
+          var p = document.querySelector('#player');
+          var pcs = p && getComputedStyle(p);
+          var vcs = v && getComputedStyle(v);
+          console.log('[wp-yt] diag: video=' + !!v +
+            ' #player=' + !!p +
+            (p ? ' playerDisplay=' + pcs.display + ' playerPosition=' + pcs.position : '') +
+            (v ? ' videoDisplay=' + vcs.display + ' videoSize=' +
+                Math.round(v.getBoundingClientRect().width) + 'x' +
+                Math.round(v.getBoundingClientRect().height) +
+                ' videoReady=' + v.readyState +
+                ' videoPaused=' + v.paused : ''));
+        }, 5000);
+      })();
+    `;
+    if (isYouTube) {
+      const apply = () => {
+        try { wv.insertCSS(youtubeCSS); } catch {}
+      };
+      const onReady = () => {
+        apply();
+        try { wv.executeJavaScript(diagJS, true); } catch {}
+        // Re-apply on a few delayed ticks — handles late-rendered states
+        // (preroll ad finishes, layout flips, etc.).
+        setTimeout(apply, 1500);
+        setTimeout(apply, 4000);
+        setTimeout(apply, 10000);
+      };
+      wv.addEventListener('dom-ready', onReady);
+      wv.addEventListener('did-finish-load', apply);
+      wv.addEventListener('did-navigate', apply);
+      wv.addEventListener('did-navigate-in-page', apply);
+      return () => {
+        wv.removeEventListener('dom-ready', onReady);
+        wv.removeEventListener('did-finish-load', apply);
+        wv.removeEventListener('did-navigate', apply);
+        wv.removeEventListener('did-navigate-in-page', apply);
+      };
+    }
+
+    // Source of the page-side isolation script. Runs inside the webview's
+    // origin via wv.executeJavaScript(). Two-phase: first wait for a <video>
+    // to exist (handles cookie consent + lazy player init), then neutralize
+    // ancestor transforms, hide elements outside the video's ancestor chain,
+    // and fullscreen-fix the <video> itself.
+    const isolateJS = `
+      (function () {
+        if (window.__wpIsolating) return;
+        window.__wpIsolating = true;
+
+        // Recursive querySelector that descends into open shadow roots AND
+        // same-origin iframes.
+        function deepQuery(sel, root) {
+          root = root || document;
+          var hit = root.querySelector ? root.querySelector(sel) : null;
+          if (hit) return hit;
+          var hosts = root.querySelectorAll ? root.querySelectorAll('*') : [];
+          for (var i = 0; i < hosts.length; i++) {
+            if (hosts[i].shadowRoot) {
+              var deep = deepQuery(sel, hosts[i].shadowRoot);
+              if (deep) return deep;
+            }
+            if (hosts[i].tagName === 'IFRAME') {
+              try {
+                var doc = hosts[i].contentDocument;
+                if (doc) {
+                  var ihit = deepQuery(sel, doc);
+                  if (ihit) return ihit;
+                }
+              } catch (e) { /* cross-origin */ }
+            }
+          }
+          return null;
+        }
+
+        // Returns the <video> element if reachable, OR the iframe whose
+        // (cross-origin) content most likely hosts the player.
+        function findVideoOrPlayerFrame() {
+          var v = deepQuery('video');
+          if (v) { console.log('[wp-bb] found <video>', v); return v; }
+          // Cross-origin iframes — can't inspect, target the iframe wrapper.
+          var iframes = document.querySelectorAll('iframe');
+          var best = null, bestArea = 0;
+          for (var i = 0; i < iframes.length; i++) {
+            var r = iframes[i].getBoundingClientRect();
+            var area = r.width * r.height;
+            // Player iframes are video-shaped (>=240x140) and visible.
+            if (area > bestArea && r.width >= 240 && r.height >= 140) {
+              best = iframes[i]; bestArea = area;
+            }
+          }
+          if (best) console.log('[wp-bb] no <video>, using iframe', best.src, bestArea);
+          return best;
+        }
+
+        // Heuristic activator: Bloomberg shows a clickable poster image
+        // ("Bloomberg Television" overlay) that turns into the live <video>
+        // when clicked. Try a few candidates in order of specificity.
+        function tryActivate() {
+          var candidates = [
+            'button[aria-label*="play" i]',
+            'button[aria-label*="watch" i]',
+            '[class*="WatchLive" i]',
+            '[class*="watch-live" i]',
+            '[class*="LiveThumb" i]',
+            '[class*="VideoPoster" i]',
+            '[class*="play-button" i]',
+            '[data-component*="live" i]'
+          ];
+          for (var i = 0; i < candidates.length; i++) {
+            var el = deepQuery(candidates[i]);
+            if (el) {
+              console.log('[wp-bb] activating via', candidates[i], el);
+              try { el.click(); return true; } catch (e) { console.warn(e); }
+            }
+          }
+          // Fallback: click the largest image/figure in the viewport — most
+          // likely the live thumbnail.
+          // Require a real video-shaped rect — the Bloomberg header logo is
+          // ~200px wide but only ~30px tall, so filter on height too.
+          var imgs = document.querySelectorAll('img, figure, [role="img"], [class*="Thumb" i], [class*="thumb" i]');
+          var best = null, bestArea = 0;
+          for (var j = 0; j < imgs.length; j++) {
+            var r = imgs[j].getBoundingClientRect();
+            var area = r.width * r.height;
+            if (area > bestArea && r.width >= 240 && r.height >= 140 &&
+                r.top >= 0 && r.top < 800) {
+              best = imgs[j]; bestArea = area;
+            }
+          }
+          if (best) {
+            console.log('[wp-bb] fallback click on largest image', best, bestArea);
+            try { best.click(); return true; } catch (e) { console.warn(e); }
+          }
+          return false;
+        }
+
+        var mo = null;
+        var loggedOnce = false;
+        function isolate() {
+          var target = findVideoOrPlayerFrame();
+          if (!target) return false;
+          if (mo) try { mo.disconnect(); } catch (e) {}
+          // 1. Clear transform/filter/perspective on every ancestor — those
+          //    properties create a containing block that makes position:fixed
+          //    relative to the ancestor instead of the viewport. Without
+          //    this, fixing the video doesn't actually fullscreen it.
+          var anc = target.parentElement;
+          while (anc && anc !== document.documentElement) {
+            anc.style.setProperty('transform',   'none', 'important');
+            anc.style.setProperty('filter',      'none', 'important');
+            anc.style.setProperty('perspective', 'none', 'important');
+            anc.style.setProperty('contain',     'none', 'important');
+            anc.style.setProperty('will-change', 'auto', 'important');
+            anc.style.setProperty('clip-path',   'none', 'important');
+            anc.style.setProperty('overflow',    'visible', 'important');
+            anc = anc.parentElement;
+          }
+          // 2. Build a set of all of <video>'s ancestors so we can hide
+          //    everything OUTSIDE that chain (top-down).
+          var chain = new Set();
+          var n = target;
+          while (n) { chain.add(n); n = n.parentElement; }
+          // 3. Recursively hide every element that isn't in the chain AND
+          //    isn't a descendant of the chain (which keeps the video's
+          //    controls and overlay visible).
+          function hideOutside(parent) {
+            Array.prototype.forEach.call(parent.children, function (child) {
+              if (chain.has(child)) {
+                hideOutside(child); // still in chain — recurse to hide its non-video siblings
+              } else if (child !== target) {
+                child.style.setProperty('display', 'none', 'important');
+              }
+            });
+          }
+          hideOutside(document.body);
+          // 4. Fullscreen-fix the <video> element directly.
+          if (target.tagName === 'VIDEO') {
+            target.style.cssText = 'position:fixed!important;top:0!important;left:0!important;' +
+              'right:0!important;bottom:0!important;width:100vw!important;height:100vh!important;' +
+              'margin:0!important;padding:0!important;border:0!important;' +
+              'object-fit:contain!important;background:#000!important;z-index:2147483647!important;';
+            try { target.play && target.play(); } catch (e) {}
+          } else if (target.tagName === 'IFRAME') {
+            target.style.cssText = 'position:fixed!important;top:0!important;left:0!important;' +
+              'right:0!important;bottom:0!important;width:100vw!important;height:100vh!important;' +
+              'border:0!important;background:#000!important;z-index:2147483647!important;';
+          }
+          // 5. Lock document so the page beneath can't scroll.
+          document.documentElement.style.cssText = 'margin:0;padding:0;overflow:hidden;background:#000;';
+          document.body.style.cssText = 'margin:0;padding:0;overflow:hidden;background:#000;';
+          if (mo) {
+            try { mo.observe(document.body, { childList:true, subtree:true }); }
+            catch (e) {}
+          }
+          if (!loggedOnce) {
+            console.log('[wp-bb] isolated', target.tagName,
+              'bodyChildren=' + document.body.children.length,
+              'chainSize=' + chain.size);
+            loggedOnce = true;
+          }
+          return true;
+        }
+
+        // Diagnostic dump 5s after script start — tells us if the player is
+        // a <video>, an iframe (and from where), or something else entirely.
+        setTimeout(function () {
+          var ifs = document.querySelectorAll('iframe');
+          console.log('[wp-bb] dump: location=' + location.href);
+          console.log('[wp-bb] dump: <video> count=' + document.querySelectorAll('video').length);
+          console.log('[wp-bb] dump: iframe count=' + ifs.length);
+          for (var i = 0; i < ifs.length; i++) {
+            var r = ifs[i].getBoundingClientRect();
+            console.log('[wp-bb] dump iframe', i,
+              (ifs[i].src || '(no src)').slice(0, 120),
+              Math.round(r.width) + 'x' + Math.round(r.height));
+          }
+        }, 5000);
+
+        if (isolate()) return;
+        var tries = 0;
+        var activated = false;
+        var poll = setInterval(function () {
+          tries++;
+          if (isolate()) { clearInterval(poll); return; }
+          // After 1.5s of no <video>, try to programmatically activate the
+          // live player. Don't loop activations — one shot per poll cycle.
+          if (!activated && tries === 3) {
+            activated = tryActivate();
+          }
+          // After 6s, try activating again in case the first attempt missed.
+          if (tries === 12) tryActivate();
+          if (tries > 120) clearInterval(poll); // 60s ceiling
+        }, 500);
+
+        mo = new MutationObserver(function () { isolate(); });
+        try { mo.observe(document.body, { childList:true, subtree:true }); } catch (e) {}
+        // Belt-and-suspenders polling: every 2s, force a re-isolate in case
+        // the MutationObserver missed a re-render or got disconnected by
+        // Bloomberg replacing document.body.
+        setInterval(function () { isolate(); }, 2000);
+      })();
+    `;
+
+    const run = () => { try { wv.executeJavaScript(isolateJS, true); } catch {} };
+    // Forward webview console messages so [wp-bb] logs surface in the panel's
+    // own devtools instead of being trapped in the webview's separate one.
+    const onConsole = (e) => {
+      if (typeof e.message === 'string' && e.message.startsWith('[wp-bb]')) {
+        console.log('[bloomberg webview]', e.message);
+      }
+    };
+    wv.addEventListener('dom-ready', run);
+    wv.addEventListener('did-finish-load', run);
+    wv.addEventListener('did-navigate', run);
+    wv.addEventListener('did-navigate-in-page', run);
+    wv.addEventListener('console-message', onConsole);
+    return () => {
+      wv.removeEventListener('dom-ready', run);
+      wv.removeEventListener('did-finish-load', run);
+      wv.removeEventListener('did-navigate', run);
+      wv.removeEventListener('did-navigate-in-page', run);
+      wv.removeEventListener('console-message', onConsole);
+    };
+  }, []);
+
+  return (
+    <div>
+      <div style={{width:'100%',height:cardHeight,borderRadius:8,
+        overflow:'hidden',background:'#000'}}>
+        <webview ref={wvRef} src={url}
+          partition="persist:bloomberg"
+          style={{width:'100%',height:'100%',display:'inline-flex'}}/>
+      </div>
+      <div onMouseDown={onResizeMouseDown}
+        style={{height:6,marginTop:2,marginLeft:-14,marginRight:-14,cursor:'ns-resize',
+          display:'flex',alignItems:'center',justifyContent:'center',userSelect:'none'}}>
+        <div style={{width:28,height:2,borderRadius:1,background:'rgba(255,255,255,0.1)'}}/>
+      </div>
+    </div>
+  );
+}
+
+// Generic HLS live-stream widget. Loads hls.js from a CDN (lazily, only when
+// this widget is first rendered) and plays an m3u8 in a native <video>.
+// Used by Euronews; can be reused for any other HLS feed by swapping the URL.
+let _hlsLoadingPromise = null;
+function loadHlsJs() {
+  if (window.Hls) return Promise.resolve(window.Hls);
+  if (_hlsLoadingPromise) return _hlsLoadingPromise;
+  _hlsLoadingPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = HLS_JS_URL;
+    s.async = true;
+    s.onload  = () => resolve(window.Hls);
+    s.onerror = () => { _hlsLoadingPromise = null; reject(new Error('hls.js load failed')); };
+    document.head.appendChild(s);
+  });
+  return _hlsLoadingPromise;
+}
+
+function EuronewsWidget() {
+  const [cardHeight, setCardHeight] = useState(280);
+  const [errMsg, setErrMsg]         = useState('');
+  const videoRef = useRef(null);
+  const hlsRef   = useRef(null);
+
+  useEffect(() => {
+    api.store.get('wp-euronews-height').then(v => {
+      const h = parseInt(v || '0');
+      if (h >= 160) setCardHeight(h);
+    });
+  }, []);
+
+  const onResizeMouseDown = (e) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = cardHeight;
+    let cur = startH;
+    const onMove = (ev) => {
+      cur = Math.max(160, startH + (ev.clientY - startY));
+      setCardHeight(cur);
+    };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      api.store.set('wp-euronews-height', String(cur));
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const video = videoRef.current;
+        if (!video) return;
+        // Chromium/Electron has no native HLS; load hls.js. Safari would use
+        // video.canPlayType('application/vnd.apple.mpegurl') directly, but
+        // this code runs in Electron so we always go through hls.js.
+        const Hls = await loadHlsJs();
+        if (cancelled) return;
+        if (!Hls?.isSupported?.()) {
+          setErrMsg('HLS non supporté');
+          return;
+        }
+        const hls = new Hls({ lowLatencyMode:true });
+        hlsRef.current = hls;
+        hls.loadSource(EURONEWS_HLS_URL);
+        hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          video.play().catch(() => {});
+        });
+        hls.on(Hls.Events.ERROR, (_e, data) => {
+          if (data.fatal) {
+            console.error('[euronews] fatal hls error', data);
+            setErrMsg((data.type || 'error') + ': ' + (data.details || ''));
+            // Try to recover network/media errors instead of giving up.
+            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+              try { hls.startLoad(); } catch {}
+            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+              try { hls.recoverMediaError(); } catch {}
+            }
+          }
+        });
+      } catch (e) {
+        if (cancelled) return;
+        console.error('[euronews]', e);
+        setErrMsg(e.message || String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (hlsRef.current) {
+        try { hlsRef.current.destroy(); } catch {}
+        hlsRef.current = null;
+      }
+    };
+  }, []);
+
+  const toggleFullscreen = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (document.fullscreenElement) {
+      document.exitFullscreen?.();
+    } else {
+      v.requestFullscreen?.();
+    }
+  };
+
+  return { color:'#1e4ba8', title:'Euronews', sub:'Live',
+    content:(
+      <div>
+        <video ref={videoRef} muted autoPlay playsInline
+          onDoubleClick={toggleFullscreen}
+          title="Double-cliquer pour plein écran"
+          style={{width:'100%', height:cardHeight, display:'block',
+            borderRadius:6, background:'#000', objectFit:'cover',
+            cursor:'pointer'}}/>
+        {errMsg && <div style={{fontSize:10,color:'#ef5350',marginTop:4}}>{errMsg}</div>}
+        <div onMouseDown={onResizeMouseDown}
+          style={{height:6,marginTop:2,marginLeft:-14,marginRight:-14,cursor:'ns-resize',
+            display:'flex',alignItems:'center',justifyContent:'center',userSelect:'none'}}>
+          <div style={{width:28,height:2,borderRadius:1,background:'rgba(255,255,255,0.1)'}}/>
+        </div>
+      </div>
+    )
+  };
+}
+
 function TradingViewWidget() {
   const [auth,      setAuth]      = useState(null); // null=loading, false=anon, {username}=ok
   const [lists,     setLists]     = useState([]);
@@ -535,6 +1066,7 @@ function TradingViewWidget() {
   const effectiveLists = [
     MARKETS_OVERVIEW_LIST,
     ...lists.filter(l => (l?.name || '').trim().toLowerCase() !== 'liste de surveillance'),
+    BLOOMBERG_LIVE_TAB,
   ];
   const symbols = effectiveLists[listIdx]?.symbols || [];
 
@@ -543,8 +1075,8 @@ function TradingViewWidget() {
     let cancelled = false;
     const fetchQ = async () => {
       const results = {};
-      await Promise.all(symbols.map(async ({ s }) => {
-        const ticker = s.includes(':') ? s.split(':')[1] : s;
+      await Promise.all(symbols.map(async ({ s, y }) => {
+        const ticker = y || (s.includes(':') ? s.split(':')[1] : s);
         try {
           const q = await api.tv.chart(ticker);
           if (q) results[ticker] = q;
@@ -612,14 +1144,30 @@ function TradingViewWidget() {
     </div>
   );
 
+  // Bloomberg Live (or any future kind === 'video' tab) — render the page
+  // inside an Electron <webview> instead of an <iframe> so we can inject CSS
+  // into the cross-origin Bloomberg DOM and hide everything that isn't the
+  // video player itself (header nav, Subscribe button, sidebars).
+  const activeTab = effectiveLists[listIdx];
+  if (activeTab?.kind === 'video') {
+    return { color:'#5cc8a8', title:'Marchés', sub: activeTab.name,
+      content:(
+        <div>
+          {tabs}
+          <VideoEmbed url={activeTab.url} isolate={!!activeTab.isolate}/>
+        </div>
+      )
+    };
+  }
+
   return { color:'#5cc8a8', title: 'Marchés', sub: updatedAt ? `Last updated: ${updatedAt}` : 'TradingView',
     lastUpdated: lastFetch || undefined,
     content:(
       <div>
         {tabs}
         <div style={{height:listHeight,overflowY:'auto',marginRight:-4,paddingRight:4}}>
-          {symbols.map(({ s, d }) => {
-            const ticker = s.includes(':') ? s.split(':')[1] : s;
+          {symbols.map(({ s, d, y }) => {
+            const ticker = y || (s.includes(':') ? s.split(':')[1] : s);
             const q = quotes[ticker];
             const change = q?.change ?? 0;
             const pct = q?.pct ?? 0;
@@ -627,35 +1175,55 @@ function TradingViewWidget() {
             const deltaColor = change > 0 ? '#4caf73' : change < 0 ? '#ef5350' : '#888';
             const arrow = change >= 0 ? '▲' : '▼';
 
-            // Mini sparkline: 30 points
-            const points = q?.closes?.slice(-30) || [];
-            const minPrice = points.length ? Math.min(...points) : q?.price ?? 0;
-            const maxPrice = points.length ? Math.max(...points) : q?.price ?? 0;
+            // Intraday sparkline: now ~78 5-min candles for US sessions, ~288
+            // for crypto. Include the previous close in the y-axis range so
+            // the reference line stays inside the viewBox.
+            const points = q?.closes || [];
+            const prevClose = q?.prev ?? null;
+            const allY = prevClose != null ? [...points, prevClose] : points;
+            const minPrice = allY.length ? Math.min(...allY) : q?.price ?? 0;
+            const maxPrice = allY.length ? Math.max(...allY) : q?.price ?? 0;
             const range = Math.max(maxPrice - minPrice, 0.01);
             const sparklinePoints = points.map((p, i) => {
               const x = (i / Math.max(points.length - 1, 1)) * 100;
               const y = 20 - ((p - minPrice) / range) * 20;
               return `${x},${y}`;
             }).join(' ');
+            // y-position of the previous close — drawn as a dashed reference
+            // line so each row visually anchors to "yesterday".
+            const prevY = prevClose != null
+              ? 20 - ((prevClose - minPrice) / range) * 20
+              : null;
 
             return (
               <div key={s} style={{display:'flex',alignItems:'center',gap:8,
                 padding:'3px 0',cursor:'pointer',fontVariantNumeric:'tabular-nums'}}
                 onClick={()=>api.browser.open(`https://www.tradingview.com/chart/?symbol=${s}`)}>
 
-                {/* Left: Ticker + Name */}
+                {/* Left: name only on the Marchés overview tab (the indices
+                    have descriptive names — the ^GSPC-style ticker codes are
+                    noise). On user watchlists, keep the ticker + company name
+                    two-line layout. */}
                 <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:11,fontWeight:700,color:'#fff',lineHeight:1.1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-                    {ticker}
-                  </div>
-                  <div style={{fontSize:8,color:'#888',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',lineHeight:1.1,marginTop:1}}>
-                    {q?.name || d}
-                  </div>
+                  {listIdx === 0 ? (
+                    <div style={{fontSize:11,fontWeight:700,color:'#fff',lineHeight:1.1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                      {d || q?.name || ticker}
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{fontSize:11,fontWeight:700,color:'#fff',lineHeight:1.1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+                        {ticker}
+                      </div>
+                      <div style={{fontSize:8,color:'#888',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',lineHeight:1.1,marginTop:1}}>
+                        {q?.name || d}
+                      </div>
+                    </>
+                  )}
                 </div>
 
                 {/* Center: Sparkline */}
                 {sparklinePoints ? (
-                  <svg width="46" height="18" viewBox="0 0 100 24" preserveAspectRatio="none" style={{flexShrink:0}}>
+                  <svg width="64" height="20" viewBox="0 0 100 24" preserveAspectRatio="none" style={{flexShrink:0}}>
                     <defs>
                       <linearGradient id={`grad-${ticker}`} x1="0%" y1="0%" x2="0%" y2="100%">
                         <stop offset="0%" stopColor={color} stopOpacity="0.45"/>
@@ -663,10 +1231,15 @@ function TradingViewWidget() {
                       </linearGradient>
                     </defs>
                     <polyline points={sparklinePoints + ' 100,24 0,24'} fill={`url(#grad-${ticker})`}/>
+                    {prevY != null && (
+                      <line x1="0" y1={prevY} x2="100" y2={prevY}
+                        stroke="rgba(255,255,255,0.22)" strokeWidth="0.6"
+                        strokeDasharray="2 2" vectorEffect="non-scaling-stroke"/>
+                    )}
                     <polyline points={sparklinePoints} fill="none" stroke={color} strokeWidth="1.4" vectorEffect="non-scaling-stroke"/>
                   </svg>
                 ) : (
-                  <div style={{width:46,height:18,flexShrink:0}}/>
+                  <div style={{width:64,height:20,flexShrink:0}}/>
                 )}
 
                 {/* Right: Price + delta (text color encodes direction) */}
@@ -767,7 +1340,7 @@ function CalendarWidget() {
   );
 }
 
-// ── Leaflet traffic widget (ESRI satellite + TomTom flow tiles) ───────────────
+// ── Leaflet traffic widget (Esri satellite + reference overlay + TomTom flow)─
 function GoogleTrafficWidget({ location = DEFAULT_LOC, apiKey = '' }) {
   const [zoom, setZoom] = useState(() => {
     const stored = parseInt(api.store?.get?.('wp-traffic-zoom') || '');
@@ -806,7 +1379,7 @@ function GoogleTrafficWidget({ location = DEFAULT_LOC, apiKey = '' }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.lat, location.lon, apiKey]);
 
-  return { color:'#f77f4f', title:'Circulation', sub: `Plan · ${location.name}`,
+  return { color:'#f77f4f', title:'Circulation', sub: `Satellite · ${location.name}`,
     content:(
       <div style={{margin:'4px -2px 0',borderRadius:10,overflow:'hidden',lineHeight:0}}>
         <iframe
@@ -1961,7 +2534,9 @@ function WidgetCard({ id, categories, apiKeys, onSaveKey, colorIdx, onUnreadChan
   const cameraData  = id==="camera"  ? CameraWidget() : null;
   // eslint-disable-next-line react-hooks/rules-of-hooks
   const todoData    = id==="todo"    ? TodoWidget()   : null;
-  const d = newsData || weatherData || stocksData || calendarData || trafficData || clockData || agendaData || mailData || cameraData || todoData;
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  const euronewsData= id==="euronews"? EuronewsWidget() : null;
+  const d = newsData || weatherData || stocksData || calendarData || trafficData || clockData || agendaData || mailData || cameraData || todoData || euronewsData;
   if (!d) return null;
   return (
     <Shell color={d.color} title={d.title} sub={d.sub} badge={d.badge} lastUpdated={d.lastUpdated}
@@ -2359,7 +2934,7 @@ export default function App() {
         // when it was a widget). KNOWN_SYS in the column-split logic also
         // filters these out at render time, but persisting them clean here
         // means they stop being written back to wp-config.
-        const VALID_SYS = new Set(['weather','traffic','stocks','calendar','clock','agenda','mail','camera','todo']);
+        const VALID_SYS = new Set(['weather','traffic','stocks','calendar','clock','agenda','mail','camera','todo','euronews']);
         const knownCats = new Set((saved.categories||[]).map(c => 'cat:' + c.label));
         const cleaned = (saved.activeIds||[]).filter(id => VALID_SYS.has(id) || knownCats.has(id));
         setActiveIds(cleaned);
@@ -2517,7 +3092,7 @@ export default function App() {
   // 'pressreader' or removed cat:* left over in saved activeIds. Without
   // this, WidgetCard returns null but renderCol still renders the wrapping
   // .wi div, taking up space in whichever column the phantom ID was placed.
-  const KNOWN_SYS = new Set(['weather','traffic','stocks','calendar','clock','agenda','mail','camera','todo']);
+  const KNOWN_SYS = new Set(['weather','traffic','stocks','calendar','clock','agenda','mail','camera','todo','euronews']);
   const isKnownId = (id) =>
     KNOWN_SYS.has(id) ||
     (id.startsWith('cat:') && (categories||[]).some(c => c.label === id.slice(4)));

@@ -463,7 +463,13 @@ ipcMain.on('panel-renderer-ready', () => {
 // ── Yahoo Finance handler (no CORS restrictions in main process) ────────────────
 ipcMain.handle('yahoo-chart', async (_e, ticker) => {
   return new Promise((resolve) => {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?range=5d&interval=1d`;
+    // Intraday 5-minute candles for today (or the most recent trading day on
+    // weekends/holidays — Yahoo falls back automatically). Crypto returns 24h
+    // of candles. ~78 points for a US session, plenty for an iOS-Stocks-style
+    // sparkline; ~288 for crypto.
+    // encodeURIComponent so raw index symbols like ^GSPC, ^N225 survive the
+    // URL — Yahoo accepts %5E for the caret.
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?range=1d&interval=5m`;
     const options = {
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -723,9 +729,35 @@ function configureCameraSession() {
   })
 }
 
+// Strip X-Frame-Options + frame-ancestors CSP for sites we want to embed in
+// in-card iframes (Bloomberg Live in the Marchés card). Without this, the
+// browser refuses to render the iframe at all.
+function configureEmbeddedSitesSession() {
+  const filter = { urls: ['*://*.bloomberg.com/*'] }
+  session.defaultSession.webRequest.onHeadersReceived(filter, (details, callback) => {
+    const headers = {}
+    for (const [key, value] of Object.entries(details.responseHeaders || {})) {
+      const lk = key.toLowerCase()
+      if (lk === 'x-frame-options') continue
+      if (lk === 'content-security-policy' || lk === 'content-security-policy-report-only') {
+        const arr = Array.isArray(value) ? value : [value]
+        headers[key] = arr.map(v =>
+          v.split(';')
+           .filter(d => !/^\s*frame-ancestors\b/i.test(d))
+           .join(';')
+        )
+        continue
+      }
+      headers[key] = value
+    }
+    callback({ responseHeaders: headers })
+  })
+}
+
 // ── App ready ─────────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   configureCameraSession()
+  configureEmbeddedSitesSession()
   disableNativeWidgets()
   writeLaunchPath()
   createPipeServer()   // taskbar-btn IPC on port 47321

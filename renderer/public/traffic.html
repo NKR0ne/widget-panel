@@ -23,11 +23,23 @@ const apiKey = p.get('apiKey')          || '';
 const map = L.map('map', { zoomControl:false, attributionControl:true })
              .setView([lat, lon], zoom);
 
-// 1. Carto Dark Matter — dark-themed street map base. Streets and labels are
-//    baked into the tile, so we no longer need a separate transportation overlay.
+// 1. Esri World_Imagery — high-resolution satellite/aerial photography. No
+//    API key required.
 L.tileLayer(
-  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-  { attribution:'© OpenStreetMap, © CARTO', maxZoom:20, subdomains:'abcd' }
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { attribution:'© Esri, Maxar, Earthstar Geographics', maxZoom:19 }
+).addTo(map);
+
+// 2. Esri reference overlay — transparent layer with road geometry, highways,
+//    and place names. Sits between the satellite base and the traffic flow so
+//    we can read street names and town labels without losing the imagery.
+L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+  { maxZoom:19, opacity:0.9 }
+).addTo(map);
+L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
+  { maxZoom:19, opacity:0.7 }
 ).addTo(map);
 
 // 3. TomTom real-time traffic flow (green/yellow/red speed vs free-flow)
