@@ -348,10 +348,14 @@ function pinnedWinOpacity() { return parseFloat(getStore('wp-pinned-opacity') ||
 
 function togglePin(forceTo) {
   isPinned = forceTo !== undefined ? forceTo : !isPinned
-  if (isPinned) {
-    win.setAlwaysOnTop(false)
-  } else {
-    win.setAlwaysOnTop(true, 'floating')
+  // While embedded, alwaysOnTop is forced false so the Brave shell wins
+  // z-order. Don't re-promote Electron on unpin or we cover Brave again.
+  if (!browserEmbedded) {
+    if (isPinned) {
+      win.setAlwaysOnTop(false)
+    } else {
+      win.setAlwaysOnTop(true, 'floating')
+    }
   }
   if (win.isVisible()) {
     const panelHwnd = getPanelHwnd()
@@ -603,6 +607,11 @@ function openBraveInPanel(url) {
   win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: totalW, height: braveH })
   browserEmbedded = true
 
+  // Drop Electron out of HWND_TOPMOST while embedded so the Brave shell
+  // (which sets itself HWND_TOPMOST after reparent) wins z-order. Otherwise
+  // the panel's acrylic-transparent DOM paints in front of Brave.
+  win.setAlwaysOnTop(false)
+
   win.webContents.send('browser-pane-show', { url, braveX: panelW })
   win.webContents.send('brave-loading', true)
   win.webContents.send('brave-url', url)
@@ -625,6 +634,8 @@ function closeBraveInPanel() {
   win.webContents.send('browser-pane-hide')
   const { workArea } = screen.getPrimaryDisplay()
   if (panelOnlyWidth > 0) win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: panelOnlyWidth, height: workArea.height - PANEL_GAP * 2 })
+  // Restore alwaysOnTop (dropped during embed) — respect current pin state.
+  if (!isPinned) win.setAlwaysOnTop(true, 'floating')
   notifyHelperHwnds()
 }
 
@@ -673,6 +684,8 @@ ipcMain.on('brave-open-external', () => {
   win.webContents.send('browser-pane-hide')
   const { workArea } = screen.getPrimaryDisplay()
   if (panelOnlyWidth > 0) win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: panelOnlyWidth, height: workArea.height - PANEL_GAP * 2 })
+  // Restore alwaysOnTop (dropped during embed) — respect current pin state.
+  if (!isPinned) win.setAlwaysOnTop(true, 'floating')
   currentUrl = ''
   notifyHelperHwnds()
   // Slide the panel away after detaching
@@ -1185,10 +1198,11 @@ ipcMain.handle('ms-auth-pkce', async (_e, clientId, scopes) => {
           <div style="font-size:32px">${error ? '✗' : '✓'}</div>
           <div style="font-size:14px">${error
             ? 'Authentication failed: ' + error
-            : 'Authentication complete — you can close this tab.'}</div>
+            : 'Authentication complete — vous pouvez fermer le navigateur.'}</div>
         </body></html>`)
 
       server.close()
+
       if (error) { reject(new Error(error)); return }
       if (!code)  { reject(new Error('no code in callback')); return }
 
@@ -1206,8 +1220,21 @@ ipcMain.handle('ms-auth-pkce', async (_e, clientId, scopes) => {
 
     server.on('error', err => reject(err))
     server.listen(MS_AUTH_PORT, '127.0.0.1', () => {
-      log('[ms-auth] callback server ready on', MS_AUTH_PORT, '— opening browser')
-      shell.openExternal(authUrl)
+      log('[ms-auth] callback server ready on', MS_AUTH_PORT, '— opening embedded Brave')
+      // Use the panel's embedded Brave instance instead of shell.openExternal
+      // or an internal BrowserWindow:
+      //   - The panel sits HWND_TOPMOST, so a freshly-launched external Brave
+      //     window would render behind it and look like nothing happened.
+      //   - An internal BrowserWindow has isolated cookies and would force a
+      //     fresh Microsoft login even if Brave is already signed in.
+      //   - Embedded Brave reuses the user's main profile (no --user-data-dir
+      //     override per the brave-host architecture), so existing Outlook/MS
+      //     cookies make the consent prompt frictionless.
+      if (browserEmbedded) {
+        sendToBrave({ type: 'navigate', url: authUrl })
+      } else {
+        openBraveInPanel(authUrl)
+      }
     })
 
     const timeout = setTimeout(() => { server.close(); reject(new Error('auth timeout')) }, 5 * 60 * 1000)

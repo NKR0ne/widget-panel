@@ -105,21 +105,116 @@ static BOOL CALLBACK SnapProc(HWND hw, LPARAM lp) {
     }
     return TRUE;
 }
+// ── Diagnostic: dump all top-level windows belonging to any brave.exe process ─
+// Hypothesis-neutral: does NOT filter on class, size, or visibility. Captures
+// raw state so we can tell post-mortem whether the new HWND is missing because
+// our spawned process exited (single-instance delegation), the class changed,
+// the window is cloaked, the size is below threshold, etc.
+extern PROCESS_INFORMATION g_pi;  // resolved at link time, defined further down
+
+static std::string PidImageNameLower(DWORD pid) {
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!h) return "";
+    wchar_t buf[MAX_PATH] = {};
+    DWORD sz = MAX_PATH;
+    std::string out;
+    if (QueryFullProcessImageNameW(h, 0, buf, &sz)) {
+        std::wstring w(buf);
+        auto slash = w.find_last_of(L"\\/");
+        if (slash != std::wstring::npos) w = w.substr(slash + 1);
+        for (auto c : w) out.push_back((char)((c >= L'A' && c <= L'Z') ? c + 32 : c));
+    }
+    CloseHandle(h);
+    return out;
+}
+
+struct DiagCtx { std::vector<HWND>* wins; };
+static BOOL CALLBACK DiagEnumProc(HWND hw, LPARAM lp) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hw, &pid);
+    if (pid == 0) return TRUE;
+    if (PidImageNameLower(pid) != "brave.exe") return TRUE;
+    reinterpret_cast<DiagCtx*>(lp)->wins->push_back(hw);
+    return TRUE;
+}
+
+static void DumpBraveWindows(const std::vector<HWND>& before, int elapsedSec) {
+    std::vector<HWND> wins;
+    DiagCtx ctx{ &wins };
+    EnumWindows(DiagEnumProc, reinterpret_cast<LPARAM>(&ctx));
+
+    std::string head = "[diag t=" + std::to_string(elapsedSec) + "s] brave-wins=" + std::to_string(wins.size());
+    if (g_pi.hProcess) {
+        DWORD wait = WaitForSingleObject(g_pi.hProcess, 0);
+        if (wait == WAIT_OBJECT_0) {
+            DWORD code = 0;
+            GetExitCodeProcess(g_pi.hProcess, &code);
+            head += " our-pid=" + std::to_string(g_pi.dwProcessId) + " EXITED code=" + std::to_string(code);
+        } else {
+            head += " our-pid=" + std::to_string(g_pi.dwProcessId) + " running";
+        }
+    }
+    Log(head);
+
+    for (HWND hw : wins) {
+        DWORD pid = 0; GetWindowThreadProcessId(hw, &pid);
+        wchar_t cls[128] = {}; GetClassNameW(hw, cls, 128);
+        wchar_t tt[256] = {}; GetWindowTextW(hw, tt, 256);
+        RECT r{}; GetWindowRect(hw, &r);
+        BOOL vis = IsWindowVisible(hw);
+        int cloaked = 0;
+        DwmGetWindowAttribute(hw, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
+        HWND owner = GetWindow(hw, GW_OWNER);
+        LONG_PTR style = GetWindowLongPtrW(hw, GWL_STYLE);
+        LONG_PTR ex = GetWindowLongPtrW(hw, GWL_EXSTYLE);
+        bool inBefore = std::find(before.begin(), before.end(), hw) != before.end();
+
+        std::wstring wcls(cls), wtt(tt);
+        if (wtt.size() > 60) wtt = wtt.substr(0, 60);
+        std::string scls(wcls.begin(), wcls.end());
+        std::string stt(wtt.begin(), wtt.end());
+
+        char buf[512];
+        _snprintf_s(buf, sizeof(buf),
+            "  hw=%llu pid=%lu cls=%s %ldx%ld vis=%d cloaked=%d owner=%llu style=0x%llx ex=0x%llx inBefore=%d title=\"%s\"",
+            (unsigned long long)(size_t)hw, (unsigned long)pid, scls.c_str(),
+            (long)(r.right - r.left), (long)(r.bottom - r.top),
+            (int)vis, cloaked, (unsigned long long)(size_t)owner,
+            (unsigned long long)style, (unsigned long long)ex,
+            (int)inBefore, stt.c_str());
+        Log(buf);
+    }
+}
+
 static HWND FindNewBraveHwnd(const std::vector<HWND>& before, int timeoutMs = 12000) {
     auto start = std::chrono::steady_clock::now();
-    while (std::chrono::duration_cast<std::chrono::milliseconds>(
-               std::chrono::steady_clock::now() - start).count() < timeoutMs) {
+    DumpBraveWindows(before, 0);
+    int lastDumpSec = 0;
+    while (true) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                          std::chrono::steady_clock::now() - start).count();
+        if (elapsed >= timeoutMs) break;
+
         PumpPending();  // keep message pump alive while we wait for Brave
         SnapData sd; EnumWindows(SnapProc, reinterpret_cast<LPARAM>(&sd));
         for (auto hw : sd.hwnds) {
             if (std::find(before.begin(), before.end(), hw) == before.end()) {
                 RECT r; GetWindowRect(hw, &r);
-                if ((r.right - r.left) >= 200 && (r.bottom - r.top) >= 200)
+                if ((r.right - r.left) >= 200 && (r.bottom - r.top) >= 200) {
+                    DumpBraveWindows(before, (int)(elapsed / 1000));
+                    Log("[diag] match accepted hwnd=" + std::to_string((size_t)hw));
                     return hw;
+                }
             }
+        }
+        int elapsedSec = (int)(elapsed / 1000);
+        if (elapsedSec > lastDumpSec) {
+            DumpBraveWindows(before, elapsedSec);
+            lastDumpSec = elapsedSec;
         }
         Sleep(100);
     }
+    DumpBraveWindows(before, timeoutMs / 1000);
     return NULL;
 }
 

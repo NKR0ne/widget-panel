@@ -907,9 +907,12 @@ function loadHlsJs() {
 
 function EuronewsWidget() {
   const [cardHeight, setCardHeight] = useState(280);
-  const [errMsg, setErrMsg]         = useState('');
+  const [errMsg,     setErrMsg]     = useState('');
+  const [muted,      setMuted]      = useState(true);  // Chromium needs muted to autoplay
   const videoRef = useRef(null);
   const hlsRef   = useRef(null);
+  // Watchdog state — last time we saw currentTime advance.
+  const stallRef = useRef({ time: 0, since: Date.now() });
 
   useEffect(() => {
     api.store.get('wp-euronews-height').then(v => {
@@ -936,40 +939,56 @@ function EuronewsWidget() {
     window.addEventListener('mouseup', onUp);
   };
 
+  // Initialise (or re-initialise) hls.js + the stream. Called once on mount
+  // and again by the watchdog when the stream stalls for too long.
+  function attachStream() {
+    const video = videoRef.current;
+    if (!video || !window.Hls) return;
+    const Hls = window.Hls;
+    // Tear down the previous instance if any.
+    if (hlsRef.current) {
+      try { hlsRef.current.destroy(); } catch {}
+      hlsRef.current = null;
+    }
+    const hls = new Hls({ lowLatencyMode:true });
+    hlsRef.current = hls;
+    hls.loadSource(EURONEWS_HLS_URL);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      video.play().catch(() => {});
+      setErrMsg('');
+    });
+    hls.on(Hls.Events.ERROR, (_e, data) => {
+      if (!data.fatal) return;
+      console.error('[euronews] fatal hls error', data);
+      setErrMsg((data.type || 'error') + ': ' + (data.details || ''));
+      if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+        try { hls.startLoad(); } catch {}
+      } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+        try { hls.recoverMediaError(); } catch {}
+      } else {
+        // Last resort — full reinit after a short backoff.
+        setTimeout(() => attachStream(), 2000);
+      }
+    });
+    // Reset stall watchdog.
+    stallRef.current = { time: video.currentTime, since: Date.now() };
+  }
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const video = videoRef.current;
         if (!video) return;
-        // Chromium/Electron has no native HLS; load hls.js. Safari would use
-        // video.canPlayType('application/vnd.apple.mpegurl') directly, but
-        // this code runs in Electron so we always go through hls.js.
+        // Chromium/Electron has no native HLS; load hls.js once globally.
         const Hls = await loadHlsJs();
         if (cancelled) return;
         if (!Hls?.isSupported?.()) {
           setErrMsg('HLS non supporté');
           return;
         }
-        const hls = new Hls({ lowLatencyMode:true });
-        hlsRef.current = hls;
-        hls.loadSource(EURONEWS_HLS_URL);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          video.play().catch(() => {});
-        });
-        hls.on(Hls.Events.ERROR, (_e, data) => {
-          if (data.fatal) {
-            console.error('[euronews] fatal hls error', data);
-            setErrMsg((data.type || 'error') + ': ' + (data.details || ''));
-            // Try to recover network/media errors instead of giving up.
-            if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-              try { hls.startLoad(); } catch {}
-            } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
-              try { hls.recoverMediaError(); } catch {}
-            }
-          }
-        });
+        attachStream();
       } catch (e) {
         if (cancelled) return;
         console.error('[euronews]', e);
@@ -983,7 +1002,43 @@ function EuronewsWidget() {
         hlsRef.current = null;
       }
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Stall watchdog — Antik's HLS endpoint occasionally just stops returning
+  // fresh segments. hls.js doesn't always raise a fatal error in that case
+  // (buffer drains silently), so we monitor currentTime ourselves and do a
+  // full reinit if it hasn't advanced for ~15s while the player is meant
+  // to be playing.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    const id = setInterval(() => {
+      if (video.paused || video.ended) return;
+      const now = Date.now();
+      if (video.currentTime !== stallRef.current.time) {
+        stallRef.current = { time: video.currentTime, since: now };
+        return;
+      }
+      if (now - stallRef.current.since > 15000) {
+        console.warn('[euronews] stalled > 15s, reloading stream');
+        stallRef.current.since = now;       // avoid hammering
+        attachStream();
+      }
+    }, 3000);
+    return () => clearInterval(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const toggleMute = (e) => {
+    e?.stopPropagation?.();
+    const v = videoRef.current;
+    if (!v) return;
+    const next = !v.muted;
+    v.muted = next;
+    setMuted(next);
+    if (!next && v.paused) v.play().catch(() => {});
+  };
 
   const toggleFullscreen = () => {
     const v = videoRef.current;
@@ -996,14 +1051,43 @@ function EuronewsWidget() {
   };
 
   return { color:'#1e4ba8', title:'Euronews', sub:'Live',
+    badge: (
+      <button onClick={(e)=>{e.stopPropagation(); attachStream();}}
+        title="Recharger le flux"
+        style={{background:'none',border:'none',cursor:'pointer',color:'#c4c4d4',
+          padding:2,display:'flex',alignItems:'center',justifyContent:'center'}}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+        </svg>
+      </button>
+    ),
     content:(
       <div>
-        <video ref={videoRef} muted autoPlay playsInline
-          onDoubleClick={toggleFullscreen}
-          title="Double-cliquer pour plein écran"
-          style={{width:'100%', height:cardHeight, display:'block',
-            borderRadius:6, background:'#000', objectFit:'cover',
-            cursor:'pointer'}}/>
+        <div style={{position:'relative'}}>
+          <video ref={videoRef} muted autoPlay playsInline
+            onDoubleClick={toggleFullscreen}
+            title="Double-cliquer pour plein écran"
+            style={{width:'100%', height:cardHeight, display:'block',
+              borderRadius:6, background:'#000', objectFit:'cover',
+              cursor:'pointer'}}/>
+          <button onClick={toggleMute}
+            title={muted ? 'Activer le son' : 'Couper le son'}
+            style={{position:'absolute', bottom:8, right:8,
+              width:30, height:30, borderRadius:'50%', border:'none',
+              background:'rgba(0,0,0,0.55)', color:'#fff', cursor:'pointer',
+              display:'flex', alignItems:'center', justifyContent:'center',
+              padding:0, backdropFilter:'blur(4px)'}}>
+            {muted ? (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/>
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+              </svg>
+            )}
+          </button>
+        </div>
         {errMsg && <div style={{fontSize:10,color:'#ef5350',marginTop:4}}>{errMsg}</div>}
         <div onMouseDown={onResizeMouseDown}
           style={{height:6,marginTop:2,marginLeft:-14,marginRight:-14,cursor:'ns-resize',
@@ -1491,7 +1575,9 @@ function useMsAuth() {
   }
 
   async function startAuth(cid) {
-    const scopes = ['Calendars.Read', 'Mail.Read', 'Tasks.ReadWrite', 'offline_access', 'User.Read'];
+    // Mail.ReadWrite is required for PATCH /messages/{id} (markRead); Mail.Read
+    // alone would let us list emails but the markRead button would 403.
+    const scopes = ['Calendars.Read', 'Mail.ReadWrite', 'Tasks.ReadWrite', 'offline_access', 'User.Read'];
     setCid(cid);
     api.store.set(SK_MS_CLIENT, cid);
     setStep('authenticating');
@@ -1781,12 +1867,68 @@ function MailWidget() {
     setLoading(true);
     try {
       const res = await window.electronAPI.msGraph.fetch(
-        'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top=50&$select=subject,from,receivedDateTime,bodyPreview,isRead,importance', token);
+        'https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$top=50&$select=subject,from,receivedDateTime,bodyPreview,isRead,importance,webLink', token);
       if (res.status === 401) { auth.signOut(); setLoading(false); return; }
       const msgs = res.body?.value || [];
       setMessages(msgs); setDemo(false);
     } catch { setMessages(MOCK_MAIL); setDemo(true); }
     setLoading(false); setLastUpdated(Date.now());
+  }
+
+  async function markRead(id) {
+    if (!auth.tokens?.accessToken || demo) return;
+    // Optimistic UI — mark locally so the unread dot + bold weight clear
+    // immediately. Graph PATCH runs in the background; refetch (every 5min)
+    // will reconcile any divergence.
+    setMessages(prev => prev.map(m => m.id === id ? { ...m, isRead: true } : m));
+    try {
+      await window.electronAPI.msGraph.patch(
+        `https://graph.microsoft.com/v1.0/me/messages/${id}`,
+        auth.tokens.accessToken,
+        { isRead: true }
+      );
+    } catch (e) {
+      console.error('[mail] markRead failed', e);
+    }
+  }
+
+  // Move a message to a well-known folder (e.g. deleteditems, junkemail).
+  // Optimistic UI: remove from the list immediately; if Graph rejects, refetch
+  // so the message reappears at its real position.
+  async function moveTo(id, destinationId) {
+    if (!auth.tokens?.accessToken || demo) return;
+    const prev = messages;
+    setMessages(prev.filter(m => m.id !== id));
+    try {
+      const res = await window.electronAPI.msGraph.post(
+        `https://graph.microsoft.com/v1.0/me/messages/${id}/move`,
+        auth.tokens.accessToken,
+        { destinationId }
+      );
+      if (res?.status && res.status >= 400) {
+        console.error('[mail] move failed', destinationId, res);
+        fetchAll(auth.tokens.accessToken);
+      }
+    } catch (e) {
+      console.error('[mail] move error', destinationId, e);
+      fetchAll(auth.tokens.accessToken);
+    }
+  }
+
+  function openInOutlook(msg) {
+    console.log('[mail] openInOutlook', { id: msg.id, hasWebLink: !!msg.webLink, webLink: msg.webLink });
+    if (msg.webLink) {
+      api.browser.open(msg.webLink);
+      // Opening in Outlook implies the user has read the email — flip the
+      // unread state locally and on the server. Graph won't auto-flip when
+      // OWA is opened externally.
+      if (!msg.isRead) markRead(msg.id);
+    } else if (auth.tokens?.accessToken) {
+      // No webLink on this message — refresh the list so future clicks work,
+      // and warn the user the email couldn't be opened this time.
+      console.warn('[mail] no webLink, re-fetching');
+      fetchAll(auth.tokens.accessToken);
+    }
   }
 
   const onResizeMouseDown = (e) => {
@@ -1837,8 +1979,12 @@ function MailWidget() {
                 )}
                 <div style={{height:cardHeight,overflowY:"auto",paddingRight:2}}>
                   {messages.map((msg, i) => (
-                    <div key={msg.id} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"7px 0",
-                      borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none",opacity:msg.isRead?0.65:1}}>
+                    <div key={msg.id}
+                      onClick={()=>openInOutlook(msg)}
+                      title="Ouvrir dans Outlook"
+                      style={{display:"flex",alignItems:"flex-start",gap:8,padding:"7px 0",
+                      borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none",
+                      opacity:msg.isRead?0.65:1, cursor:'pointer'}}>
                       <div style={{width:6,height:6,borderRadius:"50%",background:msg.isRead?"transparent":"#0078d4",flexShrink:0,marginTop:6}}/>
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{display:"flex",justifyContent:"space-between",gap:8,alignItems:"baseline"}}>
@@ -1855,6 +2001,37 @@ function MailWidget() {
                             {msg.bodyPreview}
                           </div>
                         )}
+                      </div>
+                      <div style={{display:'flex',gap:2,flexShrink:0,marginTop:2}}>
+                        {!msg.isRead && (
+                          <button onClick={(e)=>{e.stopPropagation(); markRead(msg.id);}}
+                            title="Marquer comme lu"
+                            style={{background:'none',border:'none',cursor:'pointer',
+                              color:'#888',padding:'4px',
+                              display:'flex',alignItems:'center',justifyContent:'center'}}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                              <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+                            </svg>
+                          </button>
+                        )}
+                        <button onClick={(e)=>{e.stopPropagation(); moveTo(msg.id,'deleteditems');}}
+                          title="Supprimer"
+                          style={{background:'none',border:'none',cursor:'pointer',
+                            color:'#888',padding:'4px',
+                            display:'flex',alignItems:'center',justifyContent:'center'}}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                          </svg>
+                        </button>
+                        <button onClick={(e)=>{e.stopPropagation(); moveTo(msg.id,'junkemail');}}
+                          title="Signaler comme indésirable"
+                          style={{background:'none',border:'none',cursor:'pointer',
+                            color:'#888',padding:'4px',
+                            display:'flex',alignItems:'center',justifyContent:'center'}}>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8 0-1.85.63-3.55 1.69-4.9L16.9 18.31C15.55 19.37 13.85 20 12 20zm6.31-3.1L7.1 5.69C8.45 4.63 10.15 4 12 4c4.41 0 8 3.59 8 8 0 1.85-.63 3.55-1.69 4.9z"/>
+                        </svg>
+                        </button>
                       </div>
                     </div>
                   ))}
