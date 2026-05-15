@@ -82,101 +82,59 @@ static bool IsDllLoaded(DWORD pid)
     return found;
 }
 
-// ── Get remote HMODULE for our DLL ───────────────────────────────────────────
-static HMODULE GetRemoteModule(DWORD pid)
+// ── Find Explorer's main thread (the one that owns Shell_TrayWnd) ────────────
+static DWORD FindExplorerThreadId()
 {
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid);
-    if (snap == INVALID_HANDLE_VALUE) return NULL;
-    MODULEENTRY32W me{ sizeof(me) };
-    HMODULE hMod = NULL;
-    if (Module32FirstW(snap, &me)) {
-        do {
-            if (_wcsicmp(me.szModule, L"taskbar-hook.dll") == 0) {
-                hMod = me.hModule; break;
-            }
-        } while (Module32NextW(snap, &me));
-    }
-    CloseHandle(snap);
-    return hMod;
+    HWND tray = FindWindowW(L"Shell_TrayWnd", NULL);
+    if (!tray) return 0;
+    DWORD pid = 0;
+    DWORD tid = GetWindowThreadProcessId(tray, &pid);
+    return tid;
 }
 
-// ── Inject DLL ────────────────────────────────────────────────────────────────
-static bool InjectDll(DWORD pid)
+// ── SetWindowsHookEx-based injection (HVCI/Defender-friendly) ────────────────
+static HMODULE g_hookDll = NULL;
+static HHOOK   g_hook    = NULL;
+static DWORD   g_hookedTid = 0;
+
+static bool InstallHook(DWORD tid)
 {
-    if (IsDllLoaded(pid)) {
-        Log("DLL already loaded in PID %lu", pid);
-        return true;
+    if (!tid) { Log("InstallHook: no thread id"); return false; }
+    if (!g_hookDll) {
+        g_hookDll = LoadLibraryW(g_dllPath);
+        if (!g_hookDll) {
+            Log("LoadLibrary failed: %lu", GetLastError());
+            return false;
+        }
+        Log("LoadLibrary OK hmod=%p", (void*)g_hookDll);
     }
-
-    Log("Opening PID %lu ...", pid);
-    HANDLE hProc = OpenProcess(
-        PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION |
-        PROCESS_VM_WRITE     | PROCESS_VM_READ,
-        FALSE, pid);
-    if (!hProc) {
-        Log("OpenProcess failed: %lu", GetLastError());
+    HOOKPROC proc = (HOOKPROC)GetProcAddress(g_hookDll, "WpHookThunk");
+    if (!proc) {
+        Log("GetProcAddress(WpHookThunk) failed: %lu", GetLastError());
         return false;
     }
-    Log("OpenProcess OK");
-
-    size_t bytes = (wcslen(g_dllPath) + 1) * sizeof(wchar_t);
-    LPVOID pMem  = VirtualAllocEx(hProc, NULL, bytes,
-                                  MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (!pMem) {
-        Log("VirtualAllocEx failed: %lu", GetLastError());
-        CloseHandle(hProc); return false;
-    }
-
-    if (!WriteProcessMemory(hProc, pMem, g_dllPath, bytes, NULL)) {
-        Log("WriteProcessMemory failed: %lu", GetLastError());
-        VirtualFreeEx(hProc, pMem, 0, MEM_RELEASE);
-        CloseHandle(hProc); return false;
-    }
-    Log("Wrote DLL path to remote memory");
-
-    HMODULE k32 = GetModuleHandleW(L"kernel32.dll");
-    FARPROC llW = GetProcAddress(k32, "LoadLibraryW");
-    Log("LoadLibraryW addr: %p", (void*)llW);
-
-    HANDLE hThrd = CreateRemoteThread(hProc, NULL, 0,
-                       (LPTHREAD_START_ROUTINE)llW, pMem, 0, NULL);
-    if (!hThrd) {
-        Log("CreateRemoteThread failed: %lu", GetLastError());
-        VirtualFreeEx(hProc, pMem, 0, MEM_RELEASE);
-        CloseHandle(hProc); return false;
-    }
-
-    WaitForSingleObject(hThrd, 15000);
-    DWORD code = 0;
-    GetExitCodeThread(hThrd, &code);
-    Log("Remote thread exit code (HMODULE): 0x%lx", code);
-    CloseHandle(hThrd);
-    VirtualFreeEx(hProc, pMem, 0, MEM_RELEASE);
-    CloseHandle(hProc);
-
-    if (code == 0) {
-        Log("LoadLibraryW returned NULL — DLL load failed inside Explorer");
+    g_hook = SetWindowsHookExW(WH_CALLWNDPROC, proc, g_hookDll, tid);
+    if (!g_hook) {
+        Log("SetWindowsHookEx failed: %lu", GetLastError());
         return false;
     }
-
-    Log("Injection succeeded");
+    g_hookedTid = tid;
+    Log("SetWindowsHookEx OK hook=%p tid=%lu", (void*)g_hook, tid);
+    // Nudge Explorer to dispatch a message so the hook fires and the OS
+    // loader pulls our DLL into Explorer's address space immediately.
+    HWND tray = FindWindowW(L"Shell_TrayWnd", NULL);
+    if (tray) PostMessageW(tray, WM_NULL, 0, 0);
     return true;
 }
 
-// ── Eject DLL ─────────────────────────────────────────────────────────────────
-static void EjectDll(DWORD pid)
+static void UninstallHook()
 {
-    HMODULE remMod = GetRemoteModule(pid);
-    if (!remMod) return;
-    HANDLE hProc = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION,
-                               FALSE, pid);
-    if (!hProc) return;
-    FARPROC flW = GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "FreeLibrary");
-    HANDLE h = CreateRemoteThread(hProc, NULL, 0,
-                   (LPTHREAD_START_ROUTINE)flW,
-                   (LPVOID)(uintptr_t)remMod, 0, NULL);
-    if (h) { WaitForSingleObject(h, 5000); CloseHandle(h); }
-    CloseHandle(hProc);
+    if (g_hook) {
+        UnhookWindowsHookEx(g_hook);
+        g_hook = NULL;
+        g_hookedTid = 0;
+        Log("UnhookWindowsHookEx done");
+    }
 }
 
 // ── Entry ─────────────────────────────────────────────────────────────────────
@@ -217,37 +175,43 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
     while (!FindWindow(L"Shell_TrayWnd", NULL)) Sleep(1000);
     Sleep(1000);  // let Explorer fully initialize
 
-    DWORD lastPid = FindExplorerPid();
-    Log("Explorer PID: %lu", lastPid);
-
-    if (lastPid) {
-        // Always eject stale copy first so the fresh build is guaranteed to load
-        Log("Ejecting any stale DLL ...");
-        EjectDll(lastPid);
-        Sleep(1000);
-        if (!InjectDll(lastPid)) {
-            Log("Injection failed — will retry in watchdog");
+    DWORD lastTid = FindExplorerThreadId();
+    Log("Explorer thread id: %lu", lastTid);
+    if (lastTid) {
+        if (!InstallHook(lastTid)) {
+            Log("InstallHook failed — will retry in watchdog");
         }
     }
 
-    // Watchdog
+    // Watchdog — re-install the hook when Explorer's main thread id changes
+    // (Explorer restarted) or when our hook was somehow released. Also pumps
+    // messages so SetWindowsHookEx callbacks land cleanly.
     for (;;) {
+        MSG msg;
+        // Drain any messages without blocking, then sleep.
+        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
         Sleep(3000);
-        DWORD curPid = FindExplorerPid();
-        if (curPid && curPid != lastPid) {
-            Log("Explorer restarted (new PID %lu) — re-injecting", curPid);
-            Sleep(4000);
-            EjectDll(curPid);
+        DWORD curTid = FindExplorerThreadId();
+        if (!curTid) continue;
+        if (curTid != lastTid) {
+            Log("Explorer thread changed (%lu -> %lu) — re-installing hook", lastTid, curTid);
+            UninstallHook();
+            // Brief delay so Explorer is fully up before we hook it.
+            Sleep(2000);
+            if (InstallHook(curTid)) lastTid = curTid;
+        } else if (!IsDllLoaded(FindExplorerPid())) {
+            // Hook was installed but DLL isn't in Explorer anymore — re-install.
+            Log("DLL gone from Explorer — re-installing hook");
+            UninstallHook();
             Sleep(500);
-            InjectDll(curPid);
-            lastPid = curPid;
-        } else if (curPid && !IsDllLoaded(curPid)) {
-            Log("DLL disappeared from PID %lu — re-injecting", curPid);
-            InjectDll(curPid);
+            InstallHook(curTid);
         }
     }
 
-    EjectDll(lastPid);
+    UninstallHook();
     CloseHandle(mutex);
     return 0;
 }

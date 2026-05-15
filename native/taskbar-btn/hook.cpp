@@ -461,20 +461,43 @@ static DWORD WINAPI BtnThread(LPVOID)
     return 0;
 }
 
+// ── Hook thunk used by SetWindowsHookEx in taskbar-btn.exe ────────────────────
+// We don't care about CBT/CallWndProc events — the only reason this exists is
+// so the OS loader pulls our DLL into the target thread's process. Once loaded,
+// DllMain DLL_PROCESS_ATTACH kicks off BtnThread which creates the AppBar.
+// HVCI / Defender allow this path because the OS loader is trusted, unlike
+// CreateRemoteThread+VirtualAllocEx which they block.
+extern "C" __declspec(dllexport) LRESULT CALLBACK
+WpHookThunk(int nCode, WPARAM wParam, LPARAM lParam)
+{
+    return CallNextHookEx(NULL, nCode, wParam, lParam);
+}
+
 // ── DllMain ───────────────────────────────────────────────────────────────────
 BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
 {
     switch (reason) {
-    case DLL_PROCESS_ATTACH:
+    case DLL_PROCESS_ATTACH: {
         DisableThreadLibraryCalls(hInst);
         g_hMod    = hInst;
         g_running = true;
         GetModuleFileNameW(hInst, g_logPath, MAX_PATH);
         { wchar_t* s = wcsrchr(g_logPath, L'\\'); if (s) wcscpy(s + 1, L"hook.log"); }
-        { FILE* f = _wfopen(g_logPath, L"w"); if (f) fclose(f); }
-        Log("DLL_PROCESS_ATTACH PID=%lu", GetCurrentProcessId());
-        CreateThread(NULL, 0, BtnThread, NULL, 0, NULL);
+        // Only start the AppBar logic when loaded into Explorer. Our injector
+        // (taskbar-btn.exe) also LoadLibrary's this DLL to install the hook,
+        // which fires DllMain here too — skip it to avoid a stray AppBar in
+        // the injector process.
+        wchar_t exePath[MAX_PATH];
+        GetModuleFileNameW(NULL, exePath, MAX_PATH);
+        const wchar_t* base = wcsrchr(exePath, L'\\');
+        base = base ? base + 1 : exePath;
+        if (_wcsicmp(base, L"explorer.exe") == 0) {
+            { FILE* f = _wfopen(g_logPath, L"w"); if (f) fclose(f); }
+            Log("DLL_PROCESS_ATTACH PID=%lu (explorer)", GetCurrentProcessId());
+            CreateThread(NULL, 0, BtnThread, NULL, 0, NULL);
+        }
         break;
+    }
     case DLL_PROCESS_DETACH:
         g_running = false;
         if (g_hwnd) PostMessage(g_hwnd, WM_QUIT, 0, 0);
