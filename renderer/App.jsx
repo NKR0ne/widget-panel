@@ -93,14 +93,68 @@ const BLOOMBERG_LIVE_TAB = {
   isolate: true,
 };
 
-// Finviz sector heatmap — interactive treemap of US sectors. Loaded in a
-// dedicated webview partition so its cookies/state don't share with
-// Bloomberg's YouTube partition.
-const FINVIZ_HEATMAP_TAB = {
-  id:   'wp-finviz-heatmap',
+// S&P 500 sector heatmap via TradingView's official embed widget. We force
+// the widget container to 768×1024 (tablet portrait) so TV's responsive
+// layout produces the vertically-stacked sector arrangement, then scale the
+// whole thing with CSS transform to fit whatever card size we have. Hosted
+// via a data: URL so we don't ship a separate HTML file.
+const TV_HEATMAP_HTML = `<!DOCTYPE html>
+<html style="margin:0;padding:0;width:100%;height:100%;background:#0a0a0c">
+<head><meta charset="utf-8"><style>
+  html,body{margin:0;padding:0;width:100vw;height:100vh;overflow:hidden;background:#0a0a0c}
+  #wrap{position:absolute;inset:0;overflow:hidden}
+  #scaled{position:absolute;top:0;left:0;width:768px;height:1024px;transform-origin:0 0}
+  .tradingview-widget-container,.tradingview-widget-container__widget{width:768px;height:1024px}
+</style></head>
+<body>
+<div id="wrap">
+  <div id="scaled">
+    <div class="tradingview-widget-container">
+      <div class="tradingview-widget-container__widget"></div>
+      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-stock-heatmap.js" async>
+      {
+        "dataSource": "SPX500",
+        "blockColor": "change",
+        "blockSize": "market_cap_basic",
+        "grouping": "sector",
+        "isTransparent": true,
+        "locale": "en",
+        "colorTheme": "dark",
+        "width": "100%",
+        "height": "100%",
+        "hasTopBar": false,
+        "isDataSetEnabled": false,
+        "isZoomEnabled": true,
+        "hasSymbolTooltip": true
+      }
+      </script>
+    </div>
+  </div>
+</div>
+<script>
+  function fit() {
+    var wrap = document.getElementById('wrap');
+    var scaled = document.getElementById('scaled');
+    if (!wrap || !scaled) return;
+    var s = Math.min(wrap.clientWidth / 768, wrap.clientHeight / 1024);
+    // Center horizontally + vertically inside the wrap by translating after
+    // the scale (transforms are applied right-to-left so translate(...) here
+    // moves the already-scaled element).
+    var tx = (wrap.clientWidth  - 768 * s) / 2;
+    var ty = (wrap.clientHeight - 1024 * s) / 2;
+    scaled.style.transform = 'translate(' + tx + 'px,' + ty + 'px) scale(' + s + ')';
+  }
+  fit();
+  window.addEventListener('resize', fit);
+  new ResizeObserver(fit).observe(document.getElementById('wrap'));
+</script>
+</body>
+</html>`;
+const HEATMAP_TAB = {
+  id:   'wp-heatmap',
   name: 'Heatmap',
   kind: 'heatmap',
-  url:  'https://finviz.com/map?t=sec',
+  url:  'data:text/html;charset=utf-8,' + encodeURIComponent(TV_HEATMAP_HTML),
 };
 
 // ── Mock fallback data ───────────────────────────────────────────────────────
@@ -517,9 +571,9 @@ function TickerAvatar({ ticker, size=52 }) {
 // embed (e.g., youtube.com/embed/...) the whole page IS the player — no
 // isolation needed. For a full news page like bloomberg.com/live, pass
 // `isolate` to inject a script that hides the page chrome around <video>.
-function VideoEmbed({ url, storeKey = 'wp-video-embed-height', isolate = false, partition = 'persist:bloomberg' }) {
+function VideoEmbed({ url, storeKey = 'wp-video-embed-height', isolate = false, partition = 'persist:bloomberg', defaultHeight = 320 }) {
   const wvRef = useRef(null);
-  const [cardHeight, setCardHeight] = useState(320);
+  const [cardHeight, setCardHeight] = useState(defaultHeight);
 
   // Load persisted height.
   useEffect(() => {
@@ -557,7 +611,6 @@ function VideoEmbed({ url, storeKey = 'wp-video-embed-height', isolate = false, 
     // DOM — React happily re-renders elements that are still display:none
     // because of our stylesheet.
     const isYouTube = /(^|\.)youtube\.com$/i.test(new URL(url).hostname);
-    const isFinviz  = /(^|\.)finviz\.com$/i.test(new URL(url).hostname);
     const youtubeCSS = `
       /* Neutralize containing-block triggers on YouTube's layout containers,
          otherwise our position:fixed on #player ends up relative to whichever
@@ -655,111 +708,6 @@ function VideoEmbed({ url, storeKey = 'wp-video-embed-height', isolate = false, 
       };
     }
 
-    // Finviz heatmap — DOM manipulation kept losing the battle (Finviz reverts
-    // our style changes via re-render). New strategy: don't touch the page at
-    // all. Render the webview at a fixed large size (Finviz expects a "desktop"
-    // layout), report .content.map's position back to React, and crop+scale the
-    // webview itself with CSS transform — Finviz can't undo what's outside its
-    // own page.
-    if (isFinviz) {
-      const finvizJS = `
-        (function () {
-          if (window.__wpFinvizV10) return;
-          window.__wpFinvizV10 = true;
-          // Direct selector — earlier diagnostic confirmed the treemap is a
-          // <canvas class="chart initialized"> inside #canvas-wrapper.
-          function findHeatmap() {
-            return document.querySelector('canvas.chart.initialized')
-                || document.querySelector('canvas.chart')
-                || document.querySelector('#canvas-wrapper canvas')
-                || document.querySelector('#canvas-wrapper')
-                || document.querySelector('.content.map');
-          }
-          var lastRect = '';
-          function report() {
-            var hm = findHeatmap();
-            if (!hm) return;
-            var r = hm.getBoundingClientRect();
-            if (r.width < 50 || r.height < 50) return;
-            var x = Math.round(r.left + window.scrollX);
-            var y = Math.round(r.top  + window.scrollY);
-            var w = Math.round(r.width);
-            var h = Math.round(r.height);
-            var key = x + ',' + y + ',' + w + ',' + h;
-            if (key === lastRect) return;  // coalesce — don't spam if unchanged
-            lastRect = key;
-            console.log('[wp-finviz-rect] x=' + x + ' y=' + y + ' w=' + w + ' h=' + h);
-          }
-          // Initial + a few retries while Finviz lays out, then stop the
-          // interval. Resize listener handles later size changes. No more
-          // recursive descent — direct selector is fast and quiet.
-          report();
-          var tries = 0;
-          var iv = setInterval(function () {
-            tries++; report();
-            if (tries > 10) clearInterval(iv);  // 10s ceiling
-          }, 1000);
-          window.addEventListener('resize', report);
-        })();
-      `;
-      const apply = () => {
-        try { wv.executeJavaScript(finvizJS, true); } catch {}
-      };
-      const onConsole = (e) => {
-        if (typeof e.message !== 'string') return;
-        if (e.message.startsWith('[wp-finviz-rect]')) {
-          // Parse "x=N y=N w=N h=N" and store on the webview element.
-          var m = e.message.match(/x=(-?\d+) y=(-?\d+) w=(\d+) h=(\d+)/);
-          if (m) {
-            // Switch the webview to fixed 1280×900 the first time we receive
-            // coords — load already succeeded so resizing now won't abort it.
-            wv.style.width  = '1280px';
-            wv.style.height = '900px';
-            wv.style.display = 'block';
-            wv.style.transformOrigin = '0 0';
-            wv.dataset.hmX = m[1];
-            wv.dataset.hmY = m[2];
-            wv.dataset.hmW = m[3];
-            wv.dataset.hmH = m[4];
-            applyClip();
-          }
-        } else if (e.message.startsWith('[wp-finviz]')) {
-          console.log('[finviz webview]', e.message);
-        }
-      };
-      // Compute and apply the CSS transform on the webview itself so only the
-      // heatmap area is visible in the wrapper. Wrapper sits at cardHeight,
-      // overflow:hidden; webview oversized; transform translate+scale crops.
-      const applyClip = () => {
-        const x = parseFloat(wv.dataset.hmX || '0');
-        const y = parseFloat(wv.dataset.hmY || '0');
-        const w = parseFloat(wv.dataset.hmW || '0');
-        const h = parseFloat(wv.dataset.hmH || '0');
-        if (!w || !h) return;
-        const wrap = wv.parentElement;
-        if (!wrap) return;
-        const wrapW = wrap.clientWidth || 1;
-        const wrapH = wrap.clientHeight || 1;
-        const scale = Math.min(wrapW / w, wrapH / h);
-        wv.style.transformOrigin = '0 0';
-        wv.style.transform = `translate(${-x * scale}px, ${-y * scale}px) scale(${scale})`;
-      };
-      const onResize = () => applyClip();
-      wv.addEventListener('dom-ready', apply);
-      wv.addEventListener('did-finish-load', apply);
-      wv.addEventListener('did-navigate', apply);
-      wv.addEventListener('did-navigate-in-page', apply);
-      wv.addEventListener('console-message', onConsole);
-      window.addEventListener('resize', onResize);
-      return () => {
-        wv.removeEventListener('dom-ready', apply);
-        wv.removeEventListener('did-finish-load', apply);
-        wv.removeEventListener('did-navigate', apply);
-        wv.removeEventListener('did-navigate-in-page', apply);
-        wv.removeEventListener('console-message', onConsole);
-        window.removeEventListener('resize', onResize);
-      };
-    }
 
     // Source of the page-side isolation script. Runs inside the webview's
     // origin via wv.executeJavaScript(). Two-phase: first wait for a <video>
@@ -987,15 +935,10 @@ function VideoEmbed({ url, storeKey = 'wp-video-embed-height', isolate = false, 
     };
   }, []);
 
-  // Finviz: load the webview at normal 100%×100% so the navigation doesn't
-  // abort; the useEffect then resizes it to 1280×900 + applies transform once
-  // .content.map's coords are reported (post-load).
-  const isFinvizURL = (() => { try { return /(^|\.)finviz\.com$/i.test(new URL(url).hostname); } catch { return false; } })();
   return (
     <div>
       <div style={{width:'100%',height:cardHeight,borderRadius:8,
-        overflow:'hidden',background:isFinvizURL?'#1a1a1a':'#000',
-        position:'relative'}}>
+        overflow:'hidden',background:'#000',position:'relative'}}>
         <webview ref={wvRef} src={url}
           partition={partition}
           style={{width:'100%',height:'100%',display:'inline-flex'}}/>
@@ -1273,7 +1216,7 @@ function TradingViewWidget() {
     MARKETS_OVERVIEW_LIST,
     ...lists.filter(l => (l?.name || '').trim().toLowerCase() !== 'liste de surveillance'),
     BLOOMBERG_LIVE_TAB,
-    FINVIZ_HEATMAP_TAB,
+    HEATMAP_TAB,
   ];
   const symbols = effectiveLists[listIdx]?.symbols || [];
 
@@ -1375,8 +1318,9 @@ function TradingViewWidget() {
       content:(
         <div>
           {tabs}
-          <VideoEmbed key={activeTab.id} url={activeTab.url} isolate={true}
-            storeKey="wp-heatmap-height" partition="persist:finviz"/>
+          <VideoEmbed key={activeTab.id} url={activeTab.url} isolate={false}
+            storeKey="wp-heatmap-height" partition="persist:tradingview"
+            defaultHeight={400}/>
         </div>
       )
     };
