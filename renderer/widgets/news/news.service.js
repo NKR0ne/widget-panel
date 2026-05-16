@@ -1,0 +1,162 @@
+import { api } from '../../services/electronApi.js';
+import { getMockNewsForCategory } from './news.mock.js';
+
+const RSS_PROXY_RAW = 'https://api.allorigins.win/raw?url=';
+const RSS_PROXY_JSON = 'https://api.rss2json.com/v1/api.json?rss_url=';
+const CORS_PROXY = 'https://corsproxy.io/?';
+const MAX_ITEMS = 7;
+const MAX_AGE_MS = 30 * 86400000;
+const REFRESH_BUCKET_MS = 5 * 60 * 1000;
+
+function relTime(value) {
+  if (!value) return '';
+  const seconds = (Date.now() - new Date(value)) / 1000;
+  if (seconds < 60) return Math.floor(seconds) + 's';
+  if (seconds < 3600) return Math.floor(seconds / 60) + 'm';
+  if (seconds < 86400) return Math.floor(seconds / 3600) + 'h';
+  return Math.floor(seconds / 86400) + 'd';
+}
+
+export function parseOPML(xml) {
+  const doc = new DOMParser().parseFromString(xml, 'text/xml');
+  const categories = {};
+
+  Array.from(doc.querySelectorAll('body > outline')).forEach((top) => {
+    const children = Array.from(top.querySelectorAll('outline[xmlUrl]'));
+    if (!children.length) {
+      const url = top.getAttribute('xmlUrl');
+      if (url) {
+        if (!categories.Uncategorized) categories.Uncategorized = { label: 'Uncategorized', feeds: [] };
+        categories.Uncategorized.feeds.push({ url, title: top.getAttribute('title') || url });
+      }
+      return;
+    }
+
+    const label = top.getAttribute('title') || top.getAttribute('text') || 'Category';
+    if (!categories[label]) categories[label] = { label, feeds: [] };
+    children.forEach((feed) => {
+      const url = feed.getAttribute('xmlUrl');
+      if (url) categories[label].feeds.push({ url, title: feed.getAttribute('title') || url });
+    });
+  });
+
+  return Object.values(categories);
+}
+
+function extractImage(item) {
+  const enclosure = item.querySelector('enclosure');
+  if (enclosure?.getAttribute('type')?.startsWith('image')) {
+    const url = enclosure.getAttribute('url');
+    if (url) return url;
+  }
+
+  for (const tag of ['thumbnail', 'content']) {
+    const elements = Array.from(item.getElementsByTagName('media:' + tag))
+      .concat(Array.from(item.getElementsByTagName(tag)));
+    for (const element of elements) {
+      const url = element.getAttribute('url');
+      const medium = element.getAttribute('medium') || '';
+      if (url && (medium === 'image' || tag === 'thumbnail')) return url;
+    }
+  }
+
+  const imageUrl = item.querySelector('image url')?.textContent?.trim();
+  return imageUrl || null;
+}
+
+export function parseRSSXml(xml) {
+  const doc = new DOMParser().parseFromString(xml, 'text/xml');
+  return Array.from(doc.querySelectorAll('item, entry')).map((item) => {
+    const get = (tag) => item.querySelector(tag)?.textContent?.trim() || '';
+    const link = item.querySelector('link[href]')?.getAttribute('href')
+      || item.querySelector('link')?.textContent?.trim()
+      || get('guid');
+    const pubDate = get('pubDate') || get('published') || get('updated');
+    return {
+      id: get('guid') || link,
+      title: get('title'),
+      link,
+      image: extractImage(item),
+      source: getHostname(link),
+      time: relTime(pubDate),
+      _pubDate: pubDate,
+    };
+  }).filter((item) => item.title && item.link);
+}
+
+async function fetchRSS(url) {
+  const bucket = Math.floor(Date.now() / REFRESH_BUCKET_MS);
+  const cacheBustedUrl = url + (url.includes('?') ? '&' : '?') + `_cb=${bucket}`;
+
+  try {
+    const response = await api.rss.fetch(url);
+    if (response?.ok) {
+      const items = parseRSSXml(response.text).slice(0, MAX_ITEMS);
+      if (items.length) return items;
+    }
+  } catch {}
+
+  try {
+    const response = await fetch(RSS_PROXY_RAW + encodeURIComponent(cacheBustedUrl));
+    if (response.ok) {
+      const items = parseRSSXml(await response.text()).slice(0, MAX_ITEMS);
+      if (items.length) return items;
+    }
+  } catch {}
+
+  try {
+    const response = await fetch(RSS_PROXY_JSON + encodeURIComponent(cacheBustedUrl) + '&count=6');
+    const data = await response.json();
+    if (data.status === 'ok') {
+      return data.items.map((item) => ({
+        id: item.guid || item.link,
+        title: item.title,
+        link: item.link,
+        image: item.thumbnail || item.enclosure?.link || null,
+        source: getHostname(item.link),
+        time: relTime(item.pubDate),
+      }));
+    }
+  } catch {}
+
+  try {
+    const response = await fetch(CORS_PROXY + encodeURIComponent(cacheBustedUrl));
+    if (response.ok) {
+      const items = parseRSSXml(await response.text()).slice(0, MAX_ITEMS);
+      if (items.length) return items;
+    }
+  } catch {}
+
+  return null;
+}
+
+export async function fetchCategoryNews(category) {
+  if (!category.feeds?.length) {
+    return { items: getMockNewsForCategory(category.label), demo: true };
+  }
+
+  try {
+    const results = await Promise.all(category.feeds.map((feed) => fetchRSS(feed.url)));
+    const cutoff = Date.now() - MAX_AGE_MS;
+    const items = results.flat().filter(Boolean)
+      .filter((item, index, all) => all.findIndex((other) => other.id === item.id) === index)
+      .filter((item) => {
+        const date = new Date(item._pubDate);
+        return !item._pubDate || Number.isNaN(date.getTime()) || date.getTime() > cutoff;
+      })
+      .sort((a, b) => new Date(b._pubDate || 0) - new Date(a._pubDate || 0))
+      .slice(0, MAX_ITEMS);
+
+    if (items.length) return { items, demo: false };
+  } catch {}
+
+  return { items: getMockNewsForCategory(category.label), demo: true };
+}
+
+function getHostname(url) {
+  try {
+    return new URL(url).hostname.replace('www.', '');
+  } catch {
+    return '';
+  }
+}

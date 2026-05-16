@@ -742,17 +742,19 @@ function configureCameraSession() {
   })
 }
 
-// Strip X-Frame-Options + frame-ancestors CSP for sites we want to embed in
-// in-card iframes (Bloomberg Live in the Marchés card). Without this, the
-// browser refuses to render the iframe at all.
-function configureEmbeddedSitesSession() {
-  const filter = { urls: ['*://*.bloomberg.com/*'] }
+// Header overrides for embedded/SDK-backed surfaces.
+//
+// Electron's webRequest API allows one onHeadersReceived listener per session,
+// so keep these host-specific tweaks together instead of registering competing
+// listeners in each widget integration.
+function configureResponseHeaderOverrides() {
+  const filter = { urls: ['*://*.bloomberg.com/*', 'https://securitycenter.local:8082/*'] }
   session.defaultSession.webRequest.onHeadersReceived(filter, (details, callback) => {
     const headers = {}
     for (const [key, value] of Object.entries(details.responseHeaders || {})) {
       const lk = key.toLowerCase()
-      if (lk === 'x-frame-options') continue
-      if (lk === 'content-security-policy' || lk === 'content-security-policy-report-only') {
+      if (details.url.includes('bloomberg.com') && lk === 'x-frame-options') continue
+      if (details.url.includes('bloomberg.com') && (lk === 'content-security-policy' || lk === 'content-security-policy-report-only')) {
         const arr = Array.isArray(value) ? value : [value]
         headers[key] = arr.map(v =>
           v.split(';')
@@ -763,6 +765,22 @@ function configureEmbeddedSitesSession() {
       }
       headers[key] = value
     }
+
+    try {
+      const url = new URL(details.url)
+      if (url.hostname === 'securitycenter.local') {
+        // XPMobileSDK is served by the Mobile Server, but its XHRs originate
+        // from the panel's localhost/file origin. The server answers OPTIONS
+        // without CORS headers, which makes Chromium surface the SDK connect
+        // failure as an empty `{}`. Patch only this trusted local host.
+        headers['Access-Control-Allow-Origin'] = ['*']
+        headers['Access-Control-Allow-Methods'] = ['GET, POST, OPTIONS']
+        headers['Access-Control-Allow-Headers'] = ['content-type, authorization, x-requested-with']
+        headers['Access-Control-Allow-Private-Network'] = ['true']
+        headers['Access-Control-Expose-Headers'] = ['content-type, content-length']
+      }
+    } catch {}
+
     callback({ responseHeaders: headers })
   })
 }
@@ -770,7 +788,7 @@ function configureEmbeddedSitesSession() {
 // ── App ready ─────────────────────────────────────────────────────────────────
 app.whenReady().then(() => {
   configureCameraSession()
-  configureEmbeddedSitesSession()
+  configureResponseHeaderOverrides()
   disableNativeWidgets()
   writeLaunchPath()
   createPipeServer()   // taskbar-btn IPC on port 47321

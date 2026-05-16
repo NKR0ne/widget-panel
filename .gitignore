@@ -8,3 +8,9 @@ renderer/dist/
 .DS_Store
 Thumbs.db
 electron-builder output
+.vs/
+.vscode/
+.claude/
+error.txt
+native/bin/*.log
+native/bin/panel.path

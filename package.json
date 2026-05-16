@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "concurrently \"vite --config vite.config.js\" \"wait-on http://localhost:5173 && cross-env VITE_DEV=1 electron .\"",
     "build": "vite build && electron-builder",
-    "preview": "electron ."
+    "preview": "electron .",
+    "prototype:dev": "vite --config prototype-panel/vite.config.js",
+    "prototype:build": "vite build --config prototype-panel/vite.config.js",
+    "prototype:capture": "electron prototype-panel/scripts/capture.cjs"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "latest",
@@ -20,6 +23,8 @@
     "wait-on": "latest"
   },
   "dependencies": {
-    "electron-store": "^8.2.0"
+    "electron-store": "^8.2.0",
+    "three": "^0.184.0",
+    "troika-three-text": "^0.52.4"
   }
 }
