@@ -12,7 +12,7 @@ import {
   SK_PINNED_OPACITY,
   SK_TV_SYMBOLS,
 } from "./config/storageKeys.js";
-import { SYS, SYSTEM_WIDGET_ID_SET, defaultColumns, getColumnForWidget, isKnownWidgetId } from "./config/widgets.js";
+import { SYS, SYSTEM_WIDGET_ID_SET, WORKSTATION_WIDGET_ID_SET, defaultColumns, getColumnForWidget, isKnownWidgetId } from "./config/widgets.js";
 import { api } from "./services/electronApi.js";
 import { playCardCollapseSound, playCardExpandSound, playPanelInSound, playPanelOutSound } from "./services/sound.service.js";
 import { storageLoad, storageSave } from "./services/storage.service.js";
@@ -28,6 +28,7 @@ import StocksWidget from "./widgets/stocks/StocksWidget.jsx";
 import { DEFAULT_TV_SYMBOLS } from "./widgets/stocks/stocks.constants.js";
 import TrafficWidget from "./widgets/traffic/TrafficWidget.jsx";
 import WeatherWidget from "./widgets/weather/WeatherWidget.jsx";
+import { CpuWidget, DiskWidget, GpuWidget, NetworkWidget, RamWidget } from "./widgets/workstation/WorkstationWidgets.jsx";
 import { DEFAULT_LOC } from "./widgets/weather/weather.constants.js";
 
 function hexToRgb(hex) {
@@ -37,6 +38,7 @@ function hexToRgb(hex) {
 
 // ── API endpoints ────────────────────────────────────────────────────────────
 const PRESSREADER_URL = "https://www.pressreader.com.ezproxy.bibliothequedequebec.qc.ca/fr/catalog/featured";
+const DEFAULT_COL_WIDTHS = { left: 220, monitor: 220, mid: 240, feed: 260 };
 
 // ── Widget renderer ──────────────────────────────────────────────────────────
 function NewsWidgetCard(props) {
@@ -97,6 +99,31 @@ function EuronewsWidgetCard(props) {
   return <WidgetFrame data={data} {...props} />;
 }
 
+function CpuWidgetCard(props) {
+  const data = CpuWidget();
+  return <WidgetFrame data={data} {...props} />;
+}
+
+function GpuWidgetCard(props) {
+  const data = GpuWidget();
+  return <WidgetFrame data={data} {...props} />;
+}
+
+function RamWidgetCard(props) {
+  const data = RamWidget();
+  return <WidgetFrame data={data} {...props} />;
+}
+
+function DiskWidgetCard(props) {
+  const data = DiskWidget();
+  return <WidgetFrame data={data} {...props} />;
+}
+
+function NetworkWidgetCard(props) {
+  const data = NetworkWidget();
+  return <WidgetFrame data={data} {...props} />;
+}
+
 const WIDGET_CARD_COMPONENTS = {
   weather: WeatherWidgetCard,
   traffic: TrafficWidgetCard,
@@ -108,6 +135,11 @@ const WIDGET_CARD_COMPONENTS = {
   camera: CameraWidgetCard,
   todo: TodoWidgetCard,
   euronews: EuronewsWidgetCard,
+  'workstation-cpu': CpuWidgetCard,
+  'workstation-gpu': GpuWidgetCard,
+  'workstation-ram': RamWidgetCard,
+  'workstation-disk': DiskWidgetCard,
+  'workstation-network': NetworkWidgetCard,
 };
 
 // Widget renderer
@@ -153,6 +185,95 @@ function OPMLDrop({ onLoaded }) {
         ))}
         <div style={{marginTop:10,fontSize:10,color:"#282830",lineHeight:1.5}}>Also works with Inoreader, NewsBlur, or any OPML file.</div>
       </div>
+    </div>
+  );
+}
+
+function ArticleReaderCard({ reader, onClose, onOpenExternal }) {
+  const [progress, setProgress] = useState(12);
+  const loading = reader.status === 'loading';
+  const article = reader.article || {};
+  const title = loading ? (reader.seed?.title || 'Preparing reader view') : (article.title || 'Reader view');
+  const source = article.source || reader.seed?.source || '';
+  const sourceLabel = article.sourceLabel === 'archive.org' ? 'archive.org snapshot' : 'direct source';
+  const paragraphs = article.paragraphs || [];
+  const hero = article.image || reader.seed?.image || '';
+
+  useEffect(() => {
+    if (!loading) { setProgress(reader.status === 'ready' ? 100 : 92); return; }
+    setProgress(12);
+    const timer = setInterval(() => {
+      setProgress(value => Math.min(88, value + Math.max(2, (90 - value) * 0.12)));
+    }, 180);
+    return () => clearInterval(timer);
+  }, [loading, reader.url, reader.status]);
+
+  return (
+    <div className="reader-stage">
+      <article className="reader-card">
+        <div className="reader-card-glow" />
+        <div className="reader-topbar">
+          <div className="reader-source">
+            <span className="reader-dot" />
+            <span>{source || 'Reader mode'}</span>
+            {!loading && <span className="reader-source-mode">{sourceLabel}</span>}
+          </div>
+          <div className="reader-actions">
+            <button className="reader-icon-button" onClick={() => onOpenExternal(reader.url)} title="Open in default browser">↗</button>
+            <button className="reader-icon-button" onClick={onClose} title="Close">X</button>
+          </div>
+        </div>
+
+        <div className="reader-progress-track" aria-hidden="true">
+          <div className="reader-progress-fill" style={{ width: `${progress}%`, opacity: loading ? 1 : 0.55 }} />
+        </div>
+
+        <div className="reader-content">
+          <div className="reader-copy">
+            <h1>{title}</h1>
+            {!loading && article.description && <p className="reader-deck">{article.description}</p>}
+            {loading && (
+              <div className="reader-loading">
+                <div className="reader-scanline" />
+                <div>
+                  <div className="reader-loading-title">Fetching and purifying article content</div>
+                  <div className="reader-loading-text">Removing menus, ads, trackers, duplicate links, and layout noise.</div>
+                </div>
+              </div>
+            )}
+            {!loading && reader.status === 'error' && (
+              <div className="reader-error">
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>
+                  {article.paywall ? 'Subscription required.' : 'Reader extraction could not complete.'}
+                </div>
+                <div>{reader.error || article.error || 'The page resisted automatic cleanup.'}</div>
+                {article.paywall && paragraphs.map((paragraph, index) => (
+                  <p key={index} style={{ marginTop: 12, marginBottom: 0 }}>{paragraph}</p>
+                ))}
+                <button className="reader-open-fallback" onClick={() => onOpenExternal(reader.url)}>Open original article</button>
+              </div>
+            )}
+            {!loading && reader.status === 'ready' && paragraphs.map((paragraph, index) => (
+              <p key={index}>{paragraph}</p>
+            ))}
+          </div>
+
+          <aside className="reader-media">
+            {hero ? (
+              <img src={hero} alt="" onError={event => { event.currentTarget.style.display = 'none'; }} />
+            ) : (
+              <div className="reader-image-placeholder">Reader</div>
+            )}
+            {!loading && (
+              <div className="reader-meta">
+                <div><span>Paragraphs</span><strong>{paragraphs.length || '--'}</strong></div>
+                <div><span>Images</span><strong>{article.images?.length || 0}</strong></div>
+                <div><span>Mode</span><strong>{article.sourceLabel === 'archive.org' ? 'Archive' : 'Direct'}</strong></div>
+              </div>
+            )}
+          </aside>
+        </div>
+      </article>
     </div>
   );
 }
@@ -361,13 +482,15 @@ export default function App() {
   const [accentColor,    setAccentColor]    = useState('#202020');
   const [systemWindowColor, setSystemWindowColor] = useState('#1f1f1f');
   const [browserPane,  setBrowserPane]  = useState({ open: false, url: '', loading: false, braveX: 0 });
+  const [reader, setReader] = useState({ open: false, status: 'idle', url: '', seed: null, article: null, error: '' });
 
-  // Column widths: left + mid + feed are fixed; right column is flex
-  const [colWidths, setColWidths] = useState({ left: 220, mid: 240, feed: 260 });
-  const colWidthsRef = useRef({ left: 220, mid: 240, feed: 260 });
+  // Column widths: fixed lanes plus a flexible right column.
+  const [colWidths, setColWidths] = useState(DEFAULT_COL_WIDTHS);
+  const colWidthsRef = useRef(DEFAULT_COL_WIDTHS);
   const panelBgRef = useRef(null);
   const storageReadyRef = useRef(false);
   const pendingShowRef  = useRef(false);
+  const readerRequestRef = useRef(0);
   useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
 
   // Expand/collapse state per widget id — persisted
@@ -403,8 +526,30 @@ export default function App() {
     };
   }
 
-  function openBrowser(url) {
-    window.electronAPI?.browser?.open(url);
+  function openBrowser(target) {
+    const seed = typeof target === 'string' ? null : target;
+    const url = typeof target === 'string' ? target : target?.link;
+    if (!url) return;
+    const requestId = readerRequestRef.current + 1;
+    readerRequestRef.current = requestId;
+    setReader({ open: true, status: 'loading', url, seed, article: null, error: '' });
+    api.reader?.fetch?.(url).then(article => {
+      if (readerRequestRef.current !== requestId) return;
+      if (article?.ok) setReader({ open: true, status: 'ready', url, seed, article, error: '' });
+      else setReader({ open: true, status: 'error', url, seed, article, error: article?.error || 'Reader extraction failed.' });
+    }).catch(error => {
+      if (readerRequestRef.current !== requestId) return;
+      setReader({ open: true, status: 'error', url, seed, article: null, error: error?.message || 'Reader extraction failed.' });
+    });
+  }
+
+  function closeReader() {
+    readerRequestRef.current += 1;
+    setReader({ open: false, status: 'idle', url: '', seed: null, article: null, error: '' });
+  }
+
+  function openReaderExternal(url) {
+    if (url) api.reader?.openExternal?.(url);
   }
 
   const [unreadMap, setUnreadMap] = useState({});
@@ -444,6 +589,7 @@ export default function App() {
       setVisible(false);
       setShowSettings(false);
       setShowMgr(false);
+      closeReader();
       api.modal?.close();
       setTimeout(() => panelApi.hideDone(), 270);
     });
@@ -519,6 +665,14 @@ export default function App() {
             if (id.startsWith("cat:") && finalCols[id] === "mid") finalCols[id] = "feed";
           }
         }
+        // Migrate workstation cards into the new telemetry lane once. After
+        // that, manual drag/drop placement is preserved by the saved columns.
+        const hasMonitor = Object.values(finalCols).some(v => v === "monitor");
+        if (!hasMonitor) {
+          for (const id of WORKSTATION_WIDGET_ID_SET) {
+            finalCols[id] = "monitor";
+          }
+        }
         setColumns(finalCols);
         setApiKeys(saved.apiKeys||{});
       }
@@ -541,8 +695,9 @@ export default function App() {
     api.store.get(SK_COLW).then(v=>{
       if (v) try {
         const p = JSON.parse(v);
-        setColWidths(p);
-        colWidthsRef.current = p;
+        const merged = { ...DEFAULT_COL_WIDTHS, ...p };
+        setColWidths(merged);
+        colWidthsRef.current = merged;
       } catch {}
     });
     api.store.get(SK_EXPANDED).then(v=>{
@@ -654,6 +809,7 @@ export default function App() {
   // .wi div, taking up space in whichever column the phantom ID was placed.
   const visibleIds = activeIds.filter(id => isKnownWidgetId(id, categories));
   const leftIds  = visibleIds.filter(id => getColFor(id) === "left");
+  const monitorIds = visibleIds.filter(id => getColFor(id) === "monitor");
   const midIds   = visibleIds.filter(id => getColFor(id) === "mid");
   const feedIds  = visibleIds.filter(id => getColFor(id) === "feed");
   const rightIds = visibleIds.filter(id => getColFor(id) === "right");
@@ -826,6 +982,98 @@ export default function App() {
           color:#fff;
           box-shadow:0 0 16px rgba(31,111,255,0.30), inset 0 0 0 1px rgba(255,255,255,0.11);
         }
+        @keyframes readerZoom{
+          from{opacity:0;transform:scale(.965) translateY(12px);filter:blur(8px)}
+          to{opacity:1;transform:scale(1) translateY(0);filter:none}
+        }
+        @keyframes readerSweep{
+          from{transform:translateX(-130%)}
+          to{transform:translateX(130%)}
+        }
+        .reader-stage{
+          flex:1;min-width:0;overflow:hidden;padding:0 10px 12px 6px;
+          display:flex;flex-direction:column;
+        }
+        .reader-card{
+          position:relative;flex:1;min-height:0;overflow:hidden;border-radius:8px;
+          border:1px solid rgba(238,248,255,.58);
+          background:
+            linear-gradient(145deg, rgba(10,18,34,.74), rgba(5,9,18,.60)),
+            radial-gradient(circle at 85% 12%, rgba(47,109,255,.20), transparent 28%);
+          box-shadow:
+            0 0 0 1px rgba(47,109,255,.22),
+            0 18px 46px rgba(0,0,0,.30),
+            0 0 38px rgba(47,109,255,.16),
+            inset 0 1px 0 rgba(255,255,255,.18),
+            inset 0 0 0 1px rgba(255,255,255,.08);
+          backdrop-filter:blur(28px) saturate(180%);
+          -webkit-backdrop-filter:blur(28px) saturate(180%);
+          animation:readerZoom 260ms cubic-bezier(.22,1,.36,1) both;
+        }
+        .reader-card-glow{
+          position:absolute;left:24px;right:24px;top:0;height:1px;
+          background:linear-gradient(90deg,transparent,rgba(47,109,255,.74),rgba(255,255,255,.88),rgba(47,109,255,.74),transparent);
+          box-shadow:0 0 18px rgba(47,109,255,.42);pointer-events:none;
+        }
+        .reader-topbar{
+          height:42px;display:flex;align-items:center;justify-content:space-between;
+          padding:0 12px 0 14px;border-bottom:1px solid rgba(247,250,255,.10);
+        }
+        .reader-source{display:flex;align-items:center;gap:8px;color:#f7faff;font-size:11px;min-width:0}
+        .reader-dot{width:7px;height:7px;border-radius:50%;background:#2f6dff;box-shadow:0 0 12px rgba(47,109,255,.9);flex-shrink:0}
+        .reader-source-mode{color:rgba(247,250,255,.55);font-family:'DM Mono',monospace;font-size:9px}
+        .reader-actions{display:flex;gap:6px;flex-shrink:0}
+        .reader-icon-button{
+          width:25px;height:25px;border-radius:6px;border:1px solid rgba(238,248,255,.36);
+          background:rgba(47,109,255,.10);color:#f7faff;cursor:pointer;font-size:12px;
+          display:flex;align-items:center;justify-content:center;
+          box-shadow:inset 0 0 0 1px rgba(255,255,255,.05),0 0 12px rgba(47,109,255,.14);
+          transition:background .15s,border-color .15s,box-shadow .15s,transform .15s;
+        }
+        .reader-icon-button:hover{
+          background:rgba(47,109,255,.22);border-color:rgba(255,255,255,.70);
+          box-shadow:0 0 18px rgba(47,109,255,.30),inset 0 0 0 1px rgba(255,255,255,.10);
+        }
+        .reader-icon-button:active{transform:translateY(1px)}
+        .reader-progress-track{height:2px;background:rgba(255,255,255,.06);overflow:hidden}
+        .reader-progress-fill{
+          height:100%;background:linear-gradient(90deg,rgba(47,109,255,.20),rgba(238,248,255,.95),rgba(47,109,255,.70));
+          box-shadow:0 0 14px rgba(47,109,255,.58);transition:width .22s ease,opacity .35s;
+        }
+        .reader-content{height:calc(100% - 44px);display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:18px;padding:18px;overflow:hidden}
+        .reader-copy{min-width:0;overflow-y:auto;padding-right:8px}
+        .reader-copy h1{font-size:26px;line-height:1.08;color:#fff;font-weight:650;margin-bottom:12px;letter-spacing:0}
+        .reader-copy p{font-size:14px;line-height:1.72;color:rgba(247,250,255,.88);margin:0 0 13px}
+        .reader-deck{font-size:15px!important;color:rgba(247,250,255,.68)!important;line-height:1.55!important;margin-bottom:18px!important}
+        .reader-media{min-width:0;display:flex;flex-direction:column;gap:10px}
+        .reader-media img,.reader-image-placeholder{
+          width:100%;aspect-ratio:4/3;border-radius:7px;object-fit:cover;
+          border:1px solid rgba(238,248,255,.22);background:rgba(255,255,255,.05);
+          box-shadow:0 0 20px rgba(47,109,255,.12);
+        }
+        .reader-image-placeholder{display:flex;align-items:center;justify-content:center;color:rgba(247,250,255,.38);font-family:'DM Mono',monospace;font-size:12px}
+        .reader-meta{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+        .reader-meta div{border:1px solid rgba(247,250,255,.10);background:rgba(255,255,255,.035);border-radius:6px;padding:7px 6px}
+        .reader-meta span{display:block;color:rgba(247,250,255,.54);font-size:8.5px;text-transform:uppercase}
+        .reader-meta strong{display:block;color:#fff;font-family:'DM Mono',monospace;font-size:11px;margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .reader-loading{
+          position:relative;margin-top:20px;border:1px solid rgba(238,248,255,.18);border-radius:8px;
+          background:rgba(47,109,255,.055);padding:18px;overflow:hidden;color:#f7faff;
+        }
+        .reader-scanline{
+          position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(238,248,255,.16),transparent);
+          animation:readerSweep 1.25s linear infinite;
+        }
+        .reader-loading-title{position:relative;font-size:14px;font-weight:650;margin-bottom:5px}
+        .reader-loading-text{position:relative;font-size:11px;color:rgba(247,250,255,.62)}
+        .reader-error{
+          border:1px solid rgba(255,255,255,.18);background:rgba(47,109,255,.07);
+          border-radius:8px;padding:16px;color:rgba(247,250,255,.82);font-size:13px;line-height:1.5;
+        }
+        .reader-open-fallback{
+          margin-top:12px;border-radius:6px;border:1px solid rgba(238,248,255,.42);
+          background:rgba(47,109,255,.14);color:#fff;font-size:11px;padding:7px 10px;cursor:pointer;
+        }
       `}</style>
 
       {/* ── Sliding wrapper ── */}
@@ -894,7 +1142,22 @@ export default function App() {
                 {/* Divider col 1 | col 2 */}
                 <div className="col-divider" onMouseDown={onColDividerDown('left')} />
 
-                {/* Column 2 */}
+                {/* Column 2 - Workstation telemetry */}
+                <div style={{flexShrink:0,width:colWidths.monitor,overflowY:"auto",padding:"0px 6px 12px 6px",display:"flex",flexDirection:"column",gap:8}}
+                  onDragOver={e=>{e.preventDefault();setDropTarget({col:"monitor",beforeId:null});}}
+                  onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
+                  {renderCol(monitorIds, "monitor")}
+                  {monitorIds.length===0&&<div style={{textAlign:"center",color:"#d0d0e0",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
+                </div>
+
+                {/* Divider col 2 | col 3 */}
+                <div className="col-divider" onMouseDown={onColDividerDown('monitor')} />
+
+                {reader.open ? (
+                  <ArticleReaderCard reader={reader} onClose={closeReader} onOpenExternal={openReaderExternal} />
+                ) : (
+                  <>
+                {/* Column 3 */}
                 <div style={{flexShrink:0,width:colWidths.mid,overflowY:"auto",padding:"0px 6px 12px 6px",display:"flex",flexDirection:"column",gap:8}}
                   onDragOver={e=>{e.preventDefault();setDropTarget({col:"mid",beforeId:null});}}
                   onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
@@ -923,6 +1186,8 @@ export default function App() {
                   {renderCol(rightIds, "right")}
                   {rightIds.length===0&&<div style={{textAlign:"center",color:"#d0d0e0",fontSize:10,marginTop:30,opacity:0.5}}>Empty</div>}
                 </div>
+                  </>
+                )}
               </div>
             )}
 

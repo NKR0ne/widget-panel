@@ -4,10 +4,28 @@
 <meta charset="utf-8">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
-html,body,#map{margin:0;padding:0;width:100%;height:100%;background:#111}
+html,body,#map{margin:0;padding:0;width:100%;height:100%;background:#050914}
+body{overflow:hidden}
+#map{position:relative}
+#map::before,#map::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:450}
+#map::before{background:radial-gradient(circle at 78% 18%,rgba(31,111,255,.16),transparent 33%),linear-gradient(135deg,rgba(255,255,255,.04),transparent 36%,rgba(31,111,255,.045));mix-blend-mode:screen}
+#map::after{box-shadow:inset 0 0 0 1px rgba(240,248,255,.22),inset 0 0 34px rgba(31,111,255,.16)}
+body.theme-blueprint #map::before{background-image:linear-gradient(rgba(31,111,255,.065) 1px,transparent 1px),linear-gradient(90deg,rgba(31,111,255,.055) 1px,transparent 1px),radial-gradient(circle at 72% 18%,rgba(31,111,255,.20),transparent 30%);background-size:42px 42px,42px 42px,auto;mix-blend-mode:screen}
+body.theme-glass #map::before{background:radial-gradient(circle at 80% 20%,rgba(31,111,255,.11),transparent 32%),linear-gradient(135deg,rgba(255,255,255,.055),transparent 42%)}
+body.theme-satellite-dim #map::before{background:rgba(2,8,18,.30)}
+.leaflet-container{font-family:"DM Sans",system-ui,sans-serif;background:#050914}
 .leaflet-control-zoom{display:none}
-.leaflet-control-attribution{font-size:8px!important;background:rgba(0,0,0,0.4)!important;color:#aaa!important}
-.leaflet-control-attribution a{color:#888!important}
+.leaflet-control-attribution{font-size:8px!important;background:rgba(3,8,18,.58)!important;color:rgba(220,235,255,.66)!important;border-radius:5px 0 0 0!important;backdrop-filter:blur(8px)}
+.leaflet-control-attribution a{color:rgba(135,182,255,.74)!important}
+.midnight-base{filter:saturate(.78) brightness(.72) contrast(1.04)}
+.midnight-labels{filter:brightness(1.18) saturate(.88);opacity:.74}
+.blueprint-base{filter:sepia(1) hue-rotate(166deg) saturate(2.4) brightness(.62) contrast(1.1);opacity:.86}
+.blueprint-labels{filter:hue-rotate(176deg) saturate(1.8) brightness(1.28);opacity:.58}
+.glass-base{filter:saturate(.42) brightness(.48) contrast(1.02);opacity:.72}
+.glass-labels{filter:brightness(1.05) saturate(.6);opacity:.44}
+.satellite-base{filter:grayscale(.72) sepia(.38) hue-rotate(174deg) saturate(1.45) brightness(.38) contrast(1.08)}
+.satellite-reference{filter:hue-rotate(172deg) saturate(1.35) brightness(.9);opacity:.55}
+.traffic-flow{filter:saturate(1.12) brightness(.94) contrast(1.05);mix-blend-mode:screen}
 </style>
 </head>
 <body>
@@ -17,36 +35,60 @@ html,body,#map{margin:0;padding:0;width:100%;height:100%;background:#111}
 const p      = new URLSearchParams(location.search);
 const lat    = parseFloat(p.get('lat')  || '46.81228');
 const lon    = parseFloat(p.get('lon')  || '-71.21454');
-const zoom   = parseInt(p.get('zoom')   || '11');
+const zoom   = parseInt(p.get('zoom')   || '11', 10);
 const apiKey = p.get('apiKey')          || '';
+const theme  = p.get('theme')           || 'midnight';
 
-const map = L.map('map', { zoomControl:false, attributionControl:true })
-             .setView([lat, lon], zoom);
+document.body.className = 'theme-' + theme;
 
-// 1. Esri World_Imagery — high-resolution satellite/aerial photography. No
-//    API key required.
-L.tileLayer(
-  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-  { attribution:'© Esri, Maxar, Earthstar Geographics', maxZoom:19 }
-).addTo(map);
+const map = L.map('map', {
+  zoomControl:false,
+  attributionControl:true,
+  preferCanvas:true,
+}).setView([lat, lon], zoom);
 
-// 2. Esri reference overlay — transparent layer with road geometry, highways,
-//    and place names. Sits between the satellite base and the traffic flow so
-//    we can read street names and town labels without losing the imagery.
-L.tileLayer(
-  'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-  { maxZoom:19, opacity:0.9 }
-).addTo(map);
-L.tileLayer(
-  'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
-  { maxZoom:19, opacity:0.7 }
-).addTo(map);
+const cartoAttribution = '&copy; OpenStreetMap &copy; CARTO';
 
-// 3. TomTom real-time traffic flow (green/yellow/red speed vs free-flow)
+function addCartoDark(baseClass, labelsClass, baseOpacity, labelOpacity) {
+  L.tileLayer(
+    'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
+    { attribution:cartoAttribution, maxZoom:20, opacity:baseOpacity, className:baseClass }
+  ).addTo(map);
+  L.tileLayer(
+    'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',
+    { maxZoom:20, opacity:labelOpacity, className:labelsClass }
+  ).addTo(map);
+}
+
+function addSatelliteDim() {
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { attribution:'&copy; Esri, Maxar, Earthstar Geographics', maxZoom:19, className:'satellite-base' }
+  ).addTo(map);
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom:19, opacity:.58, className:'satellite-reference' }
+  ).addTo(map);
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom:19, opacity:.48, className:'satellite-reference' }
+  ).addTo(map);
+}
+
+if (theme === 'satellite-dim') {
+  addSatelliteDim();
+} else if (theme === 'blueprint') {
+  addCartoDark('blueprint-base', 'blueprint-labels', .92, .52);
+} else if (theme === 'glass') {
+  addCartoDark('glass-base', 'glass-labels', .78, .46);
+} else {
+  addCartoDark('midnight-base', 'midnight-labels', .94, .72);
+}
+
 if (apiKey) {
   L.tileLayer(
     'https://api.tomtom.com/traffic/map/4/tile/flow/relative0/{z}/{x}/{y}.png?key=' + apiKey + '&tileSize=256',
-    { maxZoom:18, opacity:0.8, attribution:'© TomTom' }
+    { maxZoom:18, opacity:.82, attribution:'&copy; TomTom', className:'traffic-flow' }
   ).addTo(map);
 }
 

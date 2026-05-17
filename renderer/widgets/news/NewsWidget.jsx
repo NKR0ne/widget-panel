@@ -68,7 +68,7 @@ export default function NewsWidget({ category, colorIdx, onUnreadChange, onOpenU
                 }}
                 onClick={() => {
                   setReadIds((previous) => new Set([...previous, item.id]));
-                  if (item.link && item.link !== '#') onOpenUrl?.(item.link);
+                  if (item.link && item.link !== '#') onOpenUrl?.(item);
                 }}
               >
                 <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>

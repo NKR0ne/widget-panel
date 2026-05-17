@@ -29,6 +29,96 @@ function log(...args) {
   console.log(...args)
 }
 
+const WORKSTATION_PIPE = '\\\\.\\pipe\\WorkstationMonitorTelemetry'
+let workstationSocket = null
+let workstationBuffer = ''
+let workstationPending = []
+let workstationHeartbeat = null
+let workstationConnecting = null
+
+function resetWorkstationSocket() {
+  if (workstationHeartbeat) clearInterval(workstationHeartbeat)
+  workstationHeartbeat = null
+  workstationConnecting = null
+  workstationBuffer = ''
+  workstationPending.splice(0).forEach(({ resolve }) => resolve(null))
+  if (workstationSocket) {
+    try { workstationSocket.destroy() } catch {}
+  }
+  workstationSocket = null
+}
+
+function handleWorkstationLine(line) {
+  const pending = workstationPending.shift()
+  if (!pending) return
+  clearTimeout(pending.timer)
+  try { pending.resolve(JSON.parse(line)) }
+  catch { pending.resolve(null) }
+}
+
+function workstationRequest(payload, timeout = 1600) {
+  return new Promise(resolve => {
+    if (!workstationSocket || workstationSocket.destroyed) return resolve(null)
+    const timer = setTimeout(() => {
+      const index = workstationPending.findIndex(item => item.resolve === resolve)
+      if (index >= 0) workstationPending.splice(index, 1)
+      resolve(null)
+    }, timeout)
+    workstationPending.push({ resolve, timer })
+    try { workstationSocket.write(JSON.stringify(payload) + '\n') }
+    catch {
+      clearTimeout(timer)
+      workstationPending.pop()
+      resolve(null)
+    }
+  })
+}
+
+async function ensureWorkstationConnected() {
+  if (workstationSocket && !workstationSocket.destroyed) return true
+  if (workstationConnecting) return workstationConnecting
+
+  workstationConnecting = new Promise(resolve => {
+    const socket = net.createConnection({ path: WORKSTATION_PIPE })
+    const failTimer = setTimeout(() => {
+      try { socket.destroy() } catch {}
+      resetWorkstationSocket()
+      resolve(false)
+    }, 1200)
+
+    socket.on('connect', async () => {
+      clearTimeout(failTimer)
+      workstationSocket = socket
+      const registered = await workstationRequest({ type: 'register', clientName: 'widget-panel' }, 1200)
+      if (!registered || registered.type !== 'registered') {
+        resetWorkstationSocket()
+        return resolve(false)
+      }
+      workstationHeartbeat = setInterval(() => {
+        try { workstationSocket?.write(JSON.stringify({ type: 'heartbeat' }) + '\n') }
+        catch { resetWorkstationSocket() }
+      }, 2000)
+      resolve(true)
+    })
+
+    socket.on('data', chunk => {
+      workstationBuffer += chunk.toString('utf8')
+      let idx
+      while ((idx = workstationBuffer.indexOf('\n')) >= 0) {
+        const line = workstationBuffer.slice(0, idx).trim()
+        workstationBuffer = workstationBuffer.slice(idx + 1)
+        if (line) handleWorkstationLine(line)
+      }
+    })
+    socket.on('error', () => resetWorkstationSocket())
+    socket.on('close', () => resetWorkstationSocket())
+  })
+
+  const ok = await workstationConnecting
+  workstationConnecting = null
+  return ok
+}
+
 let win              = null
 let isPinned         = false
 let lastToggleTime   = 0
@@ -417,6 +507,20 @@ ipcMain.handle('pin-toggle', () => { togglePin(); return isPinned })
 ipcMain.handle('pin-get',    () => isPinned)
 
 ipcMain.on('badge-update', (_e, count) => sendBadge(count))
+
+ipcMain.handle('workstation-connect', async () => ensureWorkstationConnected())
+ipcMain.handle('workstation-disconnect', async () => {
+  if (workstationSocket && !workstationSocket.destroyed) {
+    try { workstationSocket.write(JSON.stringify({ type: 'unregister' }) + '\n') } catch {}
+  }
+  resetWorkstationSocket()
+  return true
+})
+ipcMain.handle('workstation-snapshot', async () => {
+  const connected = await ensureWorkstationConnected()
+  if (!connected) return null
+  return workstationRequest({ type: 'snapshot' }, 1600)
+})
 
 ipcMain.handle('autostart-get', () => app.getLoginItemSettings().openAtLogin)
 ipcMain.handle('autostart-set', (_e, enabled) => {
@@ -888,6 +992,240 @@ function rssFetch(url, redirects = 0) {
 ipcMain.handle('rss-fetch', async (_e, url) => {
   try { return await rssFetch(url) }
   catch (e) { return { ok: false, error: e.message } }
+})
+
+function stripTags(value = '') {
+  return value
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+}
+
+function decodeHtml(value = '') {
+  return value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function absolutizeUrl(value, baseUrl) {
+  if (!value) return ''
+  try { return new URL(value, baseUrl).href } catch { return value }
+}
+
+function getMetaContent(html, property) {
+  const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`<meta[^>]+(?:property|name)=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>|<meta[^>]+content=["']([^"']+)["'][^>]+(?:property|name)=["']${escaped}["'][^>]*>`, 'i')
+  const match = html.match(re)
+  return decodeHtml(match?.[1] || match?.[2] || '')
+}
+
+function extractFirst(html, tag) {
+  const match = html.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'i'))
+  return match ? decodeHtml(stripTags(match[1])) : ''
+}
+
+function chooseReadableHtml(html) {
+  const withoutChrome = html
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<svg[\s\S]*?<\/svg>/gi, ' ')
+    .replace(/<(nav|header|footer|aside|form|button|iframe|canvas|figure)[\s\S]*?<\/\1>/gi, ' ')
+  const candidates = [
+    withoutChrome.match(/<article[^>]*>([\s\S]*?)<\/article>/i)?.[1],
+    withoutChrome.match(/<main[^>]*>([\s\S]*?)<\/main>/i)?.[1],
+    withoutChrome.match(/<body[^>]*>([\s\S]*?)<\/body>/i)?.[1],
+    withoutChrome,
+  ].filter(Boolean)
+  return candidates.sort((a, b) => (b.match(/<p[\s>]/gi)?.length || 0) - (a.match(/<p[\s>]/gi)?.length || 0))[0] || withoutChrome
+}
+
+function extractParagraphs(articleHtml) {
+  const blocks = []
+  const re = /<(p|h2|h3|li)[^>]*>([\s\S]*?)<\/\1>/gi
+  let match
+  while ((match = re.exec(articleHtml))) {
+    const text = decodeHtml(stripTags(match[2]))
+    if (!text || text.length < 35) continue
+    if (/cookie|subscribe|newsletter|advertisement|sign up|log in|all rights reserved|share this|read more/i.test(text)) continue
+    if (blocks.includes(text)) continue
+    blocks.push(text)
+    if (blocks.join(' ').length > 9000 || blocks.length >= 34) break
+  }
+  return blocks
+}
+
+function extractImages(html, baseUrl, hero) {
+  const images = []
+  if (hero) images.push(hero)
+  const re = /<img[^>]+(?:src|data-src|data-original)=["']([^"']+)["'][^>]*>/gi
+  let match
+  while ((match = re.exec(html)) && images.length < 5) {
+    const url = absolutizeUrl(decodeHtml(match[1]), baseUrl)
+    if (!/^https?:/i.test(url)) continue
+    if (/logo|icon|avatar|sprite|tracking|pixel|spacer/i.test(url)) continue
+    if (!images.includes(url)) images.push(url)
+  }
+  return images
+}
+
+function parseArticleHtml(html, finalUrl, requestedUrl, sourceLabel = 'direct') {
+  const source = (() => { try { return new URL(requestedUrl).hostname.replace(/^www\./, '') } catch { return '' } })()
+  const title = getMetaContent(html, 'og:title')
+    || getMetaContent(html, 'twitter:title')
+    || extractFirst(html, 'h1')
+    || extractFirst(html, 'title')
+    || source
+  const description = getMetaContent(html, 'og:description') || getMetaContent(html, 'description')
+  const date = getMetaContent(html, 'article:published_time') || getMetaContent(html, 'date')
+  const hero = absolutizeUrl(getMetaContent(html, 'og:image') || getMetaContent(html, 'twitter:image'), finalUrl)
+  const readable = chooseReadableHtml(html)
+  const paragraphs = extractParagraphs(readable)
+  const images = extractImages(readable, finalUrl, hero)
+
+  return {
+    ok: paragraphs.length > 0,
+    url: requestedUrl,
+    finalUrl,
+    source,
+    sourceLabel,
+    title,
+    description,
+    date,
+    image: images[0] || '',
+    images,
+    paragraphs,
+    excerpt: paragraphs.slice(0, 2).join(' '),
+  }
+}
+
+function detectPaywall(html) {
+  const sample = decodeHtml(stripTags(html)).slice(0, 24000)
+  return /subscribe to continue|subscription required|already a subscriber|sign in to continue|register to continue|create an account to continue|to continue reading|this article is reserved|premium content|paywall|metered paywall|become a subscriber|subscriber-only/i.test(sample)
+    || /class=["'][^"']*(paywall|subscriber|subscription|premium-content|regwall)[^"']*["']/i.test(html)
+}
+
+function readerFetchText(url, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirects > 5) { reject(new Error('too many redirects')); return }
+    const u = new URL(url)
+    const mod = u.protocol === 'http:' ? require('http') : require('https')
+    const req = mod.request({
+      hostname: u.hostname,
+      path: u.pathname + u.search,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8',
+      },
+    }, res => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        res.resume()
+        resolve(readerFetchText(new URL(res.headers.location, url).href, redirects + 1))
+        return
+      }
+      const chunks = []
+      res.on('data', chunk => chunks.push(chunk))
+      res.on('end', () => resolve({
+        ok: res.statusCode >= 200 && res.statusCode < 300,
+        status: res.statusCode,
+        url,
+        finalUrl: url,
+        text: Buffer.concat(chunks).toString('utf8'),
+      }))
+    })
+    req.on('error', reject)
+    req.setTimeout(12000, () => req.destroy(new Error('reader timeout')))
+    req.end()
+  })
+}
+
+async function latestWaybackUrl(url) {
+  const apiUrl = 'https://archive.org/wayback/available?url=' + encodeURIComponent(url)
+  const res = await readerFetchText(apiUrl)
+  if (!res.ok) return ''
+  try {
+    const data = JSON.parse(res.text)
+    const snapshot = data?.archived_snapshots?.closest
+    if (!snapshot?.available || !snapshot.url) return ''
+    const match = snapshot.url.match(/\/web\/(\d+)\//)
+    return match ? `https://web.archive.org/web/${match[1]}id_/${url}` : snapshot.url
+  } catch {
+    return ''
+  }
+}
+
+async function fetchReaderArticle(url) {
+  const attempts = []
+  try {
+    const direct = await readerFetchText(url)
+    if (direct.ok && direct.text) {
+      const article = parseArticleHtml(direct.text, direct.finalUrl || url, url, 'direct')
+      attempts.push({ source: 'direct', paragraphs: article.paragraphs.length })
+      if (detectPaywall(direct.text) && article.paragraphs.join(' ').length < 450) {
+        return {
+          ...article,
+          ok: false,
+          paywall: true,
+          paragraphs: article.description ? [article.description] : article.paragraphs,
+          attempts,
+          error: 'This article appears to require a subscription or sign-in.',
+        }
+      }
+      if (article.ok && article.paragraphs.join(' ').length > 450) return { ...article, attempts }
+    }
+  } catch (e) {
+    attempts.push({ source: 'direct', error: e.message })
+  }
+
+  try {
+    const archived = await latestWaybackUrl(url)
+    if (archived) {
+      const res = await readerFetchText(archived)
+      if (res.ok && res.text) {
+        const article = parseArticleHtml(res.text, archived, url, 'archive.org')
+        attempts.push({ source: 'archive.org', paragraphs: article.paragraphs.length })
+        if (article.ok) return { ...article, attempts }
+      }
+    }
+  } catch (e) {
+    attempts.push({ source: 'archive.org', error: e.message })
+  }
+
+  return {
+    ok: false,
+    url,
+    source: (() => { try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' } })(),
+    sourceLabel: attempts.some(a => a.source === 'archive.org') ? 'archive.org' : 'direct',
+    title: 'Reader view unavailable',
+    description: '',
+    image: '',
+    images: [],
+    paragraphs: [],
+    attempts,
+    error: 'The article could not be purified automatically.',
+  }
+}
+
+ipcMain.handle('reader-fetch', async (_e, url) => {
+  try { return await fetchReaderArticle(url) }
+  catch (e) { return { ok: false, url, title: 'Reader view unavailable', paragraphs: [], images: [], error: e.message } }
+})
+
+ipcMain.handle('reader-open-external', async (_e, url) => {
+  if (!url) return false
+  await shell.openExternal(url)
+  return true
 })
 
 // ── TradingView auth ──────────────────────────────────────────────────────────

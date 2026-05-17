@@ -20,10 +20,23 @@ export const SYS = [
   { id: 'todo', label: 'Microsoft To-Do', note: 'Microsoft Graph · OAuth', color: '#2564cf' },
   { id: 'camera', label: 'Caméra', note: 'Security Center · local', color: '#5e8af5' },
   { id: 'euronews', label: 'Euronews', note: 'HLS · Antik', color: '#1e4ba8' },
+  { id: 'workstation-cpu', label: 'CPU', note: 'Workstation service', color: '#2f6dff' },
+  { id: 'workstation-gpu', label: 'GPU', note: 'Workstation service', color: '#2f6dff' },
+  { id: 'workstation-ram', label: 'RAM', note: 'Workstation service', color: '#2f6dff' },
+  { id: 'workstation-disk', label: 'Disk', note: 'Workstation service', color: '#2f6dff' },
+  { id: 'workstation-network', label: 'Network', note: 'Workstation service', color: '#2f6dff' },
 ];
 
 export const SYSTEM_WIDGET_IDS = SYS.map(widget => widget.id);
 export const SYSTEM_WIDGET_ID_SET = new Set(SYSTEM_WIDGET_IDS);
+export const WORKSTATION_WIDGET_IDS = [
+  'workstation-cpu',
+  'workstation-gpu',
+  'workstation-ram',
+  'workstation-disk',
+  'workstation-network',
+];
+export const WORKSTATION_WIDGET_ID_SET = new Set(WORKSTATION_WIDGET_IDS);
 
 export function defaultColumns(categories) {
   const cols = {};
@@ -38,11 +51,13 @@ export function defaultColumns(categories) {
   cols.mail = 'right';
   cols.camera = 'left';
   cols.todo = 'right';
+  WORKSTATION_WIDGET_IDS.forEach(id => { cols[id] = 'monitor'; });
   return cols;
 }
 
 export function getColumnForWidget(id, columns) {
   if (columns[id]) return columns[id];
+  if (WORKSTATION_WIDGET_ID_SET.has(id)) return 'monitor';
   return id.startsWith('cat:') ? 'feed' : 'left';
 }
 

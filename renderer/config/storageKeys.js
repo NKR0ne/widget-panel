@@ -15,6 +15,7 @@ export const SK_AGENDA_HEIGHT = 'wp-agenda-height';
 export const SK_MAIL_HEIGHT = 'wp-mail-height';
 export const SK_TODO_LIST_ID = 'wp-todo-list-id';
 export const SK_TRAFFIC_ZOOM = 'wp-traffic-zoom';
+export const SK_TRAFFIC_THEME = 'wp-traffic-theme';
 export const SK_EURONEWS_HEIGHT = 'wp-euronews-height';
 export const SK_CAMERA_AUTH = 'wp-camera-auth';
 export const SK_CAMERA_HEIGHT = 'wp-camera-height';

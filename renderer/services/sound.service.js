@@ -1,4 +1,5 @@
 let audioCtx = null;
+let lastHoverFocusAt = 0;
 
 const SOUND_ENABLED = true;
 const MASTER_GAIN = 0.032;
@@ -121,4 +122,38 @@ export function playPanelInSound() {
 export function playPanelOutSound() {
   crystalClink({ base: 1760, duration: 0.42, gain: 0.30, down: true });
   crystalClink({ base: 1175, delay: 0.045, duration: 0.36, gain: 0.18, down: true });
+}
+
+export function playHoverFocusSound() {
+  const now = performance.now();
+  if (now - lastHoverFocusAt < 140) return;
+  lastHoverFocusAt = now;
+
+  const ctx = getAudioContext();
+  if (!ctx) return;
+
+  const t0 = ctx.currentTime;
+  const output = makeOutput(ctx, t0, 0.13, 0.16);
+  const osc = ctx.createOscillator();
+  const amp = ctx.createGain();
+  const filter = ctx.createBiquadFilter();
+
+  addGlassTick(ctx, t0, output, 0.22);
+
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(2637, t0);
+  osc.frequency.exponentialRampToValueAtTime(2668, t0 + 0.11);
+
+  filter.type = 'highpass';
+  filter.frequency.setValueAtTime(1800, t0);
+
+  amp.gain.setValueAtTime(0.0001, t0);
+  amp.gain.exponentialRampToValueAtTime(0.105, t0 + 0.003);
+  amp.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+
+  osc.connect(amp);
+  amp.connect(filter);
+  filter.connect(output);
+  osc.start(t0);
+  osc.stop(t0 + 0.14);
 }

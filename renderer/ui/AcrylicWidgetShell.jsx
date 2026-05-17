@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import AnimatedWidgetBody from './AnimatedWidgetBody.jsx';
+import { playHoverFocusSound } from '../services/sound.service.js';
 import { C } from './theme.js';
 
 export default function AcrylicWidgetShell({
@@ -13,9 +14,11 @@ export default function AcrylicWidgetShell({
   onDragStart,
   onDragEnd,
   lastUpdated,
+  softText = false,
   children,
 }) {
   const [now, setNow] = useState(Date.now());
+  const [hoverFocused, setHoverFocused] = useState(false);
   const shellId = useId().replace(/:/g, '');
   const accent = '#1f6fff';
 
@@ -32,25 +35,56 @@ export default function AcrylicWidgetShell({
     return `${Math.floor(mins / 60)}h`;
   })();
 
+  const activateHoverFocus = () => {
+    setHoverFocused(true);
+    playHoverFocusSound();
+  };
+
+  const handleKeyDown = (event) => {
+    if (event.currentTarget !== event.target) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onToggle?.();
+    }
+  };
+
   return (
     <div
       className={`wp-acrylic-shell wp-acrylic-${shellId}`}
+      tabIndex={0}
+      onMouseEnter={activateHoverFocus}
+      onMouseLeave={() => setHoverFocused(false)}
+      onFocus={(event) => {
+        if (event.currentTarget === event.target) activateHoverFocus();
+        else setHoverFocused(true);
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setHoverFocused(false);
+      }}
+      onKeyDown={handleKeyDown}
       style={{
         position: 'relative',
         overflow: 'hidden',
         borderRadius: 8,
-        border: '1px solid rgba(244,250,255,0.54)',
+        border: hoverFocused ? '1px solid rgba(244,250,255,0.72)' : '1px solid rgba(244,250,255,0.54)',
         background: 'linear-gradient(145deg, var(--acrylic-card-top, rgba(10,18,34,0.46)), var(--acrylic-card-bottom, rgba(8,10,18,0.34)))',
-        boxShadow: [
+        boxShadow: (hoverFocused ? [
+          '0 0 0 1px rgba(255,255,255,0.14)',
+          '0 0 20px rgba(31,111,255,0.32)',
+          '0 0 34px rgba(31,111,255,0.12)',
+          'inset 0 0 0 1px rgba(255,255,255,0.14)',
+          'inset 0 16px 36px rgba(255,255,255,0.04)',
+        ] : [
           '0 0 0 1px rgba(255,255,255,0.10)',
           '0 0 14px rgba(31,111,255,0.20)',
           'inset 0 0 0 1px rgba(255,255,255,0.10)',
           'inset 0 16px 36px rgba(255,255,255,0.028)',
-        ].join(','),
+        ]).join(','),
         backdropFilter: 'blur(18px) saturate(150%)',
         WebkitBackdropFilter: 'blur(18px) saturate(150%)',
         opacity: isDragging ? 0.35 : 1,
-        transition: 'opacity 0.1s, border-color 0.18s, box-shadow 0.18s',
+        outline: 'none',
+        transition: 'opacity 0.1s, border-color 0.18s, box-shadow 0.18s, transform 0.18s',
       }}
     >
       <style>{`
@@ -131,6 +165,7 @@ export default function AcrylicWidgetShell({
               ...C.title,
               color: '#fff',
               fontSize: 10,
+              fontWeight: softText ? 400 : C.title.fontWeight,
               letterSpacing: 1.15,
               textShadow: '0 0 8px rgba(31,111,255,0.42)',
             }}

@@ -54,6 +54,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onUrl:               (cb)     => ipcRenderer.on('brave-url',          (_e, u) => cb(u)),
   },
 
+  reader: {
+    fetch:        (url) => ipcRenderer.invoke('reader-fetch', url),
+    openExternal: (url) => ipcRenderer.invoke('reader-open-external', url),
+  },
+
   auth: {
     openWindow: (url, title) => ipcRenderer.invoke('open-auth-window', url, title),
   },
@@ -63,6 +68,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     watchlists:   ()      => ipcRenderer.invoke('tv-watchlists'),
     logout:       ()      => ipcRenderer.invoke('tv-logout'),
     chart:        (ticker)     => ipcRenderer.invoke('yahoo-chart', ticker),
+  },
+
+  workstation: {
+    connect:    () => ipcRenderer.invoke('workstation-connect'),
+    disconnect: () => ipcRenderer.invoke('workstation-disconnect'),
+    snapshot:   () => ipcRenderer.invoke('workstation-snapshot'),
   },
 
   log: (...args) => ipcRenderer.send('renderer-log', ...args),

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import AnimatedWidgetBody from './AnimatedWidgetBody.jsx';
+import { playHoverFocusSound } from '../services/sound.service.js';
 import { C } from './theme.js';
 
 export default function WidgetShell({
@@ -17,6 +18,7 @@ export default function WidgetShell({
   children,
 }) {
   const [now, setNow] = useState(Date.now());
+  const [hoverFocused, setHoverFocused] = useState(false);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30000);
@@ -31,12 +33,42 @@ export default function WidgetShell({
     return `${Math.floor(mins / 60)}h`;
   })();
 
+  const activateHoverFocus = () => {
+    setHoverFocused(true);
+    playHoverFocusSound();
+  };
+
+  const handleKeyDown = (event) => {
+    if (event.currentTarget !== event.target) return;
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      onToggle?.();
+    }
+  };
+
   return (
-    <div style={{
+    <div
+      tabIndex={0}
+      onMouseEnter={activateHoverFocus}
+      onMouseLeave={() => setHoverFocused(false)}
+      onFocus={(event) => {
+        if (event.currentTarget === event.target) activateHoverFocus();
+        else setHoverFocused(true);
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setHoverFocused(false);
+      }}
+      onKeyDown={handleKeyDown}
+      style={{
       ...C.card,
       ...(transparent ? { background: 'transparent', border: '1px solid rgba(255,255,255,0.08)' } : {}),
+      border: hoverFocused ? '1px solid rgba(244,250,255,0.62)' : (transparent ? '1px solid rgba(255,255,255,0.08)' : C.card.border),
+      boxShadow: hoverFocused
+        ? '0 0 0 1px rgba(255,255,255,0.12), 0 0 18px rgba(31,111,255,0.24), inset 0 0 0 1px rgba(255,255,255,0.10)'
+        : C.card.boxShadow,
       opacity: isDragging ? 0.35 : 1,
-      transition: 'opacity 0.1s',
+      outline: 'none',
+      transition: 'opacity 0.1s, border-color 0.18s, box-shadow 0.18s',
     }}>
       <div
         style={{
