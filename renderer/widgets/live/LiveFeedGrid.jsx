@@ -6,8 +6,7 @@ import { loadHlsJs } from '../euronews/euronews.service.js';
 const LIVE_ASPECT = '16 / 9';
 const LIVE_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const CBC_REFERRER = 'https://gem.cbc.ca/';
-const LIVE_GRID_INITIAL_ACTIVE = 2;
-const LIVE_GRID_ACTIVATION_DELAY_MS = 850;
+const YOUTUBE_EMBEDDER_ORIGIN = 'https://widget-panel.local';
 
 function liveLog(...args) {
   try { api.log?.('[live]', ...args.map(value => typeof value === 'string' ? value : JSON.stringify(value))); } catch {}
@@ -16,6 +15,43 @@ function liveLog(...args) {
 
 function youtubeWatch(id) {
   return `https://www.youtube.com/watch?v=${id}`;
+}
+
+function extractYouTubeVideoId(input = '') {
+  try {
+    const url = new URL(input);
+    const host = url.hostname.replace(/^www\./i, '').toLowerCase();
+    if (host === 'youtu.be') return url.pathname.split('/').filter(Boolean)[0] || '';
+    if (host === 'youtube.com' || host.endsWith('.youtube.com')) {
+      if (url.searchParams.get('v')) return url.searchParams.get('v');
+      const parts = url.pathname.split('/').filter(Boolean);
+      const marker = parts.findIndex(part => ['embed', 'live', 'shorts'].includes(part));
+      if (marker >= 0 && parts[marker + 1]) return parts[marker + 1];
+    }
+  } catch {}
+  const match = String(input).match(/(?:v=|youtu\.be\/|embed\/|live\/)([A-Za-z0-9_-]{6,})/i);
+  return match?.[1] || '';
+}
+
+function youtubeEmbed(input = '') {
+  const id = extractYouTubeVideoId(input);
+  if (!id) return input;
+  const commandOrigin = /^https?:\/\//i.test(window.location?.origin || '') ? window.location.origin : '';
+  const params = new URLSearchParams({
+    autoplay: '1',
+    mute: '1',
+    controls: '0',
+    playsinline: '1',
+    rel: '0',
+    modestbranding: '1',
+    iv_load_policy: '3',
+    disablekb: '1',
+    fs: '0',
+    enablejsapi: '1',
+    widget_referrer: `${YOUTUBE_EMBEDDER_ORIGIN}/`,
+  });
+  if (commandOrigin) params.set('origin', commandOrigin);
+  return `https://www.youtube.com/embed/${encodeURIComponent(id)}?${params}`;
 }
 
 export const YOUTUBE_PLAYER_CSS = `
@@ -251,7 +287,7 @@ function applyWebviewAudioState(webview, muted) {
   } catch {}
 }
 
-export function LiveHlsTile({ src = EURONEWS_HLS_URL, muted, objectFit = 'cover', onReady, onFatal }) {
+export function LiveHlsTile({ src = EURONEWS_HLS_URL, muted, objectFit = 'cover', label = 'hls', onReady, onFatal }) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
   const onReadyRef = useRef(onReady);
@@ -270,12 +306,30 @@ export function LiveHlsTile({ src = EURONEWS_HLS_URL, muted, objectFit = 'cover'
       const Hls = await loadHlsJs();
       if (cancelled || !video) return;
       if (Hls?.isSupported?.()) {
-        const hls = new Hls({ lowLatencyMode: true });
+        const hls = new Hls({
+          lowLatencyMode: true,
+          backBufferLength: 30,
+          manifestLoadingTimeOut: 12000,
+          levelLoadingTimeOut: 12000,
+          fragLoadingTimeOut: 16000,
+        });
         hlsRef.current = hls;
         hls.attachMedia(video);
-        hls.on(Hls.Events.MEDIA_ATTACHED, () => hls.loadSource(src));
-        hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().then(() => onReadyRef.current?.()).catch(() => {}));
+        hls.on(Hls.Events.MEDIA_ATTACHED, () => {
+          liveLog('hls-media-attached', label);
+          hls.loadSource(src);
+        });
+        hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
+          liveLog('hls-manifest-parsed', label, `levels=${data?.levels?.length ?? '--'}`);
+          video.play().then(() => onReadyRef.current?.()).catch(error => {
+            liveLog('hls-play-rejected', label, error?.message || String(error));
+          });
+        });
+        hls.on(Hls.Events.LEVEL_LOADED, (_event, data) => {
+          liveLog('hls-level-loaded', label, `level=${data?.level ?? '--'}`, `live=${!!data?.details?.live}`);
+        });
         hls.on(Hls.Events.ERROR, (_event, data) => {
+          liveLog('hls-error', label, `type=${data?.type || '--'}`, `details=${data?.details || '--'}`, `fatal=${!!data?.fatal}`, data?.response?.code ? `code=${data.response.code}` : '');
           if (!data?.fatal) return;
           if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
             try { hls.startLoad(); } catch {}
@@ -287,7 +341,9 @@ export function LiveHlsTile({ src = EURONEWS_HLS_URL, muted, objectFit = 'cover'
         });
       } else {
         video.src = src;
-        video.play().then(() => onReadyRef.current?.()).catch(() => {});
+        video.play().then(() => onReadyRef.current?.()).catch(error => {
+          liveLog('native-hls-play-rejected', label, error?.message || String(error));
+        });
       }
     })();
     return () => {
@@ -297,7 +353,7 @@ export function LiveHlsTile({ src = EURONEWS_HLS_URL, muted, objectFit = 'cover'
         hlsRef.current = null;
       }
     };
-  }, [src]);
+  }, [src, label]);
 
   useEffect(() => {
     if (videoRef.current) videoRef.current.muted = muted;
@@ -317,8 +373,58 @@ export function LiveHlsTile({ src = EURONEWS_HLS_URL, muted, objectFit = 'cover'
   );
 }
 
-function LiveFeedTile({ feed, onOpenWebContent, showHeader = true }) {
+function postYouTubeCommand(iframe, func, args = []) {
+  try {
+    const message = JSON.stringify({ event: 'command', func, args });
+    iframe?.contentWindow?.postMessage(message, 'https://www.youtube.com');
+    iframe?.contentWindow?.postMessage(message, '*');
+  } catch {}
+}
+
+function applyYouTubeAudioState(iframe, muted) {
+  if (!iframe) return;
+  postYouTubeCommand(iframe, 'playVideo');
+  postYouTubeCommand(iframe, muted ? 'mute' : 'unMute');
+  if (!muted) postYouTubeCommand(iframe, 'setVolume', [72]);
+}
+
+function LiveYouTubeEmbedTile({ feed, muted, iframeRef: externalIframeRef, onReady }) {
+  const iframeRef = useRef(null);
+  const src = youtubeEmbed(feed.embedUrl || feed.url);
+  const setIframeRef = (node) => {
+    iframeRef.current = node;
+    if (externalIframeRef) externalIframeRef.current = node;
+  };
+
+  useEffect(() => {
+    applyYouTubeAudioState(iframeRef.current, muted);
+  }, [muted]);
+
+  const handleLoad = () => {
+    const apply = () => applyYouTubeAudioState(iframeRef.current, muted);
+    apply();
+    setTimeout(apply, 250);
+    setTimeout(apply, 1000);
+    onReady?.();
+  };
+
+  return (
+    <iframe
+      ref={setIframeRef}
+      src={src}
+      title={feed.title}
+      allow="autoplay; encrypted-media; picture-in-picture; fullscreen"
+      allowFullScreen={false}
+      referrerPolicy="strict-origin-when-cross-origin"
+      onLoad={handleLoad}
+      style={{ width: '100%', height: '100%', display: 'block', border: 0, background: '#000' }}
+    />
+  );
+}
+
+function LiveFeedTile({ feed, onOpenWebContent, showHeader = true, allowWebviewFallback = true }) {
   const webviewRef = useRef(null);
+  const youtubeIframeRef = useRef(null);
   const mutedRef = useRef(true);
   const revealTimerRef = useRef(null);
   const hlsResolveTimerRef = useRef(null);
@@ -329,80 +435,103 @@ function LiveFeedTile({ feed, onOpenWebContent, showHeader = true }) {
   const [resolvedHlsUrl, setResolvedHlsUrl] = useState(feed.hls ? feed.embedUrl : '');
   const [hlsFailed, setHlsFailed] = useState(false);
 
+  const openZoomCard = (event) => {
+    event?.stopPropagation?.();
+    onOpenWebContent?.({
+      url: feed.embedUrl || feed.url,
+      title: feed.title,
+      source: feed.source,
+      partition: feed.partition,
+      referrer: feed.referrer,
+      userAgent: LIVE_USER_AGENT,
+      flavor: 'live',
+      hlsUrl: nativeHlsUrl || undefined,
+      hls: feed.hls,
+      youtube: feed.youtube,
+      liveFeed: feed,
+    }, event);
+  };
+
   useEffect(() => {
     let cancelled = false;
     if (hlsResolveTimerRef.current) clearTimeout(hlsResolveTimerRef.current);
     setHlsFailed(false);
     setResolvedHlsUrl(feed.hls ? feed.embedUrl : '');
-    if (!feed.youtube) return () => { cancelled = true; };
+    if (feed.hls || feed.youtube) return () => { cancelled = true; };
 
     setLoading(true);
     liveLog('hls-resolve-start', feed.id, feed.title, feed.url);
     hlsResolveTimerRef.current = setTimeout(() => {
       if (cancelled) return;
-      liveLog('hls-resolve-timeout-fallback-webview', feed.id);
+      liveLog('hls-resolve-timeout', feed.id);
       setResolvedHlsUrl('');
       setHlsFailed(true);
-    }, 2600);
-    const resolveHls = api.live?.youtubeHls;
+      setLoading(false);
+    }, 9000);
+    const resolveHls = api.live?.hls || (feed.youtube ? api.live?.youtubeHls : null);
     if (!resolveHls) {
-      liveLog('hls-resolve-api-missing-fallback-webview', feed.id);
+      liveLog('hls-resolve-api-missing', feed.id);
       setHlsFailed(true);
+      setLoading(false);
       return () => { cancelled = true; };
     }
-    resolveHls(feed.url).then(result => {
+    resolveHls(api.live?.hls ? feed : feed.url).then(result => {
       if (cancelled) return;
       if (hlsResolveTimerRef.current) clearTimeout(hlsResolveTimerRef.current);
       if (result?.ok && result.hlsUrl) {
-        liveLog('hls-resolve-ok', feed.id, `videoId=${result.videoId || '--'}`, `status=${result.playerStatus || '--'}`);
+        liveLog('hls-resolve-ok', feed.id, `provider=${result.provider || '--'}`, `videoId=${result.videoId || '--'}`, `status=${result.playerStatus || '--'}`);
         setResolvedHlsUrl(result.hlsUrl);
       } else {
-        liveLog('hls-resolve-failed-fallback-webview', feed.id, result?.error || result?.playerStatus || result);
-        console.warn('[wp-live] YouTube HLS unavailable', feed.title, result?.error || result?.playerStatus || result);
+        liveLog('hls-resolve-failed', feed.id, result?.error || result?.playerStatus || result);
+        console.warn('[wp-live] HLS unavailable', feed.title, result?.error || result?.playerStatus || result);
         setHlsFailed(true);
+        setLoading(false);
       }
     }).catch(error => {
       if (cancelled) return;
       if (hlsResolveTimerRef.current) clearTimeout(hlsResolveTimerRef.current);
-      liveLog('hls-resolve-exception-fallback-webview', feed.id, error?.message || String(error));
-      console.warn('[wp-live] YouTube HLS resolve failed', feed.title, error);
+      liveLog('hls-resolve-exception', feed.id, error?.message || String(error));
+      console.warn('[wp-live] HLS resolve failed', feed.title, error);
       setHlsFailed(true);
+      setLoading(false);
     });
 
     return () => {
       cancelled = true;
       if (hlsResolveTimerRef.current) clearTimeout(hlsResolveTimerRef.current);
     };
-  }, [feed.hls, feed.embedUrl, feed.youtube, feed.url, feed.title]);
+  }, [feed]);
 
-  const nativeHlsUrl = feed.hls ? feed.embedUrl : (!hlsFailed ? resolvedHlsUrl : '');
-  const waitingForNativeHls = feed.youtube && !nativeHlsUrl && !hlsFailed;
+  const nativeHlsUrl = feed.hls ? feed.embedUrl : (!feed.youtube && !hlsFailed ? resolvedHlsUrl : '');
+  const waitingForNativeHls = !feed.hls && !feed.youtube && !nativeHlsUrl && !hlsFailed;
+  const shouldUseWebview = allowWebviewFallback && !nativeHlsUrl && !waitingForNativeHls;
 
   useEffect(() => {
     if (hlsPlaybackTimerRef.current) clearTimeout(hlsPlaybackTimerRef.current);
-    if (!feed.youtube || !nativeHlsUrl) return undefined;
+    if (feed.hls || !nativeHlsUrl) return undefined;
     setLoading(true);
     liveLog('hls-playback-start', feed.id);
     hlsPlaybackTimerRef.current = setTimeout(() => {
-      liveLog('hls-playback-timeout-fallback-webview', feed.id);
+      liveLog('hls-playback-timeout', feed.id);
       setResolvedHlsUrl('');
       setHlsFailed(true);
-    }, 6500);
+      setLoading(false);
+    }, 16000);
     return () => {
       if (hlsPlaybackTimerRef.current) clearTimeout(hlsPlaybackTimerRef.current);
     };
-  }, [feed.youtube, feed.id, nativeHlsUrl]);
+  }, [feed.hls, feed.id, nativeHlsUrl]);
 
   useEffect(() => {
     mutedRef.current = muted;
     const wv = webviewRef.current;
-    if (!wv || feed.hls) return;
+    if (!allowWebviewFallback || !wv || feed.hls) return;
     applyWebviewAudioState(wv, muted);
-  }, [feed.hls, muted]);
+  }, [allowWebviewFallback, feed.hls, muted]);
 
   useEffect(() => {
     const wv = webviewRef.current;
-    if (!wv || feed.hls || nativeHlsUrl || waitingForNativeHls) return;
+    if (!allowWebviewFallback || !wv || feed.hls || nativeHlsUrl || waitingForNativeHls) return;
     revealedRef.current = false;
     setLoading(true);
     const clearRevealTimer = () => {
@@ -453,11 +582,11 @@ function LiveFeedTile({ feed, onOpenWebContent, showHeader = true }) {
       wv.removeEventListener('media-started-playing', enforceAudio);
       wv.removeEventListener('console-message', onConsole);
     };
-  }, [feed.hls, feed.embedUrl, feed.id, nativeHlsUrl, waitingForNativeHls]);
+  }, [allowWebviewFallback, feed.hls, feed.embedUrl, feed.id, nativeHlsUrl, waitingForNativeHls]);
 
   useEffect(() => {
     const wv = webviewRef.current;
-    if (!wv || !feed.youtube || nativeHlsUrl || waitingForNativeHls) return;
+    if (!allowWebviewFallback || !wv || !feed.youtube || nativeHlsUrl || waitingForNativeHls) return;
     const apply = () => {
       liveLog('youtube-legacy-css-apply', feed.id);
       try { wv.insertCSS(YOUTUBE_PLAYER_CSS); } catch {}
@@ -486,14 +615,32 @@ function LiveFeedTile({ feed, onOpenWebContent, showHeader = true }) {
       wv.removeEventListener('did-navigate-in-page', apply);
       wv.removeEventListener('media-started-playing', apply);
     };
-  }, [feed.youtube, feed.embedUrl, feed.id, nativeHlsUrl, waitingForNativeHls]);
+  }, [allowWebviewFallback, feed.youtube, feed.embedUrl, feed.id, nativeHlsUrl, waitingForNativeHls]);
+
+  useEffect(() => {
+    return () => {
+      if (hlsResolveTimerRef.current) clearTimeout(hlsResolveTimerRef.current);
+      if (hlsPlaybackTimerRef.current) clearTimeout(hlsPlaybackTimerRef.current);
+      if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
+      const wv = webviewRef.current;
+      if (!wv) return;
+      try { wv.stop?.(); } catch {}
+      try { wv.loadURL?.('about:blank'); } catch {}
+      try { wv.src = 'about:blank'; } catch {}
+    };
+  }, []);
 
   const toggleMute = (event) => {
     event.stopPropagation();
     const next = !muted;
     setMuted(next);
+    if (feed.youtube) {
+      liveLog('youtube-audio-toggle', feed.id, next ? 'muted' : 'sound');
+      applyYouTubeAudioState(youtubeIframeRef.current, next);
+      return;
+    }
     const wv = webviewRef.current;
-    if (!wv || feed.hls) return;
+    if (!allowWebviewFallback || !wv || feed.hls) return;
     applyWebviewAudioState(wv, next);
     if (!next) {
       try {
@@ -545,36 +692,10 @@ function LiveFeedTile({ feed, onOpenWebContent, showHeader = true }) {
         <button
           type="button"
           title="Open in zoom card"
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpenWebContent?.({
-              url: feed.embedUrl || feed.url,
-              title: feed.title,
-              source: feed.source,
-              partition: feed.partition,
-              referrer: feed.referrer,
-              userAgent: LIVE_USER_AGENT,
-              flavor: 'live',
-            }, event);
-          }}
-          style={{
-            width: 22,
-            height: 22,
-            borderRadius: 5,
-            border: '1px solid rgba(238,248,255,0.34)',
-            background: 'rgba(31,111,255,0.14)',
-            color: '#fff',
-            cursor: 'pointer',
-            lineHeight: 1,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: 0,
-            boxShadow: '0 0 10px rgba(31,111,255,0.18)',
-          }}
+          onClick={openZoomCard}
+          style={tileIconButtonStyle}
         >
           <OpenIcon />
-          ↗
         </button>
       </div>}
       <div style={{ position: 'relative', flex: 1, minHeight: 0, background: '#000' }}>
@@ -606,21 +727,33 @@ function LiveFeedTile({ feed, onOpenWebContent, showHeader = true }) {
             </span>
           </div>
         )}
-        {nativeHlsUrl ? (
+        {feed.youtube ? (
+          <LiveYouTubeEmbedTile
+            feed={feed}
+            muted={muted}
+            iframeRef={youtubeIframeRef}
+            onReady={() => {
+              liveLog('youtube-embed-ready', feed.id);
+              setLoading(false);
+            }}
+          />
+        ) : nativeHlsUrl ? (
           <LiveHlsTile
             src={nativeHlsUrl}
             muted={muted}
             objectFit="cover"
+            label={feed.id}
             onReady={() => {
               if (hlsPlaybackTimerRef.current) clearTimeout(hlsPlaybackTimerRef.current);
               liveLog('hls-playback-ready', feed.id);
               setLoading(false);
             }}
             onFatal={() => {
-              if (feed.youtube) {
-                liveLog('hls-playback-fatal-fallback-webview', feed.id);
+              if (!feed.hls) {
+                liveLog('hls-playback-fatal', feed.id);
                 setResolvedHlsUrl('');
                 setHlsFailed(true);
+                setLoading(false);
               }
             }}
           />
@@ -628,7 +761,7 @@ function LiveFeedTile({ feed, onOpenWebContent, showHeader = true }) {
           <div style={{ width: '100%', height: '100%', display: 'grid', placeItems: 'center', background: '#000', color: 'rgba(247,250,255,0.58)', fontSize: 10, fontFamily: 'DM Mono, monospace' }}>
             Resolving pure feed
           </div>
-        ) : (
+        ) : shouldUseWebview ? (
           <webview
             ref={webviewRef}
             src={feed.embedUrl}
@@ -642,6 +775,8 @@ function LiveFeedTile({ feed, onOpenWebContent, showHeader = true }) {
             onDomReady={() => setLoading(false)}
             style={{ width: '100%', height: '100%', display: 'block', background: '#000' }}
           />
+        ) : (
+          <LiveFeedOpenOnly feed={feed} onOpen={openZoomCard} />
         )}
         <button type="button" onClick={toggleMute} title={muted ? 'Enable sound' : 'Mute'} style={muteButtonStyle}>
           {muted ? <MutedIcon /> : <SoundIcon />}
@@ -668,6 +803,9 @@ export function LiveFeedWidget({ id, expanded = true, onOpenWebContent }) {
           referrer: feed.referrer,
           userAgent: LIVE_USER_AGENT,
           flavor: 'live',
+          hls: feed.hls,
+          youtube: feed.youtube,
+          liveFeed: feed,
         }, event);
       }}
       style={{
@@ -705,20 +843,6 @@ export function LiveFeedWidget({ id, expanded = true, onOpenWebContent }) {
 }
 
 export default function LiveFeedGrid({ onOpenWebContent }) {
-  const [activeCount, setActiveCount] = useState(Math.min(LIVE_GRID_INITIAL_ACTIVE, LIVE_FEEDS.length));
-
-  useEffect(() => {
-    setActiveCount(Math.min(LIVE_GRID_INITIAL_ACTIVE, LIVE_FEEDS.length));
-    if (LIVE_FEEDS.length <= LIVE_GRID_INITIAL_ACTIVE) return undefined;
-    let nextCount = LIVE_GRID_INITIAL_ACTIVE;
-    const timer = setInterval(() => {
-      nextCount += 1;
-      setActiveCount(Math.min(nextCount, LIVE_FEEDS.length));
-      if (nextCount >= LIVE_FEEDS.length) clearInterval(timer);
-    }, LIVE_GRID_ACTIVATION_DELAY_MS);
-    return () => clearInterval(timer);
-  }, []);
-
   return (
     <div style={{
       flex: 1,
@@ -732,58 +856,36 @@ export default function LiveFeedGrid({ onOpenWebContent }) {
       alignContent: 'start',
       overflow: 'auto',
     }}>
-      {LIVE_FEEDS.map((feed, index) => (
+      {LIVE_FEEDS.map(feed => (
         <div key={feed.id} style={{ width: '100%', aspectRatio: LIVE_ASPECT, minWidth: 0 }}>
-          {index < activeCount ? (
-            <LiveFeedTile feed={feed} onOpenWebContent={onOpenWebContent} />
-          ) : (
-            <LiveFeedPlaceholder feed={feed} />
-          )}
+          <LiveFeedTile feed={feed} onOpenWebContent={onOpenWebContent} allowWebviewFallback={false} />
         </div>
       ))}
     </div>
   );
 }
 
-function LiveFeedPlaceholder({ feed }) {
+function LiveFeedOpenOnly({ feed, onOpen }) {
   return (
     <div style={{
       width: '100%',
       height: '100%',
-      borderRadius: 8,
-      overflow: 'hidden',
-      border: '1px solid rgba(238,248,255,0.24)',
-      background: 'linear-gradient(145deg, rgba(8,14,28,0.40), rgba(3,7,16,0.34))',
       display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
       flexDirection: 'column',
-      boxShadow: '0 0 0 1px rgba(31,111,255,0.10), inset 0 1px 0 rgba(255,255,255,0.08)',
+      gap: 9,
+      background: '#000',
+      color: 'rgba(247,250,255,0.56)',
+      fontSize: 10,
+      fontFamily: 'DM Mono, monospace',
+      textAlign: 'center',
+      padding: 14,
     }}>
-      <div style={{
-        height: 34,
-        display: 'flex',
-        alignItems: 'center',
-        gap: 8,
-        padding: '0 8px',
-        borderBottom: '1px solid rgba(238,248,255,0.10)',
-        background: 'linear-gradient(180deg, rgba(31,111,255,0.10), rgba(2,7,16,0.06))',
-      }}>
-        <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'rgba(31,111,255,0.44)', boxShadow: '0 0 9px rgba(31,111,255,0.34)' }} />
-        <span style={{ flex: 1, minWidth: 0, color: 'rgba(247,250,255,0.74)', fontSize: 11, letterSpacing: 0.35, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {feed.title}
-        </span>
-        <span style={{ color: 'rgba(247,250,255,0.42)', fontSize: 9, fontFamily: 'DM Mono,monospace' }}>{feed.source}</span>
-      </div>
-      <div style={{
-        flex: 1,
-        display: 'grid',
-        placeItems: 'center',
-        color: 'rgba(247,250,255,0.46)',
-        fontSize: 10,
-        fontFamily: 'DM Mono, monospace',
-        background: '#000',
-      }}>
-        Queued
-      </div>
+      <button type="button" onClick={onOpen} style={startButtonStyle}>
+        Open feed
+      </button>
+      <span>{feed.source} pure feed unavailable</span>
     </div>
   );
 }
@@ -822,4 +924,33 @@ const muteButtonStyle = {
   backdropFilter: 'blur(4px)',
   boxShadow: '0 0 14px rgba(31,111,255,0.18)',
   zIndex: 2,
+};
+
+const tileIconButtonStyle = {
+  width: 22,
+  height: 22,
+  borderRadius: 5,
+  border: '1px solid rgba(238,248,255,0.34)',
+  background: 'rgba(31,111,255,0.14)',
+  color: '#fff',
+  cursor: 'pointer',
+  lineHeight: 1,
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  fontSize: 0,
+  boxShadow: '0 0 10px rgba(31,111,255,0.18)',
+  padding: 0,
+};
+
+const startButtonStyle = {
+  border: '1px solid rgba(238,248,255,0.30)',
+  background: 'rgba(31,111,255,0.18)',
+  color: '#fff',
+  cursor: 'pointer',
+  borderRadius: 6,
+  padding: '6px 11px',
+  fontSize: 10,
+  fontFamily: 'DM Mono, monospace',
+  boxShadow: '0 0 14px rgba(31,111,255,0.18)',
 };

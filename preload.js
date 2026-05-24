@@ -62,6 +62,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   live: {
+    hls: (feed) => ipcRenderer.invoke('live-hls', feed),
     youtubeHls: (url) => ipcRenderer.invoke('live-youtube-hls', url),
   },
 

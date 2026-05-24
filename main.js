@@ -1006,7 +1006,12 @@ function configureCameraSession() {
 // so keep these host-specific tweaks together instead of registering competing
 // listeners in each widget integration.
 function configureResponseHeaderOverrides() {
-  const filter = { urls: ['*://*.bloomberg.com/*', 'https://securitycenter.local:8082/*'] }
+  const filter = {
+    urls: [
+      '*://*.bloomberg.com/*',
+      'https://securitycenter.local:8082/*',
+    ],
+  }
   session.defaultSession.webRequest.onHeadersReceived(filter, (details, callback) => {
     const headers = {}
     for (const [key, value] of Object.entries(details.responseHeaders || {})) {
@@ -1053,6 +1058,7 @@ const LIVE_FEED_PARTITIONS = [
   'persist:live-lcn',
 ]
 const LIVE_FEED_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+const YOUTUBE_EMBEDDER_ORIGIN = 'https://widget-panel.local'
 
 function setRequestHeader(headers, name, value, overwrite = false) {
   const existing = Object.keys(headers).find(key => key.toLowerCase() === name.toLowerCase())
@@ -1061,6 +1067,29 @@ function setRequestHeader(headers, name, value, overwrite = false) {
     return
   }
   headers[name] = value
+}
+
+function configureDefaultYouTubeEmbedHeaders() {
+  const filter = {
+    urls: [
+      '*://*.youtube.com/*',
+      '*://youtube.com/*',
+      '*://*.youtube-nocookie.com/*',
+    ],
+  }
+  session.defaultSession.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
+    const headers = { ...(details.requestHeaders || {}) }
+    try {
+      const host = new URL(details.url).hostname.toLowerCase()
+      const isYouTube = host === 'youtube.com' || host.endsWith('.youtube.com') || host.endsWith('.youtube-nocookie.com')
+      if (isYouTube) {
+        setRequestHeader(headers, 'User-Agent', LIVE_FEED_USER_AGENT, true)
+        setRequestHeader(headers, 'Accept-Language', 'en-US,en;q=0.9,fr-CA;q=0.8,fr;q=0.7', false)
+        setRequestHeader(headers, 'Referer', `${YOUTUBE_EMBEDDER_ORIGIN}/`, false)
+      }
+    } catch {}
+    callback({ requestHeaders: headers })
+  })
 }
 
 function configureLiveFeedSessions() {
@@ -1110,6 +1139,7 @@ function configureLiveFeedSessions() {
 app.whenReady().then(() => {
   configureCameraSession()
   configureResponseHeaderOverrides()
+  configureDefaultYouTubeEmbedHeaders()
   configureLiveFeedSessions()
   disableNativeWidgets()
   writeLaunchPath()
@@ -1274,6 +1304,297 @@ function extractYouTubePlayerResponse(html = '') {
   }
 }
 
+const LIVE_FETCH_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+const CBC_GEM_CLIENT_KEY = 'Client-Key 773aea60-0e80-41bb-9c7f-e6d7c3ad17fb'
+const CBC_GEM_VALIDATION_URL = 'https://services.radio-canada.ca/media/validation/v2/'
+const TVA_PLUS_BRIGHTCOVE_ACCOUNT_ID = '5813221784001'
+const TVA_PLUS_BRIGHTCOVE_POLICY_KEY = 'BCpkADawqM2hsFvZUZm6C4LPMbysl5Q-rMeLlFTZPj5BBvQRNHYYYXYB9zGUnCYXUeLnFjFa9Z4uUpBoie-uaIsInp1oa88qYdIy3vmsrTxuANN2hqo4XsvX3YW1OfPocwoHZ6fZQ4m4ZttzlW_yhkrBbkXXlg3T4Sa2FA'
+
+function liveCookieHeader(cookieJar) {
+  if (!cookieJar) return ''
+  return Object.entries(cookieJar)
+    .filter(([, value]) => value)
+    .map(([key, value]) => `${key}=${value}`)
+    .join('; ')
+}
+
+function liveCaptureCookies(cookieJar, setCookieHeaders) {
+  if (!cookieJar || !setCookieHeaders) return
+  const headers = Array.isArray(setCookieHeaders) ? setCookieHeaders : [setCookieHeaders]
+  for (const header of headers) {
+    const pair = String(header || '').split(';')[0]
+    const index = pair.indexOf('=')
+    if (index <= 0) continue
+    cookieJar[pair.slice(0, index).trim()] = pair.slice(index + 1).trim()
+  }
+}
+
+function liveFetchText(url, options = {}, redirects = 0) {
+  return new Promise(resolve => {
+    const maxRedirects = Number.isFinite(options.maxRedirects) ? options.maxRedirects : 8
+    if (redirects > maxRedirects) {
+      resolve({ ok: false, status: 0, url, finalUrl: url, text: '', error: 'too many redirects' })
+      return
+    }
+    let u
+    try { u = new URL(url) } catch (e) {
+      resolve({ ok: false, status: 0, url, finalUrl: url, text: '', error: e.message || String(e) })
+      return
+    }
+    const mod = u.protocol === 'http:' ? require('http') : https
+    const cookieJar = options.cookieJar || null
+    const headers = {
+      'User-Agent': LIVE_FETCH_USER_AGENT,
+      Accept: options.accept || 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9,fr-CA;q=0.8,fr;q=0.7',
+      'Cache-Control': 'no-cache',
+      Pragma: 'no-cache',
+      ...(options.headers || {}),
+    }
+    const cookies = liveCookieHeader(cookieJar)
+    if (cookies && !headers.Cookie && !headers.cookie) headers.Cookie = cookies
+    const req = mod.request({
+      protocol: u.protocol,
+      hostname: u.hostname,
+      port: u.port || undefined,
+      path: u.pathname + u.search,
+      method: 'GET',
+      headers,
+    }, res => {
+      liveCaptureCookies(cookieJar, res.headers['set-cookie'])
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        const nextUrl = new URL(res.headers.location, url).href
+        res.resume()
+        resolve(liveFetchText(nextUrl, options, redirects + 1))
+        return
+      }
+      const chunks = []
+      res.on('data', chunk => chunks.push(chunk))
+      res.on('end', () => {
+        const text = Buffer.concat(chunks).toString('utf8')
+        resolve({
+          ok: res.statusCode >= 200 && res.statusCode < 300,
+          status: res.statusCode,
+          url,
+          finalUrl: url,
+          headers: res.headers,
+          text,
+          error: res.statusCode >= 200 && res.statusCode < 300 ? '' : `HTTP ${res.statusCode}`,
+        })
+      })
+    })
+    req.on('error', e => resolve({ ok: false, status: 0, url, finalUrl: url, text: '', error: e.message || String(e) }))
+    req.setTimeout(options.timeout || 12000, () => req.destroy(new Error('live fetch timeout')))
+    req.end()
+  })
+}
+
+async function liveFetchJson(url, options = {}) {
+  const res = await liveFetchText(url, {
+    ...options,
+    accept: 'application/json,text/plain,*/*',
+    headers: {
+      Accept: 'application/json,text/plain,*/*',
+      ...(options.headers || {}),
+    },
+  })
+  if (!res.ok || !res.text) return { ...res, data: null }
+  try {
+    return { ...res, data: JSON.parse(res.text.replace(/^\uFEFF/, '')) }
+  } catch (e) {
+    return { ...res, ok: false, data: null, error: e.message || String(e) }
+  }
+}
+
+function extractNextData(html = '') {
+  const match = String(html).match(/<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i)
+  if (!match) return null
+  const raw = match[1]
+  try { return JSON.parse(raw) } catch {}
+  try {
+    return JSON.parse(raw
+      .replace(/&quot;/gi, '"')
+      .replace(/&amp;/gi, '&')
+      .replace(/&#x27;|&#39;|&apos;/gi, "'")
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>'))
+  } catch {}
+  return null
+}
+
+function findFirstByKey(value, keyPattern) {
+  if (!value || typeof value !== 'object') return ''
+  const queue = [value]
+  while (queue.length) {
+    const item = queue.shift()
+    if (!item || typeof item !== 'object') continue
+    for (const [key, child] of Object.entries(item)) {
+      if (keyPattern.test(key) && (typeof child === 'string' || typeof child === 'number')) return String(child)
+      if (child && typeof child === 'object') queue.push(child)
+    }
+  }
+  return ''
+}
+
+function extractM3u8Urls(text = '', baseUrl = '') {
+  const normalized = decodeHtml(String(text || ''))
+    .replace(/\\u0026/gi, '&')
+    .replace(/\\x26/gi, '&')
+    .replace(/\\\//g, '/')
+    .replace(/\\u003d/gi, '=')
+    .replace(/\\x3d/gi, '=')
+  const found = []
+  const add = candidate => {
+    if (!candidate) return
+    let value = candidate.replace(/[),.;]+$/g, '')
+    try { value = new URL(value, baseUrl || undefined).href } catch {}
+    if (/\.m3u8(?:[?#].*)?$/i.test(value) || /\.m3u8[?#]/i.test(value)) found.push(value)
+  }
+  for (const match of normalized.matchAll(/https?:\/\/[^\s"'<>]+?\.m3u8(?:\?[^\s"'<>]*)?/gi)) add(match[0])
+  for (const match of normalized.matchAll(/(?:^|[\s"'(=])((?:\/|\.\.?\/)[^\s"'<>]+?\.m3u8(?:\?[^\s"'<>]*)?)/gi)) add(match[1])
+  return Array.from(new Set(found))
+}
+
+function findCbcGemMediaId(nextData, pageUrl = '') {
+  const data = nextData?.props?.pageProps?.data || nextData?.props?.pageProps || {}
+  const liveId = (() => {
+    try { return new URL(pageUrl).pathname.match(/\/live\/([^/?#]+)/i)?.[1] || '' } catch { return '' }
+  })()
+  const livePath = liveId ? `live/${liveId}` : ''
+  const items = []
+  const collect = value => {
+    if (!value || typeof value !== 'object') return
+    if ((value.formattedIdMedia || value.idMedia) && (value.url || value.key || value.streamTitle || value.title)) items.push(value)
+    for (const child of Object.values(value)) {
+      if (child && typeof child === 'object') collect(child)
+    }
+  }
+  collect(data.freeTv || data)
+  const selected = items.find(item => {
+    const url = String(item.url || '').replace(/^\/+/, '')
+    const key = String(item.key || '')
+    return livePath && (url === livePath || key.startsWith(`${liveId}-`))
+  }) || items[0]
+  return String(selected?.formattedIdMedia || selected?.idMedia || '')
+}
+
+async function resolveCbcGemHls(feed) {
+  const pageUrl = feed.url || feed.embedUrl
+  const page = await liveFetchText(pageUrl, {
+    headers: {
+      Referer: 'https://gem.cbc.ca/',
+    },
+  })
+  log('[live-hls] cbc-page', `status=${page.status || '--'}`, `ok=${!!page.ok}`, `bytes=${page.text?.length || 0}`)
+  if (!page.ok || !page.text) return { ok: false, provider: 'cbc', status: page.status, error: page.error || `HTTP ${page.status}` }
+  const nextData = extractNextData(page.text)
+  const idMedia = findCbcGemMediaId(nextData, page.finalUrl || pageUrl)
+  if (!idMedia) {
+    const fallback = extractM3u8Urls(page.text, page.finalUrl || pageUrl)[0]
+    if (fallback) return { ok: true, provider: 'cbc', hlsUrl: fallback }
+    return { ok: false, provider: 'cbc', error: 'CBC media id not found' }
+  }
+  const params = new URLSearchParams({
+    appCode: 'medianetlive',
+    connectionType: 'hd',
+    deviceType: 'ipad',
+    idMedia,
+    multibitrate: 'true',
+    output: 'json',
+    tech: 'hls',
+    manifestVersion: '2',
+    manifestType: 'desktop',
+  })
+  const validation = await liveFetchJson(`${CBC_GEM_VALIDATION_URL}?${params}`, {
+    headers: {
+      Authorization: CBC_GEM_CLIENT_KEY,
+      'X-Requested-With': 'HttpClient (Windows 10) Player Web',
+      Referer: 'https://gem.cbc.ca/',
+      Origin: 'https://gem.cbc.ca',
+    },
+  })
+  const data = validation.data || {}
+  const hlsUrl = data.url || ''
+  log('[live-hls] cbc-validation', `idMedia=${idMedia}`, `status=${validation.status || '--'}`, `ok=${!!validation.ok}`, `errorCode=${data.errorCode ?? '--'}`)
+  if (validation.ok && hlsUrl) return { ok: true, provider: 'cbc', idMedia, hlsUrl }
+  return {
+    ok: false,
+    provider: 'cbc',
+    idMedia,
+    status: validation.status,
+    error: data.message || data.errorMessage || validation.error || `CBC validation failed${data.errorCode != null ? ` (${data.errorCode})` : ''}`,
+  }
+}
+
+async function resolveTvaPlusHls(feed) {
+  const pageUrl = feed.url || feed.embedUrl
+  const cookieJar = {}
+  const page = await liveFetchText(pageUrl, {
+    cookieJar,
+    headers: {
+      Referer: 'https://www.tvaplus.ca/',
+    },
+  })
+  log('[live-hls] tvaplus-page', `status=${page.status || '--'}`, `ok=${!!page.ok}`, `bytes=${page.text?.length || 0}`)
+  if (!page.ok || !page.text) return { ok: false, provider: 'tvaplus', status: page.status, error: page.error || `HTTP ${page.status}` }
+  const nextData = extractNextData(page.text)
+  const config = nextData?.runtimeConfig?._qub_sdk?.qubConfig || {}
+  const brightcove = config.video?.brightcove || {}
+  const accountId = brightcove.accountId || TVA_PLUS_BRIGHTCOVE_ACCOUNT_ID
+  const policyKey = brightcove.policyKey || TVA_PLUS_BRIGHTCOVE_POLICY_KEY
+  const referenceId = nextData?.props?.pageProps?.staticEntity?.referenceId || findFirstByKey(nextData, /^referenceId$/i)
+  if (!referenceId) {
+    const fallback = extractM3u8Urls(page.text, page.finalUrl || pageUrl)[0]
+    if (fallback) return { ok: true, provider: 'tvaplus', hlsUrl: fallback }
+    return { ok: false, provider: 'tvaplus', error: 'TVA+ reference id not found' }
+  }
+  const playbackUrl = `https://edge.api.brightcove.com/playback/v1/accounts/${encodeURIComponent(accountId)}/videos/ref:${encodeURIComponent(referenceId)}`
+  const playback = await liveFetchJson(playbackUrl, {
+    headers: {
+      Accept: `application/json;pk=${policyKey}`,
+      'BCOV-Policy': policyKey,
+      Referer: pageUrl,
+      Origin: 'https://www.tvaplus.ca',
+    },
+  })
+  const sources = Array.isArray(playback.data?.sources) ? playback.data.sources : []
+  const source = sources.find(item => /mpegurl|m3u8/i.test(`${item?.type || ''} ${item?.src || ''}`))
+  log('[live-hls] tvaplus-playback', `referenceId=${referenceId}`, `status=${playback.status || '--'}`, `ok=${!!playback.ok}`, `sources=${sources.length}`)
+  if (playback.ok && source?.src) return { ok: true, provider: 'tvaplus', referenceId, hlsUrl: source.src }
+  return {
+    ok: false,
+    provider: 'tvaplus',
+    referenceId,
+    status: playback.status,
+    error: playback.data?.message || playback.error || 'TVA+ HLS source not found',
+  }
+}
+
+async function resolveGenericPageHls(feed) {
+  const pageUrl = feed.url || feed.embedUrl
+  const page = await liveFetchText(pageUrl, {
+    headers: feed.referrer ? { Referer: feed.referrer } : {},
+  })
+  if (!page.ok || !page.text) return { ok: false, status: page.status, error: page.error || `HTTP ${page.status}` }
+  const hlsUrl = extractM3u8Urls(page.text, page.finalUrl || pageUrl)[0]
+  if (hlsUrl) return { ok: true, provider: 'generic', hlsUrl }
+  return { ok: false, status: page.status, error: 'No HLS manifest found' }
+}
+
+async function resolveLiveHls(input) {
+  const feed = typeof input === 'string' ? { url: input, embedUrl: input } : (input || {})
+  const url = feed.url || feed.embedUrl || ''
+  if (!url) return { ok: false, error: 'Missing live feed URL' }
+  const directUrl = feed.hls ? (feed.embedUrl || url) : (/\.m3u8(?:[?#].*)?$/i.test(feed.embedUrl || '') ? feed.embedUrl : (/\.m3u8(?:[?#].*)?$/i.test(url) ? url : ''))
+  if (directUrl) return { ok: true, provider: 'direct', hlsUrl: directUrl }
+  let host = ''
+  try { host = new URL(url).hostname.replace(/^www\./i, '').toLowerCase() } catch {}
+  if (feed.youtube || host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com')) return resolveYouTubeHls(url)
+  if (host === 'gem.cbc.ca') return resolveCbcGemHls(feed)
+  if (host === 'tvaplus.ca' || host.endsWith('.tvaplus.ca')) return resolveTvaPlusHls(feed)
+  return resolveGenericPageHls(feed)
+}
+
 async function resolveYouTubeHls(url) {
   const videoId = extractYouTubeVideoId(url)
   const watchUrl = videoId
@@ -1314,6 +1635,19 @@ ipcMain.handle('live-youtube-hls', async (_e, url) => {
   try { return await resolveYouTubeHls(url) }
   catch (e) {
     log('[live-youtube-hls] exception', e.message || String(e))
+    return { ok: false, error: e.message || String(e) }
+  }
+})
+
+ipcMain.handle('live-hls', async (_e, feed) => {
+  const label = typeof feed === 'string' ? feed : (feed?.id || feed?.title || feed?.url || feed?.embedUrl || 'unknown')
+  try {
+    log('[live-hls] request', label)
+    const result = await resolveLiveHls(feed)
+    log('[live-hls] result', label, `ok=${!!result?.ok}`, result?.provider ? `provider=${result.provider}` : '', result?.error || '')
+    return result
+  } catch (e) {
+    log('[live-hls] exception', label, e.message || String(e))
     return { ok: false, error: e.message || String(e) }
   }
 })

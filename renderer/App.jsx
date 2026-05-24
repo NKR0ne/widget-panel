@@ -806,6 +806,8 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
   const isPressReader = reader.flavor === 'pressreader' || /pressreader\.com/i.test(reader.url || '');
   const isLive = reader.flavor === 'live';
   const isLiveYouTube = isLive && /(^|\.)youtube\.com\//i.test(reader.url || '');
+  const isLiveDirectHls = isLive && /\.m3u8(?:[?#].*)?$/i.test(reader.url || '');
+  const isLiveResolvable = isLive && !isLiveYouTube && !isLiveDirectHls;
   const [showWebSignIn, setShowWebSignIn] = useState(!!reader.authUrl && !isOutlook);
   const [liveMuted, setLiveMuted] = useState(true);
   const [liveHlsUrl, setLiveHlsUrl] = useState('');
@@ -849,44 +851,53 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
 
   useEffect(() => {
     let cancelled = false;
-    const direct = isLive && /\.m3u8(?:[?#].*)?$/i.test(reader.url || '') ? reader.url : '';
+    const direct = isLiveDirectHls ? reader.url : '';
     window.clearTimeout(liveResolveTimerRef.current);
     setLiveHlsFailed(false);
     setLiveHlsUrl(reader.hlsUrl || direct || '');
-    if (!isLiveYouTube) return () => { cancelled = true; };
+    if (!isLiveResolvable || reader.hlsUrl || direct) return () => { cancelled = true; };
 
     setLoading(true);
     setProgress(38);
     api.log?.('[live] zoom-hls-resolve-start', reader.title || reader.url, reader.url);
     liveResolveTimerRef.current = window.setTimeout(() => {
       if (cancelled) return;
-      api.log?.('[live] zoom-hls-resolve-timeout-fallback-webview', reader.title || reader.url);
+      api.log?.('[live] zoom-hls-resolve-timeout', reader.title || reader.url);
       setLiveHlsUrl('');
       setLiveHlsFailed(true);
-    }, 2600);
-    const resolveHls = api.live?.youtubeHls;
+    }, 9000);
+    const resolveHls = api.live?.hls || (isLiveYouTube ? api.live?.youtubeHls : null);
     if (!resolveHls) {
-      api.log?.('[live] zoom-hls-api-missing-fallback-webview', reader.title || reader.url);
+      api.log?.('[live] zoom-hls-api-missing', reader.title || reader.url);
       setLiveHlsFailed(true);
       return () => { cancelled = true; };
     }
-    resolveHls(reader.url).then(result => {
+    const payload = api.live?.hls ? (reader.liveFeed || {
+      url: reader.url,
+      embedUrl: reader.url,
+      title: reader.title,
+      source: reader.source,
+      referrer: reader.referrer,
+      hls: reader.hls,
+      youtube: reader.youtube,
+    }) : reader.url;
+    resolveHls(payload).then(result => {
       if (cancelled) return;
       window.clearTimeout(liveResolveTimerRef.current);
       if (result?.ok && result.hlsUrl) {
-        api.log?.('[live] zoom-hls-resolve-ok', reader.title || reader.url, `videoId=${result.videoId || '--'}`, `status=${result.playerStatus || '--'}`);
+        api.log?.('[live] zoom-hls-resolve-ok', reader.title || reader.url, `provider=${result.provider || '--'}`, `videoId=${result.videoId || '--'}`, `status=${result.playerStatus || '--'}`);
         setLiveHlsUrl(result.hlsUrl);
         setProgress(78);
       } else {
-        api.log?.('[live] zoom-hls-resolve-failed-fallback-webview', reader.title || reader.url, result?.error || result?.playerStatus || JSON.stringify(result || {}));
-        console.warn('[wp-live] zoom YouTube HLS unavailable', reader.title || reader.url, result?.error || result?.playerStatus || result);
+        api.log?.('[live] zoom-hls-resolve-failed', reader.title || reader.url, result?.error || result?.playerStatus || JSON.stringify(result || {}));
+        console.warn('[wp-live] zoom HLS unavailable', reader.title || reader.url, result?.error || result?.playerStatus || result);
         setLiveHlsFailed(true);
       }
     }).catch(error => {
       if (cancelled) return;
       window.clearTimeout(liveResolveTimerRef.current);
-      api.log?.('[live] zoom-hls-resolve-exception-fallback-webview', reader.title || reader.url, error?.message || String(error));
-      console.warn('[wp-live] zoom YouTube HLS resolve failed', reader.title || reader.url, error);
+      api.log?.('[live] zoom-hls-resolve-exception', reader.title || reader.url, error?.message || String(error));
+      console.warn('[wp-live] zoom HLS resolve failed', reader.title || reader.url, error);
       setLiveHlsFailed(true);
     });
 
@@ -894,23 +905,23 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
       cancelled = true;
       window.clearTimeout(liveResolveTimerRef.current);
     };
-  }, [isLive, isLiveYouTube, reader.hlsUrl, reader.url, reader.title]);
+  }, [isLiveDirectHls, isLiveResolvable, isLiveYouTube, reader.hlsUrl, reader.url, reader.title, reader.source, reader.referrer, reader.hls, reader.youtube, reader.liveFeed]);
 
   const liveNativeHlsUrl = isLive ? (reader.hlsUrl || liveHlsUrl || (/\.m3u8(?:[?#].*)?$/i.test(reader.url || '') ? reader.url : '')) : '';
-  const liveNativePending = isLiveYouTube && !liveNativeHlsUrl && !liveHlsFailed;
+  const liveNativePending = isLiveResolvable && !liveNativeHlsUrl && !liveHlsFailed;
   const liveUsesNativeVideo = isLive && !!liveNativeHlsUrl;
 
   useEffect(() => {
     window.clearTimeout(livePlaybackTimerRef.current);
-    if (!isLiveYouTube || !liveNativeHlsUrl) return undefined;
+    if (!isLiveResolvable || !liveNativeHlsUrl) return undefined;
     api.log?.('[live] zoom-hls-playback-start', reader.title || reader.url);
     livePlaybackTimerRef.current = window.setTimeout(() => {
-      api.log?.('[live] zoom-hls-playback-timeout-fallback-webview', reader.title || reader.url);
+      api.log?.('[live] zoom-hls-playback-timeout', reader.title || reader.url);
       setLiveHlsUrl('');
       setLiveHlsFailed(true);
-    }, 6500);
+    }, 16000);
     return () => window.clearTimeout(livePlaybackTimerRef.current);
-  }, [isLiveYouTube, liveNativeHlsUrl, reader.title, reader.url]);
+  }, [isLiveResolvable, liveNativeHlsUrl, reader.title, reader.url]);
 
   useEffect(() => {
     if (!isLive) return;
@@ -1531,6 +1542,7 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
                 src={liveNativeHlsUrl}
                 muted={liveMuted}
                 objectFit="cover"
+                label={`zoom:${reader.title || reader.url}`}
                 onReady={() => {
                   window.clearTimeout(livePlaybackTimerRef.current);
                   api.log?.('[live] zoom-hls-playback-ready', reader.title || reader.url);
@@ -1538,8 +1550,8 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
                   setProgress(100);
                 }}
                 onFatal={() => {
-                  if (isLiveYouTube) {
-                    api.log?.('[live] zoom-hls-playback-fatal-fallback-webview', reader.title || reader.url);
+                  if (isLiveResolvable) {
+                    api.log?.('[live] zoom-hls-playback-fatal', reader.title || reader.url);
                     setLiveHlsUrl('');
                     setLiveHlsFailed(true);
                   }
