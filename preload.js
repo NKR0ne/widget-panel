@@ -56,7 +56,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   reader: {
     fetch:        (url) => ipcRenderer.invoke('reader-fetch', url),
+    fetchArchive: (url) => ipcRenderer.invoke('reader-fetch-archive', url),
     openExternal: (url) => ipcRenderer.invoke('reader-open-external', url),
+    setZoomActive: (active) => ipcRenderer.send('reader-zoom-active', active),
+  },
+
+  live: {
+    youtubeHls: (url) => ipcRenderer.invoke('live-youtube-hls', url),
   },
 
   auth: {
@@ -65,9 +71,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   tv: {
     browserLogin: ()      => ipcRenderer.invoke('tv-browser-login'),
-    watchlists:   ()      => ipcRenderer.invoke('tv-watchlists'),
+    watchlists:   (options) => ipcRenderer.invoke('tv-watchlists', options),
     logout:       ()      => ipcRenderer.invoke('tv-logout'),
     chart:        (ticker)     => ipcRenderer.invoke('yahoo-chart', ticker),
+    events:       (tickers)    => ipcRenderer.invoke('market-events', tickers),
   },
 
   workstation: {
@@ -92,5 +99,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     resizeStart: (startX, startW) => ipcRenderer.send('panel-resize-start', startX, startW),
     resizeEnd:   ()               => ipcRenderer.send('panel-resize-end'),
     setOpacity:  (v)              => ipcRenderer.invoke('set-window-opacity', v),
+    fitMode:     (options)        => ipcRenderer.invoke('panel-fit-mode', options),
   },
 })

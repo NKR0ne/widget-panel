@@ -1,11 +1,34 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_LOC } from '../weather/weather.constants.js';
-import { DEFAULT_TRAFFIC_THEME, DEFAULT_TRAFFIC_ZOOM, TRAFFIC_THEMES } from './traffic.constants.js';
+import {
+  AUTO_DAY_TRAFFIC_THEME,
+  AUTO_NIGHT_TRAFFIC_THEME,
+  DEFAULT_TRAFFIC_THEME,
+  DEFAULT_TRAFFIC_ZOOM,
+  TRAFFIC_NIGHT_END_HOUR,
+  TRAFFIC_NIGHT_START_HOUR,
+  TRAFFIC_THEMES,
+} from './traffic.constants.js';
 import { buildTrafficMapSrc, loadTrafficTheme, loadTrafficZoom, saveTrafficTheme, saveTrafficZoom } from './traffic.service.js';
+
+function resolveAutoTrafficTheme() {
+  const hour = new Date().getHours();
+  return hour >= TRAFFIC_NIGHT_START_HOUR || hour < TRAFFIC_NIGHT_END_HOUR
+    ? AUTO_NIGHT_TRAFFIC_THEME
+    : AUTO_DAY_TRAFFIC_THEME;
+}
+
+function trafficCityName(location) {
+  return String(location?.name || DEFAULT_LOC.name || '')
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean)[0] || 'Quebec';
+}
 
 export default function TrafficWidget({ location = DEFAULT_LOC, apiKey = '' }) {
   const [initialZoom, setInitialZoom] = useState(DEFAULT_TRAFFIC_ZOOM);
   const [theme, setTheme] = useState(DEFAULT_TRAFFIC_THEME);
+  const [autoTheme, setAutoTheme] = useState(resolveAutoTrafficTheme);
   const zoomRef = useRef(initialZoom);
 
   useEffect(() => {
@@ -20,6 +43,13 @@ export default function TrafficWidget({ location = DEFAULT_LOC, apiKey = '' }) {
   }, []);
 
   useEffect(() => {
+    const updateAutoTheme = () => setAutoTheme(resolveAutoTrafficTheme());
+    updateAutoTheme();
+    const timer = setInterval(updateAutoTheme, 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
     const handler = (event) => {
       if (event.data?.type !== 'trafficZoom') return;
       const nextZoom = event.data.zoom;
@@ -31,12 +61,12 @@ export default function TrafficWidget({ location = DEFAULT_LOC, apiKey = '' }) {
     return () => window.removeEventListener('message', handler);
   }, []);
 
+  const effectiveTheme = theme === 'auto' ? autoTheme : theme;
   const src = useMemo(
-    () => buildTrafficMapSrc({ location, apiKey, zoom: initialZoom, theme }),
-    [location.lat, location.lon, apiKey, initialZoom, theme]
+    () => buildTrafficMapSrc({ location, apiKey, zoom: initialZoom, theme: effectiveTheme }),
+    [location.lat, location.lon, apiKey, initialZoom, effectiveTheme]
   );
 
-  const currentTheme = TRAFFIC_THEMES.find(option => option.id === theme) || TRAFFIC_THEMES[0];
   const selectTheme = (nextTheme) => {
     setTheme(nextTheme);
     saveTrafficTheme(nextTheme);
@@ -45,7 +75,7 @@ export default function TrafficWidget({ location = DEFAULT_LOC, apiKey = '' }) {
   return {
     color: '#f77f4f',
     title: 'Circulation',
-    sub: `${currentTheme.label} - ${location.name}`,
+    sub: trafficCityName(location),
     badge: (
       <select
         value={theme}
@@ -77,7 +107,8 @@ export default function TrafficWidget({ location = DEFAULT_LOC, apiKey = '' }) {
 }
 
 const themeSelectStyle = {
-  maxWidth: 78,
+  width: 104,
+  maxWidth: 104,
   height: 19,
   borderRadius: 5,
   border: '1px solid rgba(122,178,255,0.28)',
@@ -88,4 +119,6 @@ const themeSelectStyle = {
   outline: 'none',
   cursor: 'pointer',
   padding: '0 4px',
+  marginRight: 14,
+  flexShrink: 0,
 };

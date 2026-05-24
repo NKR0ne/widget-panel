@@ -8,6 +8,21 @@ const MAX_ITEMS = 7;
 const MAX_AGE_MS = 30 * 86400000;
 const REFRESH_BUCKET_MS = 5 * 60 * 1000;
 
+function normalizeFeedUrl(url) {
+  const raw = (url || '').trim();
+  if (!raw) return '';
+  try {
+    const parsed = new URL(raw);
+    if (/\.?lapresse\.ca$/i.test(parsed.hostname) && parsed.pathname === '/actualites/societe/rss') {
+      parsed.pathname = '/societe/rss';
+      return parsed.href;
+    }
+    return parsed.href;
+  } catch {
+    return raw;
+  }
+}
+
 function relTime(value) {
   if (!value) return '';
   const seconds = (Date.now() - new Date(value)) / 1000;
@@ -24,7 +39,7 @@ export function parseOPML(xml) {
   Array.from(doc.querySelectorAll('body > outline')).forEach((top) => {
     const children = Array.from(top.querySelectorAll('outline[xmlUrl]'));
     if (!children.length) {
-      const url = top.getAttribute('xmlUrl');
+      const url = normalizeFeedUrl(top.getAttribute('xmlUrl'));
       if (url) {
         if (!categories.Uncategorized) categories.Uncategorized = { label: 'Uncategorized', feeds: [] };
         categories.Uncategorized.feeds.push({ url, title: top.getAttribute('title') || url });
@@ -35,7 +50,7 @@ export function parseOPML(xml) {
     const label = top.getAttribute('title') || top.getAttribute('text') || 'Category';
     if (!categories[label]) categories[label] = { label, feeds: [] };
     children.forEach((feed) => {
-      const url = feed.getAttribute('xmlUrl');
+      const url = normalizeFeedUrl(feed.getAttribute('xmlUrl'));
       if (url) categories[label].feeds.push({ url, title: feed.getAttribute('title') || url });
     });
   });
@@ -64,19 +79,68 @@ function extractImage(item) {
   return imageUrl || null;
 }
 
-export function parseRSSXml(xml) {
+function normalizeItemUrl(value, baseUrl = '') {
+  const raw = (value || '').trim();
+  if (!raw || raw === '#') return '';
+  try {
+    const url = baseUrl ? new URL(raw, baseUrl) : new URL(raw);
+    return /^https?:$/i.test(url.protocol) ? url.href : '';
+  } catch {
+    return '';
+  }
+}
+
+function cleanItemText(value = '') {
+  return value
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function getItemText(item, tag) {
+  try {
+    const direct = item.querySelector(tag)?.textContent?.trim();
+    if (direct) return direct;
+  } catch {}
+  return item.getElementsByTagName(tag)?.[0]?.textContent?.trim() || '';
+}
+
+function extractLink(item, baseUrl = '') {
+  const atomLinks = Array.from(item.querySelectorAll('link[href]'));
+  const preferredAtom = atomLinks.find(link => {
+    const rel = (link.getAttribute('rel') || 'alternate').toLowerCase();
+    return rel === 'alternate' || rel === '';
+  }) || atomLinks[0];
+
+  const guid = item.querySelector('guid');
+  const guidValue = guid?.getAttribute('isPermaLink') !== 'false' ? guid?.textContent?.trim() : '';
+  const candidates = [
+    preferredAtom?.getAttribute('href'),
+    item.querySelector('link')?.textContent?.trim(),
+    guidValue,
+    item.querySelector('id')?.textContent?.trim(),
+  ];
+
+  for (const candidate of candidates) {
+    const url = normalizeItemUrl(candidate, baseUrl);
+    if (url) return url;
+  }
+  return '';
+}
+
+export function parseRSSXml(xml, baseUrl = '') {
   const doc = new DOMParser().parseFromString(xml, 'text/xml');
   return Array.from(doc.querySelectorAll('item, entry')).map((item) => {
-    const get = (tag) => item.querySelector(tag)?.textContent?.trim() || '';
-    const link = item.querySelector('link[href]')?.getAttribute('href')
-      || item.querySelector('link')?.textContent?.trim()
-      || get('guid');
+    const get = (tag) => getItemText(item, tag);
+    const link = extractLink(item, baseUrl);
     const pubDate = get('pubDate') || get('published') || get('updated');
     return {
       id: get('guid') || link,
       title: get('title'),
       link,
       image: extractImage(item),
+      description: cleanItemText(get('description') || get('summary') || get('content:encoded')),
+      author: get('dc:creator') || get('author'),
       source: getHostname(link),
       time: relTime(pubDate),
       _pubDate: pubDate,
@@ -85,13 +149,15 @@ export function parseRSSXml(xml) {
 }
 
 async function fetchRSS(url) {
+  url = normalizeFeedUrl(url);
+  if (!url) return null;
   const bucket = Math.floor(Date.now() / REFRESH_BUCKET_MS);
   const cacheBustedUrl = url + (url.includes('?') ? '&' : '?') + `_cb=${bucket}`;
 
   try {
     const response = await api.rss.fetch(url);
     if (response?.ok) {
-      const items = parseRSSXml(response.text).slice(0, MAX_ITEMS);
+      const items = parseRSSXml(response.text, url).slice(0, MAX_ITEMS);
       if (items.length) return items;
     }
   } catch {}
@@ -99,7 +165,7 @@ async function fetchRSS(url) {
   try {
     const response = await fetch(RSS_PROXY_RAW + encodeURIComponent(cacheBustedUrl));
     if (response.ok) {
-      const items = parseRSSXml(await response.text()).slice(0, MAX_ITEMS);
+      const items = parseRSSXml(await response.text(), url).slice(0, MAX_ITEMS);
       if (items.length) return items;
     }
   } catch {}
@@ -113,6 +179,8 @@ async function fetchRSS(url) {
         title: item.title,
         link: item.link,
         image: item.thumbnail || item.enclosure?.link || null,
+        description: cleanItemText(item.description || item.content || ''),
+        author: item.author || '',
         source: getHostname(item.link),
         time: relTime(item.pubDate),
       }));
@@ -122,7 +190,7 @@ async function fetchRSS(url) {
   try {
     const response = await fetch(CORS_PROXY + encodeURIComponent(cacheBustedUrl));
     if (response.ok) {
-      const items = parseRSSXml(await response.text()).slice(0, MAX_ITEMS);
+      const items = parseRSSXml(await response.text(), url).slice(0, MAX_ITEMS);
       if (items.length) return items;
     }
   } catch {}

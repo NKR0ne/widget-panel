@@ -8,6 +8,7 @@ export const SK_PINNED_OPACITY = 'wp-pinned-opacity';
 export const SK_LOCATION = 'wp-location';
 export const SK_PINNED = 'wp-pinned';
 export const SK_TV_SYMBOLS = 'wp-tv-symbols';
+export const SK_BASE_COLUMNS = 'wp-base-columns';
 export const SK_MS_CLIENT = 'wp-ms-client';
 export const SK_MS_TOKENS = 'wp-ms-tokens';
 export const SK_AGENDA_CAL_IDS = 'wp-agenda-cal-ids';

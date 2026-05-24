@@ -31,8 +31,8 @@ export function saveCardHeight(height) {
   return api.store.set(STORAGE.cardHeight, String(height));
 }
 
-export function fetchTradingViewWatchlists() {
-  return api.tv.watchlists();
+export function fetchTradingViewWatchlists(options = {}) {
+  return api.tv.watchlists(options);
 }
 
 export function loginTradingView() {
@@ -45,6 +45,10 @@ export function logoutTradingView() {
 
 export function fetchChart(ticker) {
   return api.tv.chart(ticker);
+}
+
+export function fetchMarketEvents(tickers) {
+  return api.tv.events(tickers);
 }
 
 export function openTradingViewChart(symbol) {

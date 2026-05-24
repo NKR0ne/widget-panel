@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "concurrently \"vite --config vite.config.js\" \"wait-on http://localhost:5173 && cross-env VITE_DEV=1 electron .\"",
     "build": "vite build && electron-builder",
+    "test:reader": "node scripts/test-reader-cleanup.cjs",
+    "debug:reader": "node scripts/debug-reader-url.cjs",
     "preview": "electron .",
     "prototype:dev": "vite --config prototype-panel/vite.config.js",
     "prototype:build": "vite build --config prototype-panel/vite.config.js",

@@ -132,6 +132,48 @@ function MsSetupPane({ step, cidDraft, setCidDraft, startAuth }) {
   return null;
 }
 
+function HeaderKeyButton({ onClick, title = 'Se d\u00e9connecter' }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick?.();
+      }}
+      style={{
+        width: 19,
+        height: 19,
+        borderRadius: 5,
+        border: '1px solid rgba(238,248,255,0.32)',
+        background: 'rgba(31,111,255,0.12)',
+        color: 'rgba(255,255,255,0.88)',
+        cursor: 'pointer',
+        padding: 0,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        boxShadow: '0 0 10px rgba(31,111,255,0.18), inset 0 0 0 1px rgba(255,255,255,0.05)',
+      }}
+    >
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="7.5" cy="15.5" r="4.2" />
+        <path d="M10.6 12.4 21 2" />
+        <path d="m15.5 7.5 2.1 2.1" />
+        <path d="m18.2 4.8 2.1 2.1" />
+      </svg>
+    </button>
+  );
+}
+
+function HeaderBadgeGroup({ children }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, flexShrink: 0 }}>
+      {children}
+    </span>
+  );
+}
+
 // ── Outlook Agenda widget ─────────────────────────────────────────────────────
 function AgendaWidget() {
   const auth = useMsAuth();
@@ -258,10 +300,14 @@ function AgendaWidget() {
 
   const settingsBtn = auth.step === 'ok' && calendars.length > 0
     ? <button onClick={e=>{e.stopPropagation();setShowSettings(p=>!p);}}
-        style={{background:"none",border:"none",color:showSettings?"#0078d4":"#333",fontSize:12,cursor:"pointer",padding:"0 2px",lineHeight:1}}>⚙</button>
+        title="Calendriers"
+        style={{width:19,height:19,borderRadius:5,border:'1px solid rgba(238,248,255,0.32)',background:showSettings?'rgba(31,111,255,0.22)':'rgba(31,111,255,0.10)',color:'#fff',fontSize:11,cursor:"pointer",padding:0,lineHeight:1,display:'inline-flex',alignItems:'center',justifyContent:'center',boxShadow:'0 0 10px rgba(31,111,255,0.16), inset 0 0 0 1px rgba(255,255,255,0.05)'}}>⚙</button>
     : null;
+  const agendaBadge = auth.step === 'ok'
+    ? <HeaderBadgeGroup>{settingsBtn}<HeaderKeyButton onClick={auth.signOut} /></HeaderBadgeGroup>
+    : settingsBtn;
 
-  return { color:"#0078d4", title:"Outlook Agenda", lastUpdated, badge: settingsBtn,
+  return { color:"#0078d4", title:"Outlook Agenda", lastUpdated, badge: agendaBadge,
     content:(
       <div>
         {showAuth && <MsSetupPane {...auth}/>}
@@ -336,7 +382,6 @@ function AgendaWidget() {
                     display:'flex',alignItems:'center',justifyContent:'center',userSelect:'none'}}>
                   <div style={{width:28,height:2,borderRadius:1,background:'rgba(255,255,255,0.1)'}}/>
                 </div>
-                <button onClick={auth.signOut} style={{marginTop:14,background:"none",border:"none",fontSize:9,color:"#222228",cursor:"pointer",padding:0}}>Déconnecter</button>
               </div>
             )}
           </div>
@@ -347,7 +392,7 @@ function AgendaWidget() {
 }
 
 // ── Outlook Mail widget ──────────────────────────────────────────────────────
-function MailWidget() {
+function MailWidget({ onOpenWebContent } = {}) {
   const auth = useMsAuth();
   const [messages,    setMessages]    = useState([]);
   const [demo,        setDemo]        = useState(false);
@@ -422,10 +467,21 @@ function MailWidget() {
     }
   }
 
-  function openInOutlook(msg) {
+  function openInOutlook(msg, event) {
     console.log('[mail] openInOutlook', { id: msg.id, hasWebLink: !!msg.webLink, webLink: msg.webLink });
     if (msg.webLink) {
-      api.browser.open(msg.webLink);
+      if (onOpenWebContent) {
+        onOpenWebContent({
+          url: msg.webLink,
+          title: msg.subject || 'Outlook message',
+          source: 'Outlook Mail',
+          partition: null,
+          authUrl: 'https://outlook.office.com/mail/',
+          flavor: 'outlook',
+        }, event);
+      } else {
+        api.browser.open(msg.webLink);
+      }
       // Opening in Outlook implies the user has read the email — flip the
       // unread state locally and on the server. Graph won't auto-flip when
       // OWA is opened externally.
@@ -469,9 +525,15 @@ function MailWidget() {
 
   const showAuth = ['loading','setup','authenticating','error'].includes(auth.step);
   const unreadCount = messages.filter(m => !m.isRead).length;
+  const mailUnreadBadge = unreadCount > 0
+    ? <span style={{ ...C.badge, background:"#0078d4", color:"#fff" }}>{unreadCount}</span>
+    : null;
+  const mailBadge = auth.step === 'ok'
+    ? <HeaderBadgeGroup>{mailUnreadBadge}<HeaderKeyButton onClick={auth.signOut} /></HeaderBadgeGroup>
+    : mailUnreadBadge;
 
   return { color:"#0078d4", title:"Outlook Mail", lastUpdated,
-    badge: unreadCount > 0 ? <span style={{ ...C.badge, background:"#0078d4", color:"#fff" }}>{unreadCount}</span> : null,
+    badge: mailBadge,
     content:(
       <div>
         {showAuth && <MsSetupPane {...auth}/>}
@@ -487,7 +549,7 @@ function MailWidget() {
                 <div style={{height:cardHeight,overflowY:"auto",paddingRight:2}}>
                   {messages.map((msg, i) => (
                     <div key={msg.id}
-                      onClick={()=>openInOutlook(msg)}
+                      onClick={(event)=>openInOutlook(msg, event)}
                       title="Ouvrir dans Outlook"
                       style={{display:"flex",alignItems:"flex-start",gap:8,padding:"7px 0",
                       borderTop:i>0?"1px solid rgba(255,255,255,0.04)":"none",
@@ -548,7 +610,6 @@ function MailWidget() {
                     display:'flex',alignItems:'center',justifyContent:'center',userSelect:'none'}}>
                   <div style={{width:28,height:2,borderRadius:1,background:'rgba(255,255,255,0.1)'}}/>
                 </div>
-                <button onClick={auth.signOut} style={{marginTop:14,background:"none",border:"none",fontSize:9,color:"#222228",cursor:"pointer",padding:0}}>Déconnecter</button>
               </div>
             )}
           </div>
@@ -649,8 +710,9 @@ function TodoWidget() {
   const importanceColor = i => i === 'high' ? '#f74f7e' : i === 'normal' ? '#555' : '#333';
   const showAuth = ['loading','setup','authenticating','error'].includes(auth.step);
   const activeList = lists.find(l => l.id === activeListId);
+  const todoBadge = auth.step === 'ok' ? <HeaderKeyButton onClick={auth.signOut} /> : null;
 
-  return { color:"#2564cf", title:"Microsoft To-Do", lastUpdated,
+  return { color:"#2564cf", title:"Microsoft To-Do", lastUpdated, badge: todoBadge,
     content:(
       <div>
         {showAuth && <MsSetupPane {...auth}/>}
@@ -695,7 +757,6 @@ function TodoWidget() {
                     style={{...C.inp,flex:1,fontSize:11,padding:"5px 8px"}}/>
                   {newTitle.trim() && <button type="submit" style={{...C.btn,padding:"5px 10px",fontSize:13,lineHeight:1}}>+</button>}
                 </form>
-                <button onClick={auth.signOut} style={{marginTop:8,background:"none",border:"none",fontSize:9,color:"#222228",cursor:"pointer",padding:0,display:"block"}}>Déconnecter</button>
               </div>
             )}
           </div>

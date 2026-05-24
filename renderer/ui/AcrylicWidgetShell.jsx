@@ -8,6 +8,7 @@ export default function AcrylicWidgetShell({
   title,
   sub,
   badge,
+  rightBadge,
   expanded,
   onToggle,
   isDragging,
@@ -15,6 +16,8 @@ export default function AcrylicWidgetShell({
   onDragEnd,
   lastUpdated,
   softText = false,
+  stableBackground = false,
+  disableBackdrop = true,
   children,
 }) {
   const [now, setNow] = useState(Date.now());
@@ -64,10 +67,20 @@ export default function AcrylicWidgetShell({
       onKeyDown={handleKeyDown}
       style={{
         position: 'relative',
+        isolation: 'isolate',
+        contain: 'paint',
         overflow: 'hidden',
         borderRadius: 8,
         border: hoverFocused ? '1px solid rgba(244,250,255,0.72)' : '1px solid rgba(244,250,255,0.54)',
-        background: 'linear-gradient(145deg, var(--acrylic-card-top, rgba(10,18,34,0.46)), var(--acrylic-card-bottom, rgba(8,10,18,0.34)))',
+        background: [
+          'linear-gradient(145deg, var(--acrylic-card-top, rgba(10,18,34,0.22)), var(--acrylic-card-bottom, rgba(8,10,18,0.14)))',
+          stableBackground
+            ? 'var(--acrylic-card-fill, rgba(8,14,28,0.14))'
+            : 'var(--acrylic-card-fill-soft, rgba(8,14,28,0.08))',
+        ].join(','),
+        backgroundColor: stableBackground
+          ? 'var(--acrylic-card-fill, rgba(8,14,28,0.14))'
+          : 'var(--acrylic-card-fill-soft, rgba(8,14,28,0.08))',
         boxShadow: (hoverFocused ? [
           '0 0 0 1px rgba(255,255,255,0.14)',
           '0 0 20px rgba(31,111,255,0.32)',
@@ -80,8 +93,8 @@ export default function AcrylicWidgetShell({
           'inset 0 0 0 1px rgba(255,255,255,0.10)',
           'inset 0 16px 36px rgba(255,255,255,0.028)',
         ]).join(','),
-        backdropFilter: 'blur(18px) saturate(150%)',
-        WebkitBackdropFilter: 'blur(18px) saturate(150%)',
+        backdropFilter: disableBackdrop ? 'none' : 'blur(18px) saturate(150%)',
+        WebkitBackdropFilter: disableBackdrop ? 'none' : 'blur(18px) saturate(150%)',
         opacity: isDragging ? 0.35 : 1,
         outline: 'none',
         transition: 'opacity 0.1s, border-color 0.18s, box-shadow 0.18s, transform 0.18s',
@@ -103,13 +116,17 @@ export default function AcrylicWidgetShell({
       <div
         style={{
           position: 'absolute',
-          inset: 0,
+          top: 0,
+          left: 0,
+          right: 0,
+          height: 58,
           pointerEvents: 'none',
           background: [
             'linear-gradient(90deg, rgba(255,255,255,0.14), transparent 24%, transparent 78%, rgba(255,255,255,0.08))',
             'linear-gradient(180deg, rgba(31,111,255,0.12), transparent 24%)',
           ].join(','),
           opacity: 0.48,
+          borderRadius: '8px 8px 0 0',
         }}
       />
       <div
@@ -133,7 +150,7 @@ export default function AcrylicWidgetShell({
         }}
         onClick={onToggle}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: '1 1 auto' }}>
           <span
             draggable
             onDragStart={e => { e.stopPropagation(); onDragStart?.(); }}
@@ -179,7 +196,8 @@ export default function AcrylicWidgetShell({
           )}
           {badge}
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 5 }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+          {rightBadge}
           {ageLabel && <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.7)', fontFamily: 'DM Mono,monospace' }}>{ageLabel}</span>}
           <span
             style={{
@@ -194,7 +212,7 @@ export default function AcrylicWidgetShell({
           </span>
         </div>
       </div>
-      <AnimatedWidgetBody expanded={expanded} className="wp-acrylic-body" style={{ position: 'relative' }}>
+      <AnimatedWidgetBody expanded={expanded} className="wp-acrylic-body" fade={false} style={{ position: 'relative' }}>
         <div style={{ padding: '0 14px 12px' }}>
           {children}
         </div>

@@ -11,21 +11,21 @@ body{overflow:hidden}
 #map::before{background:radial-gradient(circle at 78% 18%,rgba(31,111,255,.16),transparent 33%),linear-gradient(135deg,rgba(255,255,255,.04),transparent 36%,rgba(31,111,255,.045));mix-blend-mode:screen}
 #map::after{box-shadow:inset 0 0 0 1px rgba(240,248,255,.22),inset 0 0 34px rgba(31,111,255,.16)}
 body.theme-blueprint #map::before{background-image:linear-gradient(rgba(31,111,255,.065) 1px,transparent 1px),linear-gradient(90deg,rgba(31,111,255,.055) 1px,transparent 1px),radial-gradient(circle at 72% 18%,rgba(31,111,255,.20),transparent 30%);background-size:42px 42px,42px 42px,auto;mix-blend-mode:screen}
-body.theme-glass #map::before{background:radial-gradient(circle at 80% 20%,rgba(31,111,255,.11),transparent 32%),linear-gradient(135deg,rgba(255,255,255,.055),transparent 42%)}
-body.theme-satellite-dim #map::before{background:rgba(2,8,18,.30)}
+body.theme-day-plan #map,body.theme-day-satellite #map{background:#eef3fb}
+body.theme-day-plan #map::before{background:radial-gradient(circle at 72% 16%,rgba(31,111,255,.10),transparent 32%),linear-gradient(135deg,rgba(255,255,255,.18),transparent 42%,rgba(31,111,255,.055));mix-blend-mode:multiply}
+body.theme-day-satellite #map::before{background:linear-gradient(135deg,rgba(255,255,255,.10),transparent 38%,rgba(31,111,255,.06));mix-blend-mode:screen}
 .leaflet-container{font-family:"DM Sans",system-ui,sans-serif;background:#050914}
 .leaflet-control-zoom{display:none}
 .leaflet-control-attribution{font-size:8px!important;background:rgba(3,8,18,.58)!important;color:rgba(220,235,255,.66)!important;border-radius:5px 0 0 0!important;backdrop-filter:blur(8px)}
 .leaflet-control-attribution a{color:rgba(135,182,255,.74)!important}
-.midnight-base{filter:saturate(.78) brightness(.72) contrast(1.04)}
-.midnight-labels{filter:brightness(1.18) saturate(.88);opacity:.74}
 .blueprint-base{filter:sepia(1) hue-rotate(166deg) saturate(2.4) brightness(.62) contrast(1.1);opacity:.86}
 .blueprint-labels{filter:hue-rotate(176deg) saturate(1.8) brightness(1.28);opacity:.58}
-.glass-base{filter:saturate(.42) brightness(.48) contrast(1.02);opacity:.72}
-.glass-labels{filter:brightness(1.05) saturate(.6);opacity:.44}
-.satellite-base{filter:grayscale(.72) sepia(.38) hue-rotate(174deg) saturate(1.45) brightness(.38) contrast(1.08)}
-.satellite-reference{filter:hue-rotate(172deg) saturate(1.35) brightness(.9);opacity:.55}
+.day-plan-base{filter:saturate(.88) brightness(.98) contrast(1.02);opacity:.96}
+.day-plan-labels{filter:saturate(.92) brightness(.86) contrast(1.08);opacity:.74}
+.day-satellite-base{filter:saturate(.92) brightness(.9) contrast(1.02)}
+.day-satellite-reference{filter:saturate(.84) brightness(.82) contrast(1.05);opacity:.64}
 .traffic-flow{filter:saturate(1.12) brightness(.94) contrast(1.05);mix-blend-mode:screen}
+body.theme-day-plan .traffic-flow,body.theme-day-satellite .traffic-flow{filter:saturate(1.05) brightness(.98) contrast(1.04);mix-blend-mode:multiply}
 </style>
 </head>
 <body>
@@ -37,7 +37,7 @@ const lat    = parseFloat(p.get('lat')  || '46.81228');
 const lon    = parseFloat(p.get('lon')  || '-71.21454');
 const zoom   = parseInt(p.get('zoom')   || '11', 10);
 const apiKey = p.get('apiKey')          || '';
-const theme  = p.get('theme')           || 'midnight';
+const theme  = p.get('theme')           || 'blueprint';
 
 document.body.className = 'theme-' + theme;
 
@@ -60,29 +60,40 @@ function addCartoDark(baseClass, labelsClass, baseOpacity, labelOpacity) {
   ).addTo(map);
 }
 
-function addSatelliteDim() {
+function addCartoLight() {
   L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-    { attribution:'&copy; Esri, Maxar, Earthstar Geographics', maxZoom:19, className:'satellite-base' }
+    'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',
+    { attribution:cartoAttribution, maxZoom:20, opacity:.96, className:'day-plan-base' }
   ).addTo(map);
   L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
-    { maxZoom:19, opacity:.58, className:'satellite-reference' }
-  ).addTo(map);
-  L.tileLayer(
-    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
-    { maxZoom:19, opacity:.48, className:'satellite-reference' }
+    'https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png',
+    { maxZoom:20, opacity:.74, className:'day-plan-labels' }
   ).addTo(map);
 }
 
-if (theme === 'satellite-dim') {
-  addSatelliteDim();
+function addDaySatellite() {
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { attribution:'&copy; Esri, Maxar, Earthstar Geographics', maxZoom:19, className:'day-satellite-base' }
+  ).addTo(map);
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom:19, opacity:.64, className:'day-satellite-reference' }
+  ).addTo(map);
+  L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
+    { maxZoom:19, opacity:.56, className:'day-satellite-reference' }
+  ).addTo(map);
+}
+
+if (theme === 'day-satellite') {
+  addDaySatellite();
+} else if (theme === 'day-plan') {
+  addCartoLight();
 } else if (theme === 'blueprint') {
   addCartoDark('blueprint-base', 'blueprint-labels', .92, .52);
-} else if (theme === 'glass') {
-  addCartoDark('glass-base', 'glass-labels', .78, .46);
 } else {
-  addCartoDark('midnight-base', 'midnight-labels', .94, .72);
+  addCartoDark('blueprint-base', 'blueprint-labels', .92, .52);
 }
 
 if (apiKey) {

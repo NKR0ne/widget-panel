@@ -7,19 +7,27 @@ export default function CalendarWidget() {
 
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const firstDayOfMonth = new Date(year, month, 1).getDay();
+  const daysInPreviousMonth = new Date(year, month, 0).getDate();
   const days = [];
-  for (let index = 0; index < firstDayOfMonth; index++) days.push(null);
-  for (let day = 1; day <= daysInMonth; day++) days.push(day);
+  for (let index = 0; index < firstDayOfMonth; index++) {
+    days.push({ day: daysInPreviousMonth - firstDayOfMonth + index + 1, adjacent: true });
+  }
+  for (let day = 1; day <= daysInMonth; day++) days.push({ day, adjacent: false });
+  let nextMonthDay = 1;
+  while (days.length < 42) {
+    days.push({ day: nextMonthDay, adjacent: true });
+    nextMonthDay += 1;
+  }
 
   const prevMonth = () => setDate(new Date(year, month - 1, 1));
   const nextMonth = () => setDate(new Date(year, month + 1, 1));
   const prevYear = () => setDate(new Date(year - 1, month, 1));
   const nextYear = () => setDate(new Date(year + 1, month, 1));
 
-  const isToday = (day) => {
-    if (!day) return false;
+  const isToday = (cell) => {
+    if (!cell || cell.adjacent) return false;
     const today = new Date();
-    return day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
+    return cell.day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
   };
 
   const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -47,20 +55,20 @@ export default function CalendarWidget() {
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 2, marginBottom: 8 }}>
           {dayNames.map((day) => <div key={day} style={{ textAlign: 'center', fontWeight: 600, fontSize: 9, opacity: 0.7 }}>{day}</div>)}
-          {days.map((day, index) => (
+          {days.map((cell, index) => (
             <div
               key={index}
               style={{
                 textAlign: 'center',
                 padding: '4px',
                 borderRadius: 3,
-                background: isToday(day) ? 'rgba(255,255,255,0.3)' : 'transparent',
-                fontWeight: isToday(day) ? 600 : 400,
-                opacity: day ? 1 : 0.3,
+                background: isToday(cell) ? 'rgba(255,255,255,0.3)' : 'transparent',
+                fontWeight: isToday(cell) ? 600 : 400,
+                opacity: cell.adjacent ? 0.28 : 1,
                 fontSize: 10,
               }}
             >
-              {day}
+              {cell.day}
             </div>
           ))}
         </div>

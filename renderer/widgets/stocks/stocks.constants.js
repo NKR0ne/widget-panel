@@ -27,14 +27,6 @@ export const MARKETS_OVERVIEW_LIST = {
   ],
 };
 
-export const BLOOMBERG_LIVE_TAB = {
-  id: 'wp-bloomberg-live',
-  name: 'Bloomberg Live',
-  kind: 'video',
-  url: 'https://www.youtube.com/watch?v=iEpJwprxDdk',
-  isolate: true,
-};
-
 const TV_HEATMAP_HTML = `<!DOCTYPE html>
 <html style="margin:0;padding:0;width:100%;height:100%;background:#0a0a0c">
 <head><meta charset="utf-8"><style>

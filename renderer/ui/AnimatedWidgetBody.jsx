@@ -6,6 +6,7 @@ export default function AnimatedWidgetBody({
   style,
   children,
   transitionMs = 230,
+  fade = true,
 }) {
   const [present, setPresent] = useState(expanded);
   const [open, setOpen] = useState(expanded);
@@ -36,14 +37,14 @@ export default function AnimatedWidgetBody({
       style={{
         display: 'grid',
         gridTemplateRows: open ? '1fr' : '0fr',
-        opacity: open ? 1 : 0,
+        opacity: fade ? (open ? 1 : 0) : 1,
         transform: open ? 'translateY(0)' : 'translateY(-4px)',
         transition: [
           `grid-template-rows ${transitionMs}ms cubic-bezier(0.22, 1, 0.36, 1)`,
-          `opacity ${Math.max(120, transitionMs - 60)}ms ease`,
+          fade ? `opacity ${Math.max(120, transitionMs - 60)}ms ease` : '',
           `transform ${transitionMs}ms cubic-bezier(0.22, 1, 0.36, 1)`,
-        ].join(','),
-        willChange: 'grid-template-rows, opacity, transform',
+        ].filter(Boolean).join(','),
+        willChange: fade ? 'grid-template-rows, opacity, transform' : 'grid-template-rows, transform',
         ...style,
       }}
     >

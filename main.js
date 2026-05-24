@@ -7,6 +7,13 @@ const { exec, spawn } = require('child_process')
 const { getStore, setStore, deleteStore } = require('./store')
 
 const PANEL_GAP = 10   // px gap between window edge and screen; window is inset so the gap shows raw desktop
+const PANEL_BACKGROUND_MATERIAL = 'none' // Native acrylic shifts tint when the window loses focus.
+const PANEL_COLUMNS = ['left', 'monitor', 'mid', 'feed', 'right', 'aux']
+const PANEL_DEFAULT_COL_WIDTHS = { left: 220, monitor: 220, mid: 240, feed: 260, right: 260, aux: 260 }
+const PANEL_DIVIDER_WIDTH = 4
+const PANEL_RESIZE_HANDLE_WIDTH = 5
+
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
 const isDev  = !!process.env.VITE_DEV
 // Native binaries (brave-host.exe, taskbar-btn.exe, taskbar-hook.dll, panel.path)
@@ -27,6 +34,12 @@ function log(...args) {
   const line = `[${new Date().toISOString()}] ${args.join(' ')}\n`
   try { fs.appendFileSync(LOG, line) } catch {}
   console.log(...args)
+}
+
+function storeLogValue(key, value) {
+  if (/auth|token|password|credential|secret/i.test(String(key || ''))) return '"[redacted]"'
+  try { return JSON.stringify(value) }
+  catch { return '"[unserializable]"' }
 }
 
 const WORKSTATION_PIPE = '\\\\.\\pipe\\WorkstationMonitorTelemetry'
@@ -124,6 +137,7 @@ let isPinned         = false
 let lastToggleTime   = 0
 let isHiding         = false  // prevents double-hide (blur + toggle arriving together)
 let modalOpen        = false  // renderer signals when a settings/manage modal is open
+let zoomContentOpen  = false  // renderer signals when a zoomed reader/browser card is active
 let lastModalClose   = 0     // timestamp of last modal close — grace period before blur-hide
 let coldStart        = true   // true until first successful IPC connection
 let rendererReady    = false  // true once renderer has registered its panel listeners
@@ -132,6 +146,7 @@ let g_fadeIv         = null   // active opacity-fade interval — cancel before 
 let panelOnlyWidth      = parseInt(getStore('wp-width')) || 720  // panel width before browser was embedded
 let browserEmbedded     = false  // whether brave window is currently embedded in win
 let _showStateTimeout   = null   // ID of the 350ms post-show notifyHelperState timer
+let panelGeometryLockUntil = 0
 
 // ── Single instance lock ──────────────────────────────────────────────────────
 const gotLock = app.requestSingleInstanceLock()
@@ -197,6 +212,7 @@ function createPipeServer() {
             if (!isPinned) {
               setTimeout(() => {
                 if (modalOpen)                         { log('[clickoutside] modal open — skip'); return }
+                if (zoomContentOpen)                    { log('[clickoutside] zoom content open — skip'); return }
                 if (Date.now() - lastModalClose < 400) { log('[clickoutside] modal just closed — skip'); return }
                 log('[clickoutside] → hidePanel()'); hidePanel()
               }, 150)
@@ -262,6 +278,10 @@ function showPanel() {
 // Initiate slide-out: fade window to invisible first so DWM ghost never shows
 function hidePanel(opts = {}) {
   if (!win || !win.isVisible() || isHiding) return
+  if (!opts.force && Date.now() < panelGeometryLockUntil) {
+    log('[hidePanel] geometry lock - skip')
+    return
+  }
   log('[hidePanel] called, browserEmbedded=', browserEmbedded, new Error().stack.split('\n')[2]?.trim())
   // Cancel the post-show notifyHelperState timer — if hide completes before it fires
   // (hide=260ms < timer=350ms), the timer would send stale visible:true → g_panelOn stuck.
@@ -342,7 +362,7 @@ function createWindow() {
     x:               -(panelW + PANEL_GAP),  // start off-screen; animation slides it in
     y:               workArea.y + PANEL_GAP,
     frame:           false,
-    backgroundMaterial: 'acrylic',
+    backgroundMaterial: PANEL_BACKGROUND_MATERIAL,
     backgroundColor: '#00000000',
     alwaysOnTop:     true,
     skipTaskbar:     true,
@@ -398,6 +418,7 @@ function createWindow() {
         if (!win || !win.isVisible() || isPinned) return
         if (win.isFocused()) { log('[blur/delay] focus returned — skip'); return }
         if (modalOpen)                           { log('[blur/delay] modal open — skip'); return }
+        if (zoomContentOpen)                     { log('[blur/delay] zoom content open — skip'); return }
         if (Date.now() - lastModalClose < 400)   { log('[blur/delay] modal just closed — skip'); return }
         log('[blur/delay] → hidePanel() modalOpen=', modalOpen, 'lastModalClose=', lastModalClose)
         hidePanel()
@@ -492,9 +513,13 @@ nativeTheme.on('updated', () => {
 
 ipcMain.on('modal-open',  () => { modalOpen = true;  log('[modal-open] modalOpen=true') })
 ipcMain.on('modal-close', () => { modalOpen = false; lastModalClose = Date.now(); log('[modal-close] grace period started') })
+ipcMain.on('reader-zoom-active', (_e, active) => {
+  zoomContentOpen = !!active
+  log('[reader-zoom-active]', zoomContentOpen)
+})
 
 ipcMain.handle('store-get',    (_e, key)       => getStore(key))
-ipcMain.handle('store-set',    (_e, key, value) => { log('[store-set]', key, '=', JSON.stringify(value)); setStore(key, value) })
+ipcMain.handle('store-set',    (_e, key, value) => { log('[store-set]', key, '=', storeLogValue(key, value)); setStore(key, value) })
 ipcMain.handle('store-delete', (_e, key)       => deleteStore(key))
 ipcMain.on('renderer-log',     (_e, ...args)   => log('[renderer]', ...args))
 
@@ -526,6 +551,44 @@ ipcMain.handle('autostart-get', () => app.getLoginItemSettings().openAtLogin)
 ipcMain.handle('autostart-set', (_e, enabled) => {
   app.setLoginItemSettings({ openAtLogin: enabled })
   return enabled
+})
+
+function fullPanelWidth() {
+  const { workArea } = screen.getPrimaryDisplay()
+  return Math.max(320, workArea.width - PANEL_GAP * 2)
+}
+
+function basePanelWidth(baseColumnCount = 3, colWidths = {}) {
+  const count = Math.max(3, Math.min(PANEL_COLUMNS.length, Number(baseColumnCount) || 3))
+  const widths = { ...PANEL_DEFAULT_COL_WIDTHS, ...(colWidths || {}) }
+  const cols = PANEL_COLUMNS.slice(0, count)
+  const columnsWidth = cols.reduce((sum, col) => sum + Math.max(150, Math.min(900, Number(widths[col]) || PANEL_DEFAULT_COL_WIDTHS[col] || 220)), 0)
+  const dividersWidth = Math.max(0, count - 1) * PANEL_DIVIDER_WIDTH
+  return Math.max(320, Math.min(fullPanelWidth(), columnsWidth + dividersWidth + PANEL_RESIZE_HANDLE_WIDTH + 22))
+}
+
+function setPanelGeometryForMode(mode = 'base', baseColumnCount = 3, colWidths = {}) {
+  if (!win) return { ok: false, error: 'window unavailable' }
+  const { workArea } = screen.getPrimaryDisplay()
+  const targetMode = String(mode || 'base')
+  const stageMode = targetMode !== 'base'
+  const width = stageMode ? fullPanelWidth() : basePanelWidth(baseColumnCount, colWidths)
+  panelGeometryLockUntil = Date.now() + 700
+  if (!stageMode) {
+    panelOnlyWidth = width
+    setStore('wp-width', width)
+  }
+  win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width, height: workArea.height - PANEL_GAP * 2 })
+  lastToggleTime = Date.now()
+  notifyHelperHwnds()
+  log('[panel-fit-mode]', `mode=${targetMode}`, `stage=${stageMode}`, `width=${width}`, `baseColumns=${baseColumnCount}`)
+  return { ok: true, mode: targetMode, width, fullWidth: fullPanelWidth(), stageMode }
+}
+
+ipcMain.handle('panel-fit-mode', async (_e, options = {}) => {
+  const result = setPanelGeometryForMode(options.mode, options.baseColumnCount, options.colWidths)
+  await new Promise(resolve => setTimeout(resolve, 48))
+  return result
 })
 
 // Panel resize — main process polls cursor so dragging past the window edge works
@@ -617,6 +680,97 @@ ipcMain.handle('yahoo-chart', async (_e, ticker) => {
       resolve(null);
     });
   });
+});
+
+function yahooJson(url) {
+  return new Promise((resolve) => {
+    const options = {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'application/json,text/plain,*/*',
+      },
+    };
+    https.get(url, options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); }
+        catch { resolve(null); }
+      });
+    }).on('error', () => resolve(null));
+  });
+}
+
+function asDateFromYahoo(value) {
+  if (!value) return null;
+  const raw = Array.isArray(value) ? value[0] : value;
+  const seconds = raw?.raw ?? raw;
+  const n = Number(seconds);
+  if (Number.isFinite(n)) return new Date(n * 1000).toISOString();
+  const text = raw?.fmt ?? raw?.date ?? raw?.value ?? raw;
+  if (!text) return null;
+  const parsed = new Date(String(text));
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function asNumberFromYahoo(value) {
+  const n = Number(value?.raw ?? value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function normalizeYahooTicker(ticker) {
+  return String(ticker || '')
+    .trim()
+    .replace(/^.*:/, '')
+    .replace(/\//g, '-');
+}
+
+function eventSortTime(value) {
+  const time = new Date(value || '').getTime();
+  return Number.isFinite(time) ? time : Number.MAX_SAFE_INTEGER;
+}
+
+ipcMain.handle('market-events', async (_e, tickers = []) => {
+  const cleanTickers = Array.from(new Set((tickers || [])
+    .map(normalizeYahooTicker)
+    .filter(Boolean)))
+    .slice(0, 24);
+  const earnings = [];
+  await Promise.all(cleanTickers.map(async ticker => {
+    const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=calendarEvents,price`;
+    const json = await yahooJson(url);
+    const result = json?.quoteSummary?.result?.[0];
+    const events = result?.calendarEvents;
+    const date = asDateFromYahoo(events?.earnings?.earningsDate);
+    if (!date) return;
+    earnings.push({
+      ticker,
+      name: result?.price?.shortName || result?.price?.longName || '',
+      date,
+      revenueAverage: asNumberFromYahoo(events?.earnings?.revenueAverage),
+      revenueLow: asNumberFromYahoo(events?.earnings?.revenueLow),
+      revenueHigh: asNumberFromYahoo(events?.earnings?.revenueHigh),
+    });
+  }));
+
+  const today = new Date();
+  const end = new Date(today.getTime() + 30 * 86400000);
+  const fmt = d => d.toISOString().slice(0, 10);
+  const ipoUrl = `https://query1.finance.yahoo.com/v1/finance/calendar/ipo?from=${fmt(today)}&to=${fmt(end)}`;
+  const ipoJson = await yahooJson(ipoUrl);
+  const documents = ipoJson?.finance?.result?.[0]?.documents || ipoJson?.ipoCalendar?.result || [];
+  const ipos = documents.slice(0, 12).map(item => ({
+    name: item.companyName || item.name || item.company || item.symbol || 'IPO',
+    symbol: item.symbol || item.ticker || '',
+    date: asDateFromYahoo(item.expectedDate || item.pricingDate || item.date || item.startDate) || '',
+    exchange: item.exchange || '',
+    priceLow: asNumberFromYahoo(item.priceLow),
+    priceHigh: asNumberFromYahoo(item.priceHigh),
+  })).filter(item => item.name || item.symbol);
+
+  earnings.sort((a, b) => eventSortTime(a.date) - eventSortTime(b.date));
+  ipos.sort((a, b) => eventSortTime(a.date) - eventSortTime(b.date));
+  return { ok: true, earnings: earnings.slice(0, 12), ipos, updatedAt: Date.now() };
 });
 
 // ── Brave host TCP server (port 47322) ────────────────────────────────────────
@@ -784,7 +938,7 @@ ipcMain.on('brave-open-external', () => {
   // process handle WITHOUT killing Brave — the externally-opened tab lives on.
   sendToBrave({ type: 'detach' })
   browserEmbedded = false
-  win.setBackgroundMaterial('acrylic')
+  win.setBackgroundMaterial(PANEL_BACKGROUND_MATERIAL)
   win.webContents.send('browser-pane-hide')
   const { workArea } = screen.getPrimaryDisplay()
   if (panelOnlyWidth > 0) win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: panelOnlyWidth, height: workArea.height - PANEL_GAP * 2 })
@@ -890,9 +1044,73 @@ function configureResponseHeaderOverrides() {
 }
 
 // ── App ready ─────────────────────────────────────────────────────────────────
+const LIVE_FEED_PARTITIONS = [
+  'persist:bloomberg',
+  'persist:live-bloomberg',
+  'persist:live-radio-canada',
+  'persist:live-france24',
+  'persist:live-cbc',
+  'persist:live-lcn',
+]
+const LIVE_FEED_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+
+function setRequestHeader(headers, name, value, overwrite = false) {
+  const existing = Object.keys(headers).find(key => key.toLowerCase() === name.toLowerCase())
+  if (existing) {
+    if (overwrite) headers[existing] = value
+    return
+  }
+  headers[name] = value
+}
+
+function configureLiveFeedSessions() {
+  const filter = {
+    urls: [
+      '*://*.youtube.com/*',
+      '*://youtube.com/*',
+      '*://*.youtube-nocookie.com/*',
+      '*://gem.cbc.ca/*',
+      '*://*.cbc.ca/*',
+      '*://cbc.ca/*',
+    ],
+  }
+
+  for (const partition of LIVE_FEED_PARTITIONS) {
+    const liveSession = session.fromPartition(partition)
+    liveSession.setUserAgent(LIVE_FEED_USER_AGENT)
+    liveSession.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
+      const headers = { ...(details.requestHeaders || {}) }
+      setRequestHeader(headers, 'User-Agent', LIVE_FEED_USER_AGENT, true)
+
+      try {
+        const host = new URL(details.url).hostname.toLowerCase()
+        const isYouTube = host === 'youtube.com' || host.endsWith('.youtube.com') || host.endsWith('.youtube-nocookie.com')
+        const isCbc = host === 'cbc.ca' || host.endsWith('.cbc.ca') || host === 'gem.cbc.ca'
+        if (isYouTube) {
+          setRequestHeader(headers, 'Accept-Language', 'en-US,en;q=0.9,fr-CA;q=0.8,fr;q=0.7', false)
+        } else if (isCbc) {
+          setRequestHeader(headers, 'Referer', 'https://gem.cbc.ca/', true)
+          setRequestHeader(headers, 'Origin', 'https://gem.cbc.ca', false)
+        }
+      } catch {}
+
+      callback({ requestHeaders: headers })
+    })
+    liveSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+      callback(['media', 'fullscreen', 'pointerLock'].includes(permission))
+    })
+    if (liveSession.setPermissionCheckHandler) {
+      liveSession.setPermissionCheckHandler((_webContents, permission) => {
+        return ['media', 'fullscreen', 'pointerLock'].includes(permission)
+      })
+    }
+  }
+}
+
 app.whenReady().then(() => {
   configureCameraSession()
   configureResponseHeaderOverrides()
+  configureLiveFeedSessions()
   disableNativeWidgets()
   writeLaunchPath()
   createPipeServer()   // taskbar-btn IPC on port 47321
@@ -994,6 +1212,112 @@ ipcMain.handle('rss-fetch', async (_e, url) => {
   catch (e) { return { ok: false, error: e.message } }
 })
 
+function extractYouTubeVideoId(input = '') {
+  try {
+    const url = new URL(input)
+    const host = url.hostname.replace(/^www\./i, '').toLowerCase()
+    if (host === 'youtu.be') return url.pathname.split('/').filter(Boolean)[0] || ''
+    if (host === 'youtube.com' || host.endsWith('.youtube.com')) {
+      if (url.searchParams.get('v')) return url.searchParams.get('v')
+      const parts = url.pathname.split('/').filter(Boolean)
+      const marker = parts.findIndex(part => ['embed', 'live', 'shorts'].includes(part))
+      if (marker >= 0 && parts[marker + 1]) return parts[marker + 1]
+    }
+  } catch {}
+  const match = String(input).match(/(?:v=|youtu\.be\/|embed\/|live\/)([A-Za-z0-9_-]{6,})/i)
+  return match?.[1] || ''
+}
+
+function extractBalancedJson(text = '', marker = '') {
+  const markerIndex = text.indexOf(marker)
+  if (markerIndex < 0) return ''
+  const start = text.indexOf('{', markerIndex)
+  if (start < 0) return ''
+  let depth = 0
+  let inString = false
+  let escape = false
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i]
+    if (inString) {
+      if (escape) {
+        escape = false
+      } else if (ch === '\\') {
+        escape = true
+      } else if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '{') {
+      depth++
+    } else if (ch === '}') {
+      depth--
+      if (depth === 0) return text.slice(start, i + 1)
+    }
+  }
+  return ''
+}
+
+function extractYouTubePlayerResponse(html = '') {
+  const json = extractBalancedJson(html, 'ytInitialPlayerResponse')
+  if (json) {
+    try { return JSON.parse(json) } catch {}
+  }
+  const match = html.match(/"hlsManifestUrl"\s*:\s*"([^"]+)"/)
+  if (!match) return null
+  try {
+    return { streamingData: { hlsManifestUrl: JSON.parse(`"${match[1]}"`) } }
+  } catch {
+    return { streamingData: { hlsManifestUrl: match[1].replace(/\\u0026/g, '&') } }
+  }
+}
+
+async function resolveYouTubeHls(url) {
+  const videoId = extractYouTubeVideoId(url)
+  const watchUrl = videoId
+    ? `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&bpctr=9999999999&has_verified=1`
+    : url
+  log('[live-youtube-hls] request', `videoId=${videoId || 'unknown'}`, `url=${url}`)
+  const page = await readerFetchText(watchUrl)
+  log('[live-youtube-hls] page', `videoId=${videoId || 'unknown'}`, `status=${page.status || '--'}`, `ok=${!!page.ok}`, `bytes=${page.text?.length || 0}`)
+  if (!page.ok || !page.text) {
+    log('[live-youtube-hls] page-failed', `videoId=${videoId || 'unknown'}`, page.error || `HTTP ${page.status}`)
+    return { ok: false, status: page.status, videoId, error: page.error || `HTTP ${page.status}` }
+  }
+  const response = extractYouTubePlayerResponse(page.text)
+  const hlsUrl = response?.streamingData?.hlsManifestUrl || ''
+  if (!hlsUrl) {
+    const playable = response?.playabilityStatus || {}
+    log('[live-youtube-hls] no-manifest', `videoId=${videoId || 'unknown'}`, `playerStatus=${playable.status || '--'}`, `reason=${playable.reason || '--'}`, `hasPlayerResponse=${!!response}`)
+    return {
+      ok: false,
+      status: page.status,
+      videoId,
+      playerStatus: playable.status || '',
+      error: playable.reason || 'No HLS manifest exposed by YouTube',
+    }
+  }
+  let manifestHost = ''
+  try { manifestHost = new URL(hlsUrl).hostname } catch {}
+  log('[live-youtube-hls] manifest', `videoId=${videoId || 'unknown'}`, `host=${manifestHost || '--'}`, `chars=${hlsUrl.length}`, `playerStatus=${response?.playabilityStatus?.status || '--'}`)
+  return {
+    ok: true,
+    videoId,
+    hlsUrl,
+    playerStatus: response?.playabilityStatus?.status || '',
+  }
+}
+
+ipcMain.handle('live-youtube-hls', async (_e, url) => {
+  try { return await resolveYouTubeHls(url) }
+  catch (e) {
+    log('[live-youtube-hls] exception', e.message || String(e))
+    return { ok: false, error: e.message || String(e) }
+  }
+})
+
 function stripTags(value = '') {
   return value
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -1033,6 +1357,55 @@ function extractFirst(html, tag) {
   return match ? decodeHtml(stripTags(match[1])) : ''
 }
 
+const READER_CONTENT_ATTR = '(?:article[-_ ]?(?:body|content|text)?|body[-_ ]?content|content[-_ ]?(?:body|main|post)?|entry[-_ ]?content|main[-_ ]?content|post[-_ ]?(?:body|content|text)|story[-_ ]?(?:body|content))'
+const READER_NOISE_ATTR = '(?:ad-|ads?|advert|author-bio|breadcrumb|comment|comments|featured|footer|login|most-popular|newsletter|outbrain|partner|popular|promo|recommend|related|share|sharing|sidebar|signup|social|sponsor|syndication|tag-list|widget)'
+const READER_HARD_STOP = /^(?:about the author|add your comment|featured on|follow\b|main sections|more from|most popular|popular features|post a comment|read also|read next|related articles|related stories|share this article|subscribe to|techspot account|top downloads)\b/i
+const READER_INLINE_MODULE = /^(?:advertisement|from our partners|partner content|promoted content|recommended content|sponsored content|sponsored by)\b/i
+const READER_SKIP_TEXT = /cookie|subscribe|newsletter|advertisement|sign up|log in|login|all rights reserved|share this|read more|serving tech enthusiasts|techspot means tech analysis|create your free account|already have an account|partner content|promoted content|sponsored content/i
+const READER_LINE_SKIP = /^(?:about|advertise|all|analytics|articles|by\s+[\w\s.,&-]+|comments?|contact|cookies?|copyright|download|events?|follow|home|login|menu|newsletter|podcasts?|privacy|register|resources?|search|share|subscribe|terms|topics|view all)$/i
+const READER_MARKDOWN_STOP = /^(?:#{1,6}\s*)?(?:0\s+comments?|add your comment|all contents are copyright|aspencore network|connect with us|featured techpaper|for advertisers|leave a reply|more from|popular features|read also|read next|related articles|related stories|related topics|share this|subscribe today)\b/i
+const READER_MARKDOWN_SKIP = /^(?:\*\*)?(?:advertisement|analytics|applications|automotive|business|community|contact|design|download|events?|featured|home|image|input your search keywords|login|markets?|menu|news|newsletter|podcasts?|privacy|register|resources?|search|semiconductors?|sign in|submit|subscribe|terms|topics|view all|webinars?|white papers?)(?:\*\*)?$/i
+const READER_MAX_CHARS = 18000
+const READER_MAX_BLOCKS = 60
+
+function stripReaderNoise(html) {
+  let cleaned = html
+  const attrBlock = new RegExp(`<((?:div|section|aside|nav|footer|ul|ol))\\b[^>]*(?:class|id|role)=["'][^"']*${READER_NOISE_ATTR}[^"']*["'][^>]*>[\\s\\S]*?<\\/\\1>`, 'gi')
+  for (let i = 0; i < 4; i++) cleaned = cleaned.replace(attrBlock, ' ')
+  cleaned = cutAfterReaderStopMarker(cleaned)
+  return cleaned
+}
+
+function cutAfterReaderStopMarker(html) {
+  const markerRe = /<(h[1-6]|p|div|section|span)\b[^>]*>([\s\S]*?)<\/\1>/gi
+  let match
+  while ((match = markerRe.exec(html))) {
+    const text = decodeHtml(stripTags(match[2]))
+    if (/^(?:read also|read next|related articles|related stories)\s*:?\s*$/i.test(text)) {
+      return html.slice(0, match.index)
+    }
+  }
+  return html
+}
+
+function collectReadableCandidates(html) {
+  const candidates = []
+  const add = (html, priority) => {
+    if (!html) return
+    const paragraphCount = html.match(/<p[\s>]/gi)?.length || 0
+    const textLength = stripTags(html).length
+    if (paragraphCount || textLength > 450) candidates.push({ html, priority, paragraphCount, textLength })
+  }
+  const contentRe = new RegExp(`<((?:article|main|section|div))\\b[^>]*(?:class|id)=["'][^"']*${READER_CONTENT_ATTR}[^"']*["'][^>]*>([\\s\\S]*?)<\\/\\1>`, 'gi')
+  let match
+  while ((match = contentRe.exec(html)) && candidates.length < 12) add(match[2], 3)
+  add(html.match(/<article[^>]*>([\s\S]*?)<\/article>/i)?.[1], 4)
+  add(html.match(/<main[^>]*>([\s\S]*?)<\/main>/i)?.[1], 2)
+  add(html.match(/<body[^>]*>([\s\S]*?)<\/body>/i)?.[1], 1)
+  add(html, 0)
+  return candidates
+}
+
 function chooseReadableHtml(html) {
   const withoutChrome = html
     .replace(/<!--[\s\S]*?-->/g, ' ')
@@ -1041,26 +1414,120 @@ function chooseReadableHtml(html) {
     .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
     .replace(/<svg[\s\S]*?<\/svg>/gi, ' ')
     .replace(/<(nav|header|footer|aside|form|button|iframe|canvas|figure)[\s\S]*?<\/\1>/gi, ' ')
-  const candidates = [
-    withoutChrome.match(/<article[^>]*>([\s\S]*?)<\/article>/i)?.[1],
-    withoutChrome.match(/<main[^>]*>([\s\S]*?)<\/main>/i)?.[1],
-    withoutChrome.match(/<body[^>]*>([\s\S]*?)<\/body>/i)?.[1],
-    withoutChrome,
-  ].filter(Boolean)
-  return candidates.sort((a, b) => (b.match(/<p[\s>]/gi)?.length || 0) - (a.match(/<p[\s>]/gi)?.length || 0))[0] || withoutChrome
+  const withoutNoise = stripReaderNoise(withoutChrome)
+  const candidates = collectReadableCandidates(withoutNoise)
+  candidates.sort((a, b) => {
+    const aUsable = a.paragraphCount >= 3 || a.textLength > 1200
+    const bUsable = b.paragraphCount >= 3 || b.textLength > 1200
+    if (aUsable !== bUsable) return bUsable - aUsable
+    if (a.priority !== b.priority) return b.priority - a.priority
+    return b.paragraphCount - a.paragraphCount || b.textLength - a.textLength
+  })
+  return candidates[0]?.html || withoutNoise
 }
 
 function extractParagraphs(articleHtml) {
   const blocks = []
-  const re = /<(p|h2|h3|li)[^>]*>([\s\S]*?)<\/\1>/gi
+  const re = /<(p|h2|h3|h4|h5|h6|li)[^>]*>([\s\S]*?)<\/\1>/gi
   let match
+  let skipRelatedItems = 0
+  let skipInlineModule = 0
   while ((match = re.exec(articleHtml))) {
+    const tag = match[1].toLowerCase()
     const text = decodeHtml(stripTags(match[2]))
+    if (READER_INLINE_MODULE.test(text)) {
+      skipInlineModule = 10
+      continue
+    }
+    if (skipInlineModule > 0) {
+      if (tag === 'p' && text.length > 140 && /[.!?]"?$/.test(text) && !/^by\b/i.test(text)) {
+        skipInlineModule = 0
+      } else {
+        skipInlineModule -= 1
+        continue
+      }
+    }
+    if (/^(?:\/\/\s*)?related stories\b/i.test(text)) {
+      skipRelatedItems = 8
+      continue
+    }
+    if (READER_HARD_STOP.test(text)) {
+      if (blocks.length > 0) break
+      continue
+    }
+    if (skipRelatedItems > 0 && tag === 'li') {
+      skipRelatedItems -= 1
+      continue
+    }
+    if (tag !== 'li') skipRelatedItems = 0
     if (!text || text.length < 35) continue
-    if (/cookie|subscribe|newsletter|advertisement|sign up|log in|all rights reserved|share this|read more/i.test(text)) continue
+    if (/^by\s+[\w\s.,&-]+$/i.test(text)) continue
+    if (READER_SKIP_TEXT.test(text)) continue
+    if ((tag === 'li' || /^h[4-6]$/.test(tag)) && !/[.!?]"?$/.test(text)) continue
     if (blocks.includes(text)) continue
     blocks.push(text)
-    if (blocks.join(' ').length > 9000 || blocks.length >= 34) break
+    if (blocks.join(' ').length > READER_MAX_CHARS || blocks.length >= READER_MAX_BLOCKS) break
+  }
+  return blocks
+}
+
+function lineKey(text = '') {
+  return text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+function htmlToReadableLines(html) {
+  const lineBreak = ' __WP_READER_LINE_BREAK__ '
+  const withBreaks = html
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+    .replace(/<svg[\s\S]*?<\/svg>/gi, ' ')
+    .replace(/<br\b[^>]*>/gi, '\n')
+    .replace(/<(?:p|div|h[1-6]|li|article|section|main|blockquote)\b[^>]*>/gi, '\n')
+    .replace(/<\/(?:p|div|h[1-6]|li|article|section|main|blockquote)>/gi, '\n')
+  return decodeHtml(stripTags(withBreaks).replace(/\n+/g, lineBreak))
+    .split(lineBreak.trim())
+    .map(line => line.trim())
+    .filter(Boolean)
+}
+
+function extractTextParagraphs(html, title = '') {
+  const lines = htmlToReadableLines(cutAfterReaderStopMarker(stripReaderNoise(html)))
+  const titleKey = lineKey(title)
+  let startIndex = -1
+  if (titleKey) {
+    startIndex = lines.findIndex(line => lineKey(line).includes(titleKey) || titleKey.includes(lineKey(line)))
+  }
+  const blocks = []
+  let skipInlineModule = 0
+  let seenArticleLikeText = false
+  for (const line of lines.slice(Math.max(0, startIndex + 1))) {
+    const text = line.replace(/\s+/g, ' ').trim()
+    if (!text) continue
+    if (READER_HARD_STOP.test(text)) {
+      if (blocks.length > 0) break
+      continue
+    }
+    if (READER_INLINE_MODULE.test(text)) {
+      skipInlineModule = 10
+      continue
+    }
+    if (skipInlineModule > 0) {
+      if (text.length > 140 && /[.!?]"?$/.test(text) && !/^by\b/i.test(text)) {
+        skipInlineModule = 0
+      } else {
+        skipInlineModule -= 1
+        continue
+      }
+    }
+    if (text.length < 55) continue
+    if (!/[.!?]"?$/.test(text)) continue
+    if (READER_LINE_SKIP.test(text) || READER_SKIP_TEXT.test(text)) continue
+    if (!seenArticleLikeText && /^(?:by|author|date|image|source)\b/i.test(text)) continue
+    seenArticleLikeText = true
+    if (!blocks.includes(text)) blocks.push(text)
+    if (blocks.join(' ').length > READER_MAX_CHARS || blocks.length >= READER_MAX_BLOCKS) break
   }
   return blocks
 }
@@ -1079,6 +1546,156 @@ function extractImages(html, baseUrl, hero) {
   return images
 }
 
+function articleTextLength(article) {
+  return (article?.paragraphs || []).join(' ').length
+}
+
+function readerAttempt(source, response, article, extra = {}) {
+  return {
+    source,
+    status: response?.status,
+    bytes: response?.text?.length || 0,
+    paragraphs: article?.paragraphs?.length || 0,
+    chars: article ? articleTextLength(article) : 0,
+    ...extra,
+  }
+}
+
+function jinaReaderUrls(url) {
+  const clean = String(url || '').trim()
+  if (!clean) return []
+  return Array.from(new Set([
+    `https://r.jina.ai/http://${clean}`,
+    `https://r.jina.ai/http://r.jina.ai/http://${clean}`,
+  ]))
+}
+
+function markdownBody(markdown = '') {
+  const marker = markdown.search(/^Markdown Content:\s*$/im)
+  return marker >= 0 ? markdown.slice(marker).replace(/^Markdown Content:\s*/i, '') : markdown
+}
+
+function cleanMarkdownText(value = '') {
+  return decodeHtml(value)
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, ' ')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/^#{1,6}\s*/, '')
+    .replace(/^[-*]\s+/, '')
+    .replace(/^\|+|\|+$/g, ' ')
+    .replace(/\*\*/g, '')
+    .replace(/[_`]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function markdownHeader(markdown = '', name = '') {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = markdown.match(new RegExp(`^${escaped}:\\s*(.+)$`, 'im'))
+  return cleanMarkdownText(match?.[1] || '')
+}
+
+function markdownTitle(markdown = '', fallback = '') {
+  const headerTitle = markdownHeader(markdown, 'Title')
+  if (headerTitle) return headerTitle
+  const body = markdownBody(markdown)
+  const h1 = body.match(/^#\s+(.+)$/m)
+  return cleanMarkdownText(h1?.[1] || fallback)
+}
+
+function extractMarkdownImages(markdown = '', baseUrl = '', hero = '') {
+  const images = []
+  if (hero) images.push(hero)
+  const re = /!\[[^\]]*\]\(([^)]+)\)/g
+  let match
+  while ((match = re.exec(markdown)) && images.length < 5) {
+    const url = absolutizeUrl(decodeHtml(match[1]).trim(), baseUrl)
+    if (!/^https?:/i.test(url)) continue
+    if (/logo|icon|avatar|sprite|tracking|pixel|spacer/i.test(url)) continue
+    if (!images.includes(url)) images.push(url)
+  }
+  return images
+}
+
+function isMarkdownArticleMarker(text = '') {
+  return /^by\s+.{2,80}$/i.test(text)
+    || /^By\s*[A-Z][A-Za-z .'-]{1,80}\d{1,2}[./-]\d{1,2}[./-]\d{2,4}(?:\s+\d+)?$/.test(text)
+    || /^(?:published|updated|posted)\b/i.test(text)
+    || /^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s+\d{1,2},\s+\d{4}\b/i.test(text)
+    || /^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/.test(text)
+}
+
+function extractMarkdownParagraphs(markdown = '', title = '') {
+  const body = markdownBody(markdown)
+  const lines = body.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
+  const titleKey = lineKey(title)
+  let startIndex = lines.findIndex(line => /^#\s+/.test(line))
+  if (startIndex < 0 && titleKey) {
+    startIndex = lines.findIndex(line => {
+      const key = lineKey(cleanMarkdownText(line))
+      return key && (key.includes(titleKey) || titleKey.includes(key))
+    })
+  }
+  const markerIndex = lines.findIndex((raw, index) => index > startIndex && isMarkdownArticleMarker(cleanMarkdownText(raw)))
+  const readFrom = markerIndex >= 0 ? markerIndex + 1 : startIndex + 1
+  const blocks = []
+  let seenArticleLikeText = false
+  for (const raw of lines.slice(Math.max(0, readFrom))) {
+    const markdownLinkCount = raw.match(/\]\(/g)?.length || 0
+    if (/^\*\s+\[/.test(raw) || raw.includes('![') || markdownLinkCount > 3) continue
+    if (READER_MARKDOWN_STOP.test(raw) || READER_HARD_STOP.test(cleanMarkdownText(raw))) {
+      if (blocks.length > 0) break
+      continue
+    }
+    if (/^!\[[^\]]*\]\([^)]+\)$/.test(raw)) continue
+    const isHeading = /^#{2,6}\s+/.test(raw) || /^\*\*[^*]{14,100}\*\*$/.test(raw)
+    const text = cleanMarkdownText(raw)
+    if (!text) continue
+    if (READER_MARKDOWN_STOP.test(text)) {
+      if (blocks.length > 0) break
+      continue
+    }
+    if (READER_MARKDOWN_SKIP.test(text) || READER_LINE_SKIP.test(text) || READER_SKIP_TEXT.test(text)) continue
+    if (/^(?:by|author|date|published|updated|source|url source)\b/i.test(text)) continue
+    if (/^\d+\s*\/\s*\d+$/.test(text) || /^[\d:., -]+$/.test(text)) continue
+    if (!seenArticleLikeText && /\b(?:aspencore|datasheets\.com|edn\.com|eetimes\.com|embedded\.com|electronics-tutorials|electroda|powerelectronicsnews|transim\.com)\b/i.test(text)) continue
+
+    if (isHeading) {
+      if (seenArticleLikeText && text.length >= 24 && !blocks.includes(text)) blocks.push(text)
+      continue
+    }
+    if (text.length < 55) continue
+    if (!/[.!?]"?$/.test(text)) continue
+    seenArticleLikeText = true
+    if (!blocks.includes(text)) blocks.push(text)
+    if (blocks.join(' ').length > READER_MAX_CHARS || blocks.length >= READER_MAX_BLOCKS) break
+  }
+  return blocks
+}
+
+function parseJinaMarkdown(markdown, finalUrl, requestedUrl, hero = '') {
+  const source = (() => { try { return new URL(requestedUrl).hostname.replace(/^www\./, '') } catch { return '' } })()
+  const title = markdownTitle(markdown, source)
+  const date = markdownHeader(markdown, 'Published Time')
+  const paragraphs = extractMarkdownParagraphs(markdown, title)
+  const images = extractMarkdownImages(markdownBody(markdown), finalUrl, hero)
+
+  return {
+    ok: paragraphs.length > 0,
+    url: requestedUrl,
+    finalUrl,
+    source,
+    sourceLabel: 'jina',
+    title,
+    description: paragraphs[0] || '',
+    date,
+    image: images[0] || hero || '',
+    images,
+    paragraphs,
+    excerpt: paragraphs.slice(0, 2).join(' '),
+  }
+}
+
 function parseArticleHtml(html, finalUrl, requestedUrl, sourceLabel = 'direct') {
   const source = (() => { try { return new URL(requestedUrl).hostname.replace(/^www\./, '') } catch { return '' } })()
   const title = getMetaContent(html, 'og:title')
@@ -1090,7 +1707,11 @@ function parseArticleHtml(html, finalUrl, requestedUrl, sourceLabel = 'direct') 
   const date = getMetaContent(html, 'article:published_time') || getMetaContent(html, 'date')
   const hero = absolutizeUrl(getMetaContent(html, 'og:image') || getMetaContent(html, 'twitter:image'), finalUrl)
   const readable = chooseReadableHtml(html)
-  const paragraphs = extractParagraphs(readable)
+  let paragraphs = extractParagraphs(readable)
+  if (paragraphs.join(' ').length < 450) {
+    const fallbackParagraphs = extractTextParagraphs(html, title)
+    if (fallbackParagraphs.join(' ').length > paragraphs.join(' ').length) paragraphs = fallbackParagraphs
+  }
   const images = extractImages(readable, finalUrl, hero)
 
   return {
@@ -1113,6 +1734,11 @@ function detectPaywall(html) {
   const sample = decodeHtml(stripTags(html)).slice(0, 24000)
   return /subscribe to continue|subscription required|already a subscriber|sign in to continue|register to continue|create an account to continue|to continue reading|this article is reserved|premium content|paywall|metered paywall|become a subscriber|subscriber-only/i.test(sample)
     || /class=["'][^"']*(paywall|subscriber|subscription|premium-content|regwall)[^"']*["']/i.test(html)
+}
+
+function detectBotChallenge(text = '') {
+  const sample = decodeHtml(stripTags(text)).slice(0, 12000)
+  return /cf-mitigated:\s*challenge|checking your browser|cloudflare|captcha|performing security verification|protect against malicious bots|verify you are not a bot|returned error 403:\s*forbidden/i.test(sample)
 }
 
 function readerFetchText(url, redirects = 0) {
@@ -1150,7 +1776,50 @@ function readerFetchText(url, redirects = 0) {
   })
 }
 
-async function latestWaybackUrl(url) {
+function waybackReplayUrl(timestamp, originalUrl) {
+  return timestamp && originalUrl ? `https://web.archive.org/web/${timestamp}id_/${originalUrl}` : ''
+}
+
+function waybackLookupVariants(url) {
+  const variants = []
+  const add = value => {
+    if (value && !variants.includes(value)) variants.push(value)
+  }
+  add(url)
+  try {
+    const parsed = new URL(url)
+    parsed.hash = ''
+    add(parsed.href)
+    parsed.search = ''
+    add(parsed.href)
+
+    const hosts = new Set([parsed.hostname])
+    if (parsed.hostname.startsWith('www.')) hosts.add(parsed.hostname.slice(4))
+    else hosts.add(`www.${parsed.hostname}`)
+
+    const protocols = new Set([parsed.protocol, parsed.protocol === 'https:' ? 'http:' : 'https:'])
+    for (const protocol of protocols) {
+      for (const hostname of hosts) {
+        const variant = new URL(parsed.href)
+        variant.protocol = protocol
+        variant.hostname = hostname
+        add(variant.href)
+      }
+    }
+
+    if (/(^|\.)ft\.com$/i.test(parsed.hostname)) {
+      const contentMatch = parsed.pathname.match(/^\/content\/([^/?#]+)/i)
+      if (contentMatch) {
+        const canonical = `https://www.ft.com/content/${contentMatch[1]}`
+        add(canonical)
+        add(`http://www.ft.com/content/${contentMatch[1]}`)
+      }
+    }
+  } catch {}
+  return variants
+}
+
+async function waybackAvailabilityUrl(url) {
   const apiUrl = 'https://archive.org/wayback/available?url=' + encodeURIComponent(url)
   const res = await readerFetchText(apiUrl)
   if (!res.ok) return ''
@@ -1159,21 +1828,150 @@ async function latestWaybackUrl(url) {
     const snapshot = data?.archived_snapshots?.closest
     if (!snapshot?.available || !snapshot.url) return ''
     const match = snapshot.url.match(/\/web\/(\d+)\//)
-    return match ? `https://web.archive.org/web/${match[1]}id_/${url}` : snapshot.url
+    return match ? waybackReplayUrl(match[1], url) : snapshot.url
   } catch {
     return ''
   }
 }
 
+async function waybackCdxUrl(url) {
+  const params = new URLSearchParams()
+  params.set('url', url)
+  params.set('output', 'json')
+  params.set('fl', 'timestamp,original,statuscode,mimetype,digest')
+  params.append('filter', 'statuscode:200')
+  params.append('filter', 'mimetype:text/html')
+  params.set('collapse', 'digest')
+  params.set('limit', '-8')
+  const query = params.toString()
+  for (const endpoint of ['https://web.archive.org/cdx', 'https://web.archive.org/cdx/search/cdx']) {
+    const res = await readerFetchText(`${endpoint}?${query}`)
+    if (!res.ok || !res.text) continue
+    try {
+      const rows = JSON.parse(res.text)
+      if (!Array.isArray(rows) || rows.length < 2) continue
+      const dataRows = rows.slice(1).filter(row => Array.isArray(row) && row[0])
+      const row = dataRows[dataRows.length - 1]
+      if (row) return waybackReplayUrl(row[0], row[1] || url)
+    } catch {}
+  }
+  return ''
+}
+
+async function latestWaybackUrl(url) {
+  const variants = waybackLookupVariants(url)
+  for (const candidate of variants) {
+    try {
+      const available = await waybackAvailabilityUrl(candidate)
+      if (available) return available
+    } catch {}
+  }
+  for (const candidate of variants) {
+    try {
+      const archived = await waybackCdxUrl(candidate)
+      if (archived) return archived
+    } catch {}
+  }
+  return ''
+}
+
+const PUBLISHER_FEED_FALLBACKS = [
+  {
+    host: /(^|\.)bloomberg\.com$/i,
+    source: 'bloomberg.com',
+    sourceLabel: 'feed',
+    feeds: [
+      'https://feeds.bloomberg.com/markets/news.rss',
+    ],
+  },
+]
+
+function comparableUrl(value = '') {
+  try {
+    const url = new URL(value)
+    url.hash = ''
+    url.search = ''
+    return url.href.replace(/\/$/, '')
+  } catch {
+    return String(value || '').trim().replace(/[?#].*$/, '').replace(/\/$/, '')
+  }
+}
+
+function cleanXmlText(value = '') {
+  return decodeHtml(String(value)
+    .replace(/^<!\[CDATA\[/, '')
+    .replace(/\]\]>$/, '')
+    .replace(/<[^>]+>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function extractXmlTag(xml = '', tag = '') {
+  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = xml.match(new RegExp(`<${escaped}\\b[^>]*>([\\s\\S]*?)<\\/${escaped}>`, 'i'))
+  return cleanXmlText(match?.[1] || '')
+}
+
+function extractXmlAttr(xml = '', tag = '', attr = '') {
+  const escapedTag = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const escapedAttr = attr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const match = xml.match(new RegExp(`<${escapedTag}\\b[^>]*\\b${escapedAttr}=["']([^"']+)["'][^>]*>`, 'i'))
+  return cleanXmlText(match?.[1] || '')
+}
+
+async function fetchPublisherFeedFallback(url) {
+  let parsed
+  try { parsed = new URL(url) } catch { return null }
+  const config = PUBLISHER_FEED_FALLBACKS.find(item => item.host.test(parsed.hostname))
+  if (!config) return null
+
+  const target = comparableUrl(url)
+  for (const feedUrl of config.feeds) {
+    try {
+      const res = await readerFetchText(feedUrl)
+      if (!res.ok || !res.text) continue
+      const items = Array.from(res.text.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)).map(match => match[1])
+      for (const item of items) {
+        const link = extractXmlTag(item, 'link') || extractXmlTag(item, 'guid')
+        if (comparableUrl(link) !== target) continue
+        const description = extractXmlTag(item, 'description')
+        if (!description) return null
+        const image = extractXmlAttr(item, 'media:content', 'url') || extractXmlAttr(item, 'media:thumbnail', 'url')
+        const title = extractXmlTag(item, 'title') || parsed.hostname.replace(/^www\./, '')
+        const author = extractXmlTag(item, 'dc:creator')
+        const date = extractXmlTag(item, 'pubDate')
+        return {
+          ok: true,
+          url,
+          finalUrl: link || url,
+          source: config.source,
+          sourceLabel: config.sourceLabel,
+          title,
+          description: author ? `Publisher feed preview by ${author}` : 'Publisher feed preview',
+          date,
+          image,
+          images: image ? [image] : [],
+          paragraphs: [description],
+          excerpt: description,
+        }
+      }
+    } catch {}
+  }
+  return null
+}
+
 async function fetchReaderArticle(url) {
   const attempts = []
+  let directArticle = null
+  let paywallFallback = null
   try {
     const direct = await readerFetchText(url)
     if (direct.ok && direct.text) {
       const article = parseArticleHtml(direct.text, direct.finalUrl || url, url, 'direct')
-      attempts.push({ source: 'direct', paragraphs: article.paragraphs.length })
+      directArticle = article
+      attempts.push(readerAttempt('direct', direct, article, { challenge: detectBotChallenge(direct.text) || undefined }))
       if (detectPaywall(direct.text) && article.paragraphs.join(' ').length < 450) {
-        return {
+        paywallFallback = {
           ...article,
           ok: false,
           paywall: true,
@@ -1181,11 +1979,38 @@ async function fetchReaderArticle(url) {
           attempts,
           error: 'This article appears to require a subscription or sign-in.',
         }
+      } else if (article.ok && article.paragraphs.join(' ').length > 450) {
+        return { ...article, attempts }
       }
-      if (article.ok && article.paragraphs.join(' ').length > 450) return { ...article, attempts }
+    } else {
+      attempts.push({
+        source: 'direct',
+        status: direct.status,
+        bytes: direct.text?.length || 0,
+        challenge: direct.text ? detectBotChallenge(direct.text) || undefined : undefined,
+      })
     }
   } catch (e) {
     attempts.push({ source: 'direct', error: e.message })
+  }
+
+  for (const readerUrl of jinaReaderUrls(url)) {
+    try {
+      const res = await readerFetchText(readerUrl)
+      if (res.ok && res.text) {
+        if (detectBotChallenge(res.text)) {
+          attempts.push({ source: 'reader proxy', status: res.status, bytes: res.text.length, challenge: true })
+          continue
+        }
+        const article = parseJinaMarkdown(res.text, res.finalUrl || readerUrl, url, directArticle?.image || '')
+        attempts.push(readerAttempt('reader proxy', res, article))
+        if (article.ok && articleTextLength(article) > 450) return { ...article, attempts }
+      } else {
+        attempts.push({ source: 'reader proxy', status: res.status, bytes: res.text?.length || 0, challenge: res.text ? detectBotChallenge(res.text) || undefined : undefined })
+      }
+    } catch (e) {
+      attempts.push({ source: 'reader proxy', error: e.message })
+    }
   }
 
   try {
@@ -1194,7 +2019,7 @@ async function fetchReaderArticle(url) {
       const res = await readerFetchText(archived)
       if (res.ok && res.text) {
         const article = parseArticleHtml(res.text, archived, url, 'archive.org')
-        attempts.push({ source: 'archive.org', paragraphs: article.paragraphs.length })
+        attempts.push(readerAttempt('archive.org', res, article))
         if (article.ok) return { ...article, attempts }
       }
     }
@@ -1202,24 +2027,119 @@ async function fetchReaderArticle(url) {
     attempts.push({ source: 'archive.org', error: e.message })
   }
 
+  try {
+    const feedFallback = await fetchPublisherFeedFallback(url)
+    if (feedFallback) {
+      attempts.push({
+        source: 'publisher feed',
+        status: 200,
+        paragraphs: feedFallback.paragraphs.length,
+        chars: articleTextLength(feedFallback),
+      })
+      if (articleTextLength(feedFallback) > 450) return { ...feedFallback, attempts }
+      return {
+        ...feedFallback,
+        ok: false,
+        attempts,
+        error: 'The publisher feed only provided a short preview, so the article was not treated as a complete reader view.',
+      }
+    }
+  } catch (e) {
+    attempts.push({ source: 'publisher feed', error: e.message })
+  }
+
+  if (paywallFallback) return { ...paywallFallback, attempts }
+
   return {
     ok: false,
     url,
     source: (() => { try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' } })(),
-    sourceLabel: attempts.some(a => a.source === 'archive.org') ? 'archive.org' : 'direct',
+    sourceLabel: attempts.some(a => a.source === 'reader proxy') ? 'jina' : attempts.some(a => a.source === 'archive.org') ? 'archive.org' : 'direct',
     title: 'Reader view unavailable',
     description: '',
     image: '',
     images: [],
     paragraphs: [],
     attempts,
-    error: 'The article could not be purified automatically.',
+    error: attempts.some(a => a.challenge)
+      ? 'The source returned a bot verification page, so reader extraction could not access the article text automatically.'
+      : 'The article could not be purified automatically.',
+  }
+}
+
+async function fetchArchivedReaderArticle(url) {
+  const attempts = []
+  try {
+    const archived = await latestWaybackUrl(url)
+    if (!archived) {
+      return {
+        ok: false,
+        url,
+        source: (() => { try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' } })(),
+        sourceLabel: 'archive.org',
+        title: 'Archive unavailable',
+        description: '',
+        image: '',
+        images: [],
+        paragraphs: [],
+        attempts,
+        error: 'No archive.org snapshot is available yet.',
+      }
+    }
+
+    const res = await readerFetchText(archived)
+    if (res.ok && res.text) {
+      const article = parseArticleHtml(res.text, archived, url, 'archive.org')
+      attempts.push(readerAttempt('archive.org', res, article))
+      if (article.ok) return { ...article, attempts }
+      return {
+        ...article,
+        ok: false,
+        attempts,
+        error: 'The archive.org snapshot could not be purified automatically.',
+      }
+    }
+
+    attempts.push({ source: 'archive.org', status: res.status, bytes: res.text?.length || 0 })
+    return {
+      ok: false,
+      url,
+      source: (() => { try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' } })(),
+      sourceLabel: 'archive.org',
+      title: 'Archive unavailable',
+      description: '',
+      image: '',
+      images: [],
+      paragraphs: [],
+      attempts,
+      error: 'The archive.org snapshot could not be loaded.',
+    }
+  } catch (e) {
+    attempts.push({ source: 'archive.org', error: e.message })
+    return {
+      ok: false,
+      url,
+      source: (() => { try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' } })(),
+      sourceLabel: 'archive.org',
+      title: 'Archive unavailable',
+      description: '',
+      image: '',
+      images: [],
+      paragraphs: [],
+      attempts,
+      error: e.message || 'Archive.org could not be reached.',
+    }
   }
 }
 
 ipcMain.handle('reader-fetch', async (_e, url) => {
   try { return await fetchReaderArticle(url) }
   catch (e) { return { ok: false, url, title: 'Reader view unavailable', paragraphs: [], images: [], error: e.message } }
+})
+
+ipcMain.handle('reader-fetch-archive', async (_e, url) => {
+  try { return await fetchArchivedReaderArticle(url) }
+  catch (e) { return { ok: false, url, title: 'Archive unavailable', paragraphs: [], images: [], error: e.message } }
 })
 
 ipcMain.handle('reader-open-external', async (_e, url) => {
@@ -1471,17 +2391,20 @@ async function fetchWatchlistIndex() {
   return null
 }
 
-ipcMain.handle('tv-watchlists', async () => {
+ipcMain.handle('tv-watchlists', async (_event, options = {}) => {
   const sessionId = getStore('wp-tv-session')
   if (!sessionId) return { ok: false, error: 'Not logged in' }
+  const force = options === true || !!options?.force
+  const cacheTtlMs = Number(options?.cacheTtlMs) > 0 ? Number(options.cacheTtlMs) : 120000
 
   // ── 1. Serve from cache ───────────────────────────────────────────────────
   const cached = getStore('wp-tv-lists-cache')
-  if (cached) {
+  const cachedAt = Number(getStore('wp-tv-lists-cache-at') || 0)
+  if (!force && cached && Date.now() - cachedAt <= cacheTtlMs) {
     try {
       const lists = JSON.parse(cached)
       if (Array.isArray(lists) && lists.length) {
-        log('[tv-watchlists] served', lists.length, 'lists from cache')
+        log('[tv-watchlists] served', lists.length, 'lists from fresh cache')
         return { ok: true, data: lists }
       }
     } catch {}
@@ -1492,7 +2415,18 @@ ipcMain.handle('tv-watchlists', async () => {
   const lists = await fetchWatchlistIndex()
   if (lists?.length) {
     setStore('wp-tv-lists-cache', JSON.stringify(lists))
+    setStore('wp-tv-lists-cache-at', String(Date.now()))
     return { ok: true, data: lists }
+  }
+
+  if (cached) {
+    try {
+      const lists = JSON.parse(cached)
+      if (Array.isArray(lists) && lists.length) {
+        log('[tv-watchlists] fresh fetch empty; served', lists.length, 'cached lists')
+        return { ok: true, data: lists }
+      }
+    } catch {}
   }
 
   return { ok: true, data: [] }
@@ -1506,6 +2440,7 @@ ipcMain.handle('tv-logout', async () => {
   setStore('wp-tv-raw-lists',     '')
   setStore('wp-tv-watchlist-ids', '')
   setStore('wp-tv-lists-cache',   '')
+  setStore('wp-tv-lists-cache-at','')
   return { ok: true }
 })
 

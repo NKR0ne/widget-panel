@@ -10,6 +10,68 @@ const VIOLET = 'rgba(194,106,255,0.72)';
 const TEXT = '#f7faff';
 const MUTED = 'rgba(247,250,255,0.66)';
 const FAINT = 'rgba(247,250,255,0.12)';
+const GRAPH_TIME_SECTIONS = 3;
+const GRAPH_VALUE_SECTIONS = 10;
+const TIME_GRID_RATIOS = Array.from({ length: GRAPH_TIME_SECTIONS + 1 }, (_, index) => index / GRAPH_TIME_SECTIONS);
+const VALUE_GRID_RATIOS = Array.from({ length: GRAPH_VALUE_SECTIONS + 1 }, (_, index) => index / GRAPH_VALUE_SECTIONS);
+const RANGE_BLUE = [0, 140, 255];
+const RANGE_YELLOW = [255, 220, 0];
+const RANGE_ORANGE = [255, 140, 40];
+const RANGE_RED = [255, 40, 40];
+const TEMP_GRADIENT = 'linear-gradient(180deg, rgba(255,40,40,0.88) 0%, rgba(255,140,40,0.86) 25%, rgba(255,220,0,0.82) 50%, rgba(0,140,255,0.78) 100%)';
+
+function clampUnit(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(1, n));
+}
+
+function mixChannel(a, b, t) {
+  return Math.round(a + (b - a) * clampUnit(t));
+}
+
+function mixRgb(a, b, t) {
+  return [
+    mixChannel(a[0], b[0], t),
+    mixChannel(a[1], b[1], t),
+    mixChannel(a[2], b[2], t),
+  ];
+}
+
+function rangeRgb(ratio) {
+  const pct = clampUnit(ratio) * 100;
+  if (pct <= 25) return RANGE_BLUE;
+  if (pct <= 50) return mixRgb(RANGE_BLUE, RANGE_YELLOW, (pct - 25) / 25);
+  if (pct <= 75) return mixRgb(RANGE_YELLOW, RANGE_ORANGE, (pct - 50) / 25);
+  return mixRgb(RANGE_ORANGE, RANGE_RED, (pct - 75) / 25);
+}
+
+function rangeColor(ratio, alpha = 1) {
+  const [r, g, b] = rangeRgb(ratio);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function ratioForValue(value, max) {
+  return clampUnit((Number(value) || 0) / Math.max(1, Number(max) || 1));
+}
+
+function tempScaleRatio(value) {
+  return clampUnit((Number(value) || 0) / 100);
+}
+
+function compactWatts(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return '--';
+  return `${Math.round(n)}W`;
+}
+
+function gridCoord(ratio, size) {
+  return (ratio * (size - 1) + 0.5).toFixed(1);
+}
+
+function gridStroke(ratio) {
+  return ratio === 0 || ratio === 1 ? 'rgba(255,255,255,0.16)' : FAINT;
+}
 
 function useTelemetry() {
   const [snapshot, setSnapshot] = useState(null);
@@ -93,7 +155,8 @@ function metricWithUnit(value, suffix = '', digits = 0) {
 
 function TempBar({ value, max = 100, label = 'Temp' }) {
   const safeValue = Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : 0;
-  const ratio = Math.max(0, Math.min(1, safeValue / Math.max(1, max)));
+  const ratio = ratioForValue(safeValue, max);
+  const heatColor = rangeColor(tempScaleRatio(safeValue), 0.92);
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '13px minmax(0,1fr)', gap: 6, alignItems: 'end', minWidth: 0 }}>
       <div style={{
@@ -104,7 +167,7 @@ function TempBar({ value, max = 100, label = 'Temp' }) {
         background: 'linear-gradient(180deg, rgba(255,205,70,0.18), rgba(47,109,255,0.08))',
         position: 'relative',
         overflow: 'hidden',
-        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.05), 0 0 12px rgba(47,109,255,0.12)',
+        boxShadow: `inset 0 0 0 1px rgba(255,255,255,0.05), 0 0 12px ${rangeColor(tempScaleRatio(safeValue), 0.18)}`,
       }}>
         <div style={{
           position: 'absolute',
@@ -112,9 +175,12 @@ function TempBar({ value, max = 100, label = 'Temp' }) {
           right: 0,
           bottom: 0,
           height: `${ratio * 100}%`,
-          background: 'linear-gradient(180deg, rgba(255,217,92,0.88), rgba(47,109,255,0.92))',
-          boxShadow: '0 0 14px rgba(47,109,255,0.35)',
-        }} />
+          overflow: 'hidden',
+          border: ratio > 0 ? '1px solid rgba(255,255,255,0.56)' : 'none',
+          boxShadow: `0 0 14px ${heatColor}`,
+        }}>
+          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 42, background: TEMP_GRADIENT }} />
+        </div>
       </div>
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 8.5, color: MUTED, textTransform: 'uppercase' }}>{label}</div>
@@ -128,7 +194,8 @@ function TempBar({ value, max = 100, label = 'Temp' }) {
 function PowerGauge({ value, max, label = 'Power' }) {
   const safeMax = Math.max(1, Number(max) || 1);
   const safeValue = Math.max(0, Number(value) || 0);
-  const ratio = Math.max(0, Math.min(1, safeValue / safeMax));
+  const ratio = ratioForValue(safeValue, safeMax);
+  const powerColor = rangeColor(ratio, 0.96);
   const radius = 22;
   const circumference = 2 * Math.PI * radius;
   const dash = ratio * circumference;
@@ -141,18 +208,15 @@ function PowerGauge({ value, max, label = 'Power' }) {
           cy="29"
           r={radius}
           fill="none"
-          stroke="rgba(47,109,255,0.92)"
+          stroke={powerColor}
           strokeWidth="6"
           strokeLinecap="round"
           strokeDasharray={`${dash} ${circumference - dash}`}
-          transform="rotate(-90 29 29)"
-          style={{ filter: 'drop-shadow(0 0 6px rgba(47,109,255,0.52))' }}
+          transform="rotate(180 29 29)"
+          style={{ filter: `drop-shadow(0 0 6px ${rangeColor(ratio, 0.52)})` }}
         />
-        <text x="29" y="28" textAnchor="middle" dominantBaseline="central" fill={TEXT} fontSize="13" fontFamily="DM Mono,monospace">
+        <text x="29" y="29" textAnchor="middle" dominantBaseline="central" fill={TEXT} fontSize="13" fontFamily="DM Mono,monospace">
           {fmt(value)}
-        </text>
-        <text x="29" y="41" textAnchor="middle" dominantBaseline="central" fill="rgba(247,250,255,0.62)" fontSize="7" fontFamily="DM Mono,monospace">
-          W
         </text>
       </svg>
       <div style={{ minWidth: 0 }}>
@@ -181,14 +245,14 @@ function GaugeRow({ temp, tempMax, power, powerMax }) {
   );
 }
 
-function descriptor(title, content, sub = 'Workstation', badge = null) {
+function descriptor(title, content, sub = '', badge = null) {
   return {
     shell: 'acrylic',
     color: BLUE,
     title,
     sub,
-    badge,
-    shellProps: { softText: true },
+    badge: null,
+    shellProps: { softText: true, rightBadge: badge },
     content,
   };
 }
@@ -212,14 +276,13 @@ function LineChart({ series = [], max = 100, height = 52 }) {
     [series, safeMax, height]);
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" width="100%" height={height} style={{ display: 'block', overflow: 'visible' }}>
-      {[0.25, 0.5, 0.75].map(ratio => (
-        <line key={ratio} x1="0" y1={(height * ratio).toFixed(1)} x2={width} y2={(height * ratio).toFixed(1)} stroke={FAINT} strokeWidth="0.8" vectorEffect="non-scaling-stroke" />
+    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" width="100%" height={height} style={{ display: 'block', overflow: 'visible' }} shapeRendering="crispEdges">
+      {VALUE_GRID_RATIOS.map(ratio => (
+        <line key={`value-${ratio}`} x1="0" y1={gridCoord(ratio, height)} x2={width} y2={gridCoord(ratio, height)} stroke={gridStroke(ratio)} strokeWidth={ratio === 0 || ratio === 1 ? '0.9' : '0.65'} vectorEffect="non-scaling-stroke" />
       ))}
-      {[0.33, 0.66].map(ratio => (
-        <line key={ratio} x1={(width * ratio).toFixed(1)} y1="0" x2={(width * ratio).toFixed(1)} y2={height} stroke={FAINT} strokeWidth="0.8" vectorEffect="non-scaling-stroke" />
+      {TIME_GRID_RATIOS.map(ratio => (
+        <line key={`time-${ratio}`} x1={gridCoord(ratio, width)} y1="0" x2={gridCoord(ratio, width)} y2={height} stroke={gridStroke(ratio)} strokeWidth={ratio === 0 || ratio === 1 ? '0.9' : '0.8'} vectorEffect="non-scaling-stroke" />
       ))}
-      <line x1="0" y1={height - 1} x2={width} y2={height - 1} stroke="rgba(255,255,255,0.16)" strokeWidth="1" vectorEffect="non-scaling-stroke" />
       {prepared.map((item, index) => item.fill ? (
         <polygon
           key={`fill-${index}`}
@@ -233,7 +296,7 @@ function LineChart({ series = [], max = 100, height = 52 }) {
           points={item.points}
           fill="none"
           stroke={item.color || SOFT_BLUE}
-          strokeWidth={item.width || 1.45}
+          strokeWidth={item.width || 0.95}
           strokeLinecap="round"
           strokeLinejoin="round"
           vectorEffect="non-scaling-stroke"
@@ -291,11 +354,11 @@ function TabButton({ active, children, onClick }) {
   );
 }
 
-function Tabs({ active, onChange }) {
+function ViewToggle({ active, onChange }) {
   return (
-    <div style={{ display: 'flex', gap: 5, marginBottom: 9 }}>
-      <TabButton active={active === 'graphs'} onClick={() => onChange('graphs')}>Graphs</TabButton>
-      <TabButton active={active === 'metrics'} onClick={() => onChange('metrics')}>Metrics</TabButton>
+    <div style={{ display: 'flex', gap: 4, flexShrink: 0, width: 116 }}>
+      <TabButton active={active === 'graphs'} onClick={() => onChange('graphs')}>Graphiques</TabButton>
+      <TabButton active={active === 'metrics'} onClick={() => onChange('metrics')}>Détails</TabButton>
     </div>
   );
 }
@@ -334,28 +397,42 @@ function FooterMetricRow({ items }) {
 function FooterPowerGauge({ value, max }) {
   const safeMax = Math.max(1, Number(max) || 1);
   const safeValue = Math.max(0, Number(value) || 0);
-  const ratio = Math.max(0, Math.min(1, safeValue / safeMax));
+  const ratio = ratioForValue(safeValue, safeMax);
+  const powerColor = rangeColor(ratio, 0.96);
   const radius = 15;
   const circumference = 2 * Math.PI * radius;
   const dash = ratio * circumference;
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, minWidth: 0 }}>
-      <svg width="36" height="36" viewBox="0 0 40 40" style={{ flexShrink: 0 }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, minWidth: 0 }}>
+      <span style={{
+        color: 'rgba(247,250,255,0.58)',
+        fontSize: 7.6,
+        fontFamily: 'DM Mono,monospace',
+        whiteSpace: 'nowrap',
+        minWidth: 24,
+        textAlign: 'right',
+      }}>
+        {compactWatts(safeMax)}
+      </span>
+      <svg width="42" height="42" viewBox="0 0 40 40" style={{ flexShrink: 0 }}>
         <circle cx="20" cy="20" r={radius} fill="rgba(2,8,18,0.34)" stroke="rgba(247,250,255,0.14)" strokeWidth="4" />
         <circle
           cx="20"
           cy="20"
           r={radius}
           fill="none"
-          stroke="rgba(47,109,255,0.94)"
+          stroke={powerColor}
           strokeWidth="4"
           strokeLinecap="round"
           strokeDasharray={`${dash} ${circumference - dash}`}
-          transform="rotate(-90 20 20)"
-          style={{ filter: 'drop-shadow(0 0 5px rgba(47,109,255,0.52))' }}
+          transform="rotate(180 20 20)"
+          style={{ filter: `drop-shadow(0 0 5px ${rangeColor(ratio, 0.5)})` }}
         />
+        <circle cx="20" cy="20" r="10.7" fill="none" stroke="rgba(247,250,255,0.16)" strokeWidth="0.75" />
+        <text x="20" y="20.2" textAnchor="middle" dominantBaseline="central" fill={TEXT} fontSize="9.2" fontFamily="DM Mono,monospace">
+          {fmt(value)}
+        </text>
       </svg>
-      <span style={{ color: TEXT, fontSize: 10, fontFamily: 'DM Mono,monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{fmt(value, ' W')}</span>
     </div>
   );
 }
@@ -363,18 +440,19 @@ function FooterPowerGauge({ value, max }) {
 function FooterTempBar({ value, max }) {
   const safeMax = Math.max(1, Number(max) || 1);
   const safeValue = Math.max(0, Number(value) || 0);
-  const ratio = Math.max(0, Math.min(1, safeValue / safeMax));
+  const ratio = ratioForValue(safeValue, safeMax);
+  const heatColor = rangeColor(tempScaleRatio(safeValue), 0.92);
   return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, minWidth: 0 }}>
       <div style={{
-        height: 36,
+        height: 40,
         width: 10,
         border: '1px solid rgba(238,248,255,0.3)',
         borderRadius: 3,
         background: 'linear-gradient(180deg, rgba(255,205,70,0.16), rgba(47,109,255,0.08))',
         position: 'relative',
         overflow: 'hidden',
-        boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.04), 0 0 9px rgba(47,109,255,0.16)',
+        boxShadow: `inset 0 0 0 1px rgba(255,255,255,0.04), 0 0 9px ${rangeColor(tempScaleRatio(safeValue), 0.18)}`,
       }}>
         <div style={{
           position: 'absolute',
@@ -382,9 +460,12 @@ function FooterTempBar({ value, max }) {
           right: 0,
           bottom: 0,
           height: `${ratio * 100}%`,
-          background: 'linear-gradient(180deg, rgba(255,217,92,0.86), rgba(47,109,255,0.94))',
-          boxShadow: '0 0 12px rgba(47,109,255,0.36)',
-        }} />
+          overflow: 'hidden',
+          border: ratio > 0 ? '1px solid rgba(255,255,255,0.56)' : 'none',
+          boxShadow: `0 0 12px ${heatColor}`,
+        }}>
+          <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: 40, background: TEMP_GRADIENT }} />
+        </div>
       </div>
       <span style={{ color: TEXT, fontSize: 10, fontFamily: 'DM Mono,monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{fmt(value, ' C')}</span>
     </div>
@@ -454,8 +535,9 @@ function CardBody({ unavailable, subline, tiles, graphView, rows, live, gauges =
 
   return (
     <div style={{ color: TEXT }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center', marginBottom: 9 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', marginBottom: 9 }}>
         {subline && <div style={{ color: MUTED, fontSize: 10, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{subline}</div>}
+        <ViewToggle active={tab} onChange={setTab} />
         <div title={live ? 'Sampling' : 'Paused'} style={{
           width: 7,
           height: 7,
@@ -465,7 +547,6 @@ function CardBody({ unavailable, subline, tiles, graphView, rows, live, gauges =
           flexShrink: 0,
         }} />
       </div>
-      <Tabs active={tab} onChange={setTab} />
       {tab === 'graphs' ? graphView : <MetricsTable rows={rows} />}
       {tiles?.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(0,1fr))', gap: 10, marginTop: 10 }}>
@@ -516,7 +597,7 @@ export function CpuWidget() {
           <MiniGraph
             label="Total usage"
             value={fmt(cpu?.usagePct, '%')}
-            series={[{ values: cpu?.history || [], color: SOFT_BLUE, fill: BLUE_FILL, width: 1.7 }]}
+            series={[{ values: cpu?.history || [], color: SOFT_BLUE, fill: BLUE_FILL, width: 1.05 }]}
             max={100}
             height={48}
           />
@@ -546,7 +627,7 @@ export function CpuWidget() {
         ...serviceRows(s),
       ]}
     />
-  ), 'Workstation', <HeaderMetric value={metricWithUnit(cpu?.usagePct, '%')} muted={!s?.sampling || s?.stale} />);
+  ), '', <HeaderMetric value={metricWithUnit(cpu?.usagePct, '%')} muted={!s?.sampling || s?.stale} />);
 }
 
 export function GpuWidget() {
@@ -569,13 +650,13 @@ export function GpuWidget() {
       graphView={(
         <div style={{ display: 'grid', gap: 6 }}>
           <GraphGrid graphs={[
-            { label: '3D', value: fmt(latest(gpu?.history3D), '%'), series: [{ values: gpu?.history3D || [], color: GREEN, fill: 'rgba(95,255,190,0.16)' }], height: 40 },
-            { label: 'Copy', value: fmt(latest(gpu?.historyCopy), '%'), series: [{ values: gpu?.historyCopy || [], color: GREEN }], height: 40 },
-            { label: 'Encode', value: fmt(latest(gpu?.historyEncode), '%'), series: [{ values: gpu?.historyEncode || [], color: GREEN }], height: 40 },
-            { label: 'Decode', value: fmt(latest(gpu?.historyDecode), '%'), series: [{ values: gpu?.historyDecode || [], color: GREEN }], height: 40 },
+            { label: '3D', value: fmt(latest(gpu?.history3D), '%'), series: [{ values: gpu?.history3D || [], color: GREEN, fill: 'rgba(95,255,190,0.16)' }], height: 30 },
+            { label: 'Copy', value: fmt(latest(gpu?.historyCopy), '%'), series: [{ values: gpu?.historyCopy || [], color: GREEN }], height: 30 },
+            { label: 'Encode', value: fmt(latest(gpu?.historyEncode), '%'), series: [{ values: gpu?.historyEncode || [], color: GREEN }], height: 30 },
+            { label: 'Decode', value: fmt(latest(gpu?.historyDecode), '%'), series: [{ values: gpu?.historyDecode || [], color: GREEN }], height: 30 },
           ]} />
-          <MiniGraph label="Dedicated memory" value={`${fmtMemoryMB(gpu?.vramUsedMB)} / ${fmtMemoryMB(gpu?.vramTotalMB, 0)}`} series={[{ values: gpu?.historyVRAM || [], color: SOFT_BLUE, fill: BLUE_FILL }]} max={100} height={46} />
-          <MiniGraph label="Shared memory" value={`${fmtMemoryMB(gpu?.sharedUsedMB)} / ${fmtMemoryMB(gpu?.sharedTotalMB, 0)}`} series={[{ values: gpu?.historySharedMemory || [], color: SOFT_BLUE, fill: BLUE_FILL }]} max={100} height={46} />
+          <MiniGraph label="Dedicated memory" value={`${fmtMemoryMB(gpu?.vramUsedMB)} / ${fmtMemoryMB(gpu?.vramTotalMB, 0)}`} series={[{ values: gpu?.historyVRAM || [], color: SOFT_BLUE, fill: BLUE_FILL }]} max={100} height={36} />
+          <MiniGraph label="Shared memory" value={`${fmtMemoryMB(gpu?.sharedUsedMB)} / ${fmtMemoryMB(gpu?.sharedTotalMB, 0)}`} series={[{ values: gpu?.historySharedMemory || [], color: SOFT_BLUE, fill: BLUE_FILL }]} max={100} height={36} />
         </div>
       )}
       rows={[
@@ -600,7 +681,7 @@ export function GpuWidget() {
         ...serviceRows(s),
       ]}
     />
-  ), 'Workstation', <HeaderMetric value={metricWithUnit(gpu?.usagePct, '%')} muted={!s?.sampling || s?.stale} />);
+  ), '', <HeaderMetric value={metricWithUnit(gpu?.usagePct, '%')} muted={!s?.sampling || s?.stale} />);
 }
 
 export function RamWidget() {
@@ -620,8 +701,8 @@ export function RamWidget() {
       ]}
       graphView={(
         <div style={{ display: 'grid', gap: 6 }}>
-          <MiniGraph label="Memory pressure" value={fmt(ram?.usedPct, '%')} series={[{ values: ram?.history || [], color: GOLD, fill: 'rgba(255,187,55,0.16)' }]} max={100} height={58} />
-          <MiniGraph label="Memory bandwidth" value={fmt(bw?.totalGBps, ' GB/s', 1)} series={[{ values: bw?.history || [], color: GOLD, fill: 'rgba(255,187,55,0.14)' }]} max={bwMax} height={58} />
+          <MiniGraph label="Memory pressure" value={fmt(ram?.usedPct, '%')} series={[{ values: ram?.history || [], color: GOLD, fill: 'rgba(255,187,55,0.16)' }]} max={100} height={54} />
+          <MiniGraph label="Memory bandwidth" value={fmt(bw?.totalGBps, ' GB/s', 1)} series={[{ values: bw?.history || [], color: GOLD, fill: 'rgba(255,187,55,0.14)' }]} max={bwMax} height={54} />
         </div>
       )}
       rows={[
@@ -638,7 +719,7 @@ export function RamWidget() {
         ...serviceRows(s),
       ]}
     />
-  ), 'Workstation', <HeaderMetric value={metricWithUnit(ram?.usedPct, '%')} muted={!s?.sampling || s?.stale} />);
+  ), '', <HeaderMetric value={metricWithUnit(ram?.usedPct, '%')} muted={!s?.sampling || s?.stale} />);
 }
 
 export function DiskWidget() {
@@ -656,7 +737,7 @@ export function DiskWidget() {
         { label: 'State', value: (disk?.activityPct || 0) > 2 ? 'Active' : 'Idle' },
       ]}
       graphView={(
-        <MiniGraph label="Disk activity" value={fmt(disk?.activityPct, '%', 1)} series={[{ values: disk?.history || [], color: GREEN, fill: 'rgba(95,255,190,0.15)' }]} max={max} height={72} />
+        <MiniGraph label="Disk activity" value={fmt(disk?.activityPct, '%', 1)} series={[{ values: disk?.history || [], color: GREEN, fill: 'rgba(95,255,190,0.15)' }]} max={max} height={54} />
       )}
       rows={[
         ['Model', disk?.model || '--'],
@@ -667,7 +748,7 @@ export function DiskWidget() {
         ...serviceRows(s),
       ]}
     />
-  ), 'Workstation', <HeaderMetric value={metricWithUnit(disk?.activityPct, '%', 1)} muted={!s?.sampling || s?.stale} />);
+  ), '', <HeaderMetric value={metricWithUnit(disk?.activityPct, '%', 1)} muted={!s?.sampling || s?.stale} />);
 }
 
 export function NetworkWidget() {
@@ -689,11 +770,11 @@ export function NetworkWidget() {
           label="Network throughput"
           value={`D ${fmt(net?.downMbps, '', 1)} / U ${fmt(net?.upMbps, ' Mbps', 1)}`}
           series={[
-            { values: net?.downHistory || [], color: VIOLET, fill: 'rgba(194,106,255,0.14)', width: 1.55 },
-            { values: net?.upHistory || [], color: SOFT_BLUE, width: 1.2 },
+            { values: net?.downHistory || [], color: VIOLET, fill: 'rgba(194,106,255,0.14)', width: 1.05 },
+            { values: net?.upHistory || [], color: SOFT_BLUE, width: 0.85 },
           ]}
           max={max}
-          height={76}
+          height={54}
         />
       )}
       rows={[
@@ -707,5 +788,5 @@ export function NetworkWidget() {
         ...serviceRows(s),
       ]}
     />
-  ), 'Workstation', <HeaderMetric value={`${metricWithUnit(net?.downMbps, 'M', 1)}↓ ${metricWithUnit(net?.upMbps, 'M', 1)}↑`} muted={!s?.sampling || s?.stale} />);
+  ), '', <HeaderMetric value={`${metricWithUnit(net?.downMbps, 'M', 1)}↓ ${metricWithUnit(net?.upMbps, 'M', 1)}↑`} muted={!s?.sampling || s?.stale} />);
 }
