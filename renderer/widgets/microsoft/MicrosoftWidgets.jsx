@@ -119,14 +119,14 @@ function MsSetupPane({ step, cidDraft, setCidDraft, startAuth }) {
         {cidDraft && <button onClick={()=>startAuth(cidDraft)} style={C.btn}>→</button>}
       </div>
       <div style={{fontSize:9,color:"#252530",marginTop:8,lineHeight:1.7}}>
-        portal.azure.com → App registrations → New → grant <em>Calendars.Read</em> + <em>Mail.Read</em> + <em>Tasks.ReadWrite</em> → enable public client flows
+        Azure app: redirect URI <em>http://localhost:47340/callback</em>, public client flows on, delegated <em>Calendars.Read</em> + <em>Mail.ReadWrite</em> + <em>Tasks.ReadWrite</em>.
       </div>
     </div>
   );
   if (step === 'authenticating') return (
     <div style={{paddingTop:6,display:"flex",alignItems:"center",gap:8}}>
       <div style={{width:8,height:8,border:"1.5px solid #333",borderTop:"1.5px solid #888",borderRadius:"50%",animation:"spin 1s linear infinite",flexShrink:0}}/>
-      <span style={{fontSize:11,color:"#d0d0e0"}}>Signing in… complete the browser window.</span>
+      <span style={{fontSize:11,color:"#d0d0e0"}}>Signing in… complete the zoomed Microsoft panel.</span>
     </div>
   );
   return null;

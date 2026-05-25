@@ -36,6 +36,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     post:         (url, token, body)  => ipcRenderer.invoke('ms-graph-post',   url, token, body),
     authPkce:     (clientId, scopes)  => ipcRenderer.invoke('ms-auth-pkce',    clientId, scopes),
     tokenRefresh: (clientId, rt)      => ipcRenderer.invoke('ms-token-refresh', clientId, rt),
+    onAuthUrl:    (cb) => {
+      const handler = (_e, payload) => cb(payload)
+      ipcRenderer.on('ms-auth-url', handler)
+      return () => ipcRenderer.removeListener('ms-auth-url', handler)
+    },
+    onAuthComplete: (cb) => {
+      const handler = (_e, payload) => cb(payload)
+      ipcRenderer.on('ms-auth-complete', handler)
+      return () => ipcRenderer.removeListener('ms-auth-complete', handler)
+    },
   },
 
   rss: {

@@ -7,7 +7,7 @@ const { exec, spawn } = require('child_process')
 const { getStore, setStore, deleteStore } = require('./store')
 
 const PANEL_GAP = 10   // px gap between window edge and screen; window is inset so the gap shows raw desktop
-const PANEL_BACKGROUND_MATERIAL = 'none' // Native acrylic shifts tint when the window loses focus.
+const PANEL_BACKGROUND_MATERIAL = 'acrylic'
 const PANEL_COLUMNS = ['left', 'monitor', 'mid', 'feed', 'right', 'aux']
 const PANEL_DEFAULT_COL_WIDTHS = { left: 220, monitor: 220, mid: 240, feed: 260, right: 260, aux: 260 }
 const PANEL_DIVIDER_WIDTH = 4
@@ -560,6 +560,7 @@ function fullPanelWidth() {
 
 function basePanelWidth(baseColumnCount = 3, colWidths = {}) {
   const count = Math.max(3, Math.min(PANEL_COLUMNS.length, Number(baseColumnCount) || 3))
+  if (count >= PANEL_COLUMNS.length) return fullPanelWidth()
   const widths = { ...PANEL_DEFAULT_COL_WIDTHS, ...(colWidths || {}) }
   const cols = PANEL_COLUMNS.slice(0, count)
   const columnsWidth = cols.reduce((sum, col) => sum + Math.max(150, Math.min(900, Number(widths[col]) || PANEL_DEFAULT_COL_WIDTHS[col] || 220)), 0)
@@ -794,10 +795,9 @@ function armNavLoadTimer() {
 
 function sendToBrave(obj) {
   if (!braveSocket || braveSocket.destroyed) {
-    log('[brave-tcp] sendToBrave: no socket', JSON.stringify(obj))
     return
   }
-  log('[brave-tcp] sendToBrave:', JSON.stringify(obj))
+  if (process.env.WP_DEBUG_BRAVE === '1') log('[brave-tcp] sendToBrave:', JSON.stringify(obj))
   try { braveSocket.write(JSON.stringify(obj) + '\n') } catch (e) { log('[brave-tcp] write error:', e.message) }
 }
 
@@ -2792,7 +2792,7 @@ ipcMain.handle('ms-graph-post', async (_e, url, accessToken, postBody) => {
 // Fixed callback port so the redirect URI is predictable (register it in Azure once).
 const MS_AUTH_PORT = 47340
 
-ipcMain.handle('ms-auth-pkce', async (_e, clientId, scopes) => {
+ipcMain.handle('ms-auth-pkce', async (event, clientId, scopes) => {
   const crypto = require('crypto')
   const http   = require('http')
 
@@ -2823,13 +2823,21 @@ ipcMain.handle('ms-auth-pkce', async (_e, clientId, scopes) => {
           <div style="font-size:32px">${error ? '✗' : '✓'}</div>
           <div style="font-size:14px">${error
             ? 'Authentication failed: ' + error
-            : 'Authentication complete — vous pouvez fermer le navigateur.'}</div>
+            : 'Authentication complete - you can close this panel.'}</div>
         </body></html>`)
 
       server.close()
 
-      if (error) { reject(new Error(error)); return }
-      if (!code)  { reject(new Error('no code in callback')); return }
+      if (error) {
+        event.sender.send('ms-auth-complete', { ok: false, error })
+        reject(new Error(error))
+        return
+      }
+      if (!code)  {
+        event.sender.send('ms-auth-complete', { ok: false, error: 'no code in callback' })
+        reject(new Error('no code in callback'))
+        return
+      }
 
       const body = `client_id=${encodeURIComponent(clientId)}`
         + `&grant_type=authorization_code`
@@ -2840,29 +2848,31 @@ ipcMain.handle('ms-auth-pkce', async (_e, clientId, scopes) => {
       httpsRequest({
         hostname: 'login.microsoftonline.com', path: '/common/oauth2/v2.0/token', method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(body) }
-      }, body).then(resolve).catch(reject)
+      }, body).then(result => {
+        event.sender.send('ms-auth-complete', { ok: true })
+        resolve(result)
+      }).catch(err => {
+        event.sender.send('ms-auth-complete', { ok: false, error: err.message })
+        reject(err)
+      })
     })
 
     server.on('error', err => reject(err))
     server.listen(MS_AUTH_PORT, '127.0.0.1', () => {
-      log('[ms-auth] callback server ready on', MS_AUTH_PORT, '— opening embedded Brave')
-      // Use the panel's embedded Brave instance instead of shell.openExternal
-      // or an internal BrowserWindow:
-      //   - The panel sits HWND_TOPMOST, so a freshly-launched external Brave
-      //     window would render behind it and look like nothing happened.
-      //   - An internal BrowserWindow has isolated cookies and would force a
-      //     fresh Microsoft login even if Brave is already signed in.
-      //   - Embedded Brave reuses the user's main profile (no --user-data-dir
-      //     override per the brave-host architecture), so existing Outlook/MS
-      //     cookies make the consent prompt frictionless.
-      if (browserEmbedded) {
-        sendToBrave({ type: 'navigate', url: authUrl })
-      } else {
-        openBraveInPanel(authUrl)
-      }
+      log('[ms-auth] callback server ready on', MS_AUTH_PORT, '- opening panel web auth')
+      event.sender.send('ms-auth-url', {
+        url: authUrl,
+        title: 'Microsoft sign-in',
+        source: 'Microsoft',
+        redirectUri,
+      })
     })
 
-    const timeout = setTimeout(() => { server.close(); reject(new Error('auth timeout')) }, 5 * 60 * 1000)
+    const timeout = setTimeout(() => {
+      event.sender.send('ms-auth-complete', { ok: false, error: 'auth timeout' })
+      server.close()
+      reject(new Error('auth timeout'))
+    }, 5 * 60 * 1000)
     server.on('close', () => clearTimeout(timeout))
   })
 })

@@ -388,7 +388,7 @@ function applyYouTubeAudioState(iframe, muted) {
   if (!muted) postYouTubeCommand(iframe, 'setVolume', [72]);
 }
 
-function LiveYouTubeEmbedTile({ feed, muted, iframeRef: externalIframeRef, onReady }) {
+export function LiveYouTubeEmbedTile({ feed, muted, iframeRef: externalIframeRef, onReady }) {
   const iframeRef = useRef(null);
   const src = youtubeEmbed(feed.embedUrl || feed.url);
   const setIframeRef = (node) => {

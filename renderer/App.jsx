@@ -21,7 +21,7 @@ import CalendarWidget from "./widgets/calendar/CalendarWidget.jsx";
 import CameraWidget from "./widgets/camera/CameraWidget.jsx";
 import ClockWidget from "./widgets/clock/ClockWidget.jsx";
 import EuronewsWidget from "./widgets/euronews/EuronewsWidget.jsx";
-import LiveFeedGrid, { LiveFeedWidget, LiveHlsTile, YOUTUBE_PLAYER_CSS, YOUTUBE_PLAYER_DIAG_JS } from "./widgets/live/LiveFeedGrid.jsx";
+import LiveFeedGrid, { LiveFeedWidget, LiveHlsTile, LiveYouTubeEmbedTile, YOUTUBE_PLAYER_CSS, YOUTUBE_PLAYER_DIAG_JS } from "./widgets/live/LiveFeedGrid.jsx";
 import { AgendaWidget, MailWidget, TodoWidget } from "./widgets/microsoft/MicrosoftWidgets.jsx";
 import NewsWidget from "./widgets/news/NewsWidget.jsx";
 import { parseOPML } from "./widgets/news/news.service.js";
@@ -52,6 +52,8 @@ const BASE_COLUMN_ORDER = ['left', 'monitor', 'mid', 'feed', 'right', 'aux'];
 const DEFAULT_BASE_COLUMN_COUNT = 6;
 const EXPAND_DIAG_ENABLED = false;
 const EXPAND_DIAG_DELAYS = [0, 16, 80, 180, 260, 420, 700];
+const WEB_ISLAND_DIAG_ENABLED = true;
+const WEB_ISLAND_DIAG_DELAYS = [0, 60, 180, 420, 900, 1800, 3600, 7200, 12000];
 const WORKSTATION_MODE_COLUMNS = {
   'workstation-cpu': 'monitor',
   'workstation-disk': 'monitor',
@@ -116,6 +118,17 @@ function styleSummary(el) {
   };
 }
 
+function sizeSummary(el) {
+  if (!el) return null;
+  return {
+    rect: rectSummary(el),
+    client: { w: el.clientWidth || 0, h: el.clientHeight || 0 },
+    scroll: { w: el.scrollWidth || 0, h: el.scrollHeight || 0 },
+    offset: { w: el.offsetWidth || 0, h: el.offsetHeight || 0 },
+    style: styleSummary(el),
+  };
+}
+
 function nodeNameSummary(el) {
   if (!el) return '';
   const tag = el.tagName?.toLowerCase() || 'node';
@@ -156,6 +169,106 @@ function transparentLayers(root) {
     };
   }).filter(Boolean).sort((a, b) => b.area - a.area).slice(0, 10);
 }
+
+const WEB_ISLAND_GUEST_DIAG_JS = `
+(() => {
+  const round = value => {
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.round(n * 10) / 10 : null;
+  };
+  const rect = el => {
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    return { x: round(r.x), y: round(r.y), w: round(r.width), h: round(r.height), top: round(r.top), bottom: round(r.bottom) };
+  };
+  const style = el => {
+    if (!el) return null;
+    const s = getComputedStyle(el);
+    return {
+      display: s.display,
+      visibility: s.visibility,
+      opacity: s.opacity,
+      overflow: s.overflow + '/' + s.overflowY,
+      position: s.position,
+      transform: s.transform,
+      height: s.height,
+      minHeight: s.minHeight,
+      maxHeight: s.maxHeight,
+      bg: s.backgroundColor,
+    };
+  };
+  const name = el => {
+    if (!el) return null;
+    const cls = String(el.className || '').trim().split(/\\s+/).filter(Boolean).slice(0, 4).join('.');
+    const text = (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 90);
+    return {
+      node: el.tagName.toLowerCase() + (el.id ? '#' + el.id : '') + (cls ? '.' + cls : ''),
+      rect: rect(el),
+      style: style(el),
+      text,
+    };
+  };
+  const atPoint = (x, y) => {
+    try {
+      return name(document.elementFromPoint(Math.max(0, Math.min(innerWidth - 1, x)), Math.max(0, Math.min(innerHeight - 1, y))));
+    } catch {
+      return null;
+    }
+  };
+  const candidates = [
+    document.querySelector('[role="main"]'),
+    document.querySelector('main'),
+    document.querySelector('[data-app-section]'),
+    document.querySelector('[aria-label*="message" i]'),
+    document.querySelector('[class*="ReadingPane" i]'),
+    document.querySelector('[class*="mail" i]'),
+    document.body,
+  ].filter(Boolean);
+  const unique = [];
+  for (const el of candidates) {
+    if (!unique.includes(el)) unique.push(el);
+  }
+  return {
+    href: location.href,
+    title: document.title,
+    readyState: document.readyState,
+    active: name(document.activeElement),
+    viewport: {
+      inner: { w: innerWidth, h: innerHeight },
+      visual: window.visualViewport ? {
+        w: round(visualViewport.width),
+        h: round(visualViewport.height),
+        scale: round(visualViewport.scale),
+        offsetTop: round(visualViewport.offsetTop),
+      } : null,
+      scroll: { x: round(scrollX), y: round(scrollY) },
+      dpr: round(devicePixelRatio),
+    },
+    document: {
+      html: {
+        client: { w: document.documentElement.clientWidth, h: document.documentElement.clientHeight },
+        scroll: { w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight },
+        rect: rect(document.documentElement),
+        style: style(document.documentElement),
+      },
+      body: {
+        client: { w: document.body?.clientWidth || 0, h: document.body?.clientHeight || 0 },
+        scroll: { w: document.body?.scrollWidth || 0, h: document.body?.scrollHeight || 0 },
+        rect: rect(document.body),
+        style: style(document.body),
+        textLength: (document.body?.innerText || '').length,
+      },
+    },
+    probes: [
+      atPoint(innerWidth * 0.5, 24),
+      atPoint(innerWidth * 0.5, Math.max(80, innerHeight * 0.18)),
+      atPoint(innerWidth * 0.5, innerHeight * 0.5),
+      atPoint(innerWidth * 0.5, Math.max(0, innerHeight - 48)),
+    ],
+    candidates: unique.slice(0, 8).map(name),
+  };
+})()
+`;
 
 function findWidgetNode(id) {
   return Array.from(document.querySelectorAll('[data-widget-id]'))
@@ -828,6 +941,19 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
   const pressGateRef = useRef(isPressReader ? 'preparing' : '');
   const pressGateSinceRef = useRef(Date.now());
   const pressAutomationTimerRef = useRef(null);
+  const webDiagSeqRef = useRef(0);
+  const webDiagDomReadyRef = useRef(false);
+  const liveNativeHlsUrl = isLive ? (reader.hlsUrl || liveHlsUrl || (/\.m3u8(?:[?#].*)?$/i.test(reader.url || '') ? reader.url : '')) : '';
+  const liveNativePending = isLiveResolvable && !liveNativeHlsUrl && !liveHlsFailed;
+  const liveUsesNativeVideo = isLive && !!liveNativeHlsUrl;
+  const liveYouTubeFeed = reader.liveFeed || {
+    id: `zoom-youtube-${reader.url || 'live'}`,
+    title,
+    source,
+    url: reader.url,
+    embedUrl: reader.url,
+    youtube: true,
+  };
 
   function updatePressGate(nextGate, message = '') {
     if (pressGateRef.current !== nextGate) pressGateSinceRef.current = Date.now();
@@ -841,9 +967,84 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
     pressAutomationTimerRef.current = setTimeout(() => runPressReaderAutomation(), delay);
   }
 
+  function safeWebviewCall(fn, fallback = null) {
+    try {
+      const value = fn();
+      return value === undefined ? fallback : value;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function safeWebviewUrl(fallback = reader.url) {
+    const wv = webviewRef.current;
+    if (!wv) return fallback || '';
+    return safeWebviewCall(() => wv.getURL?.() || fallback || '', fallback || '');
+  }
+
+  async function logWebIslandDiagnostics(phase, extra = {}) {
+    if (!WEB_ISLAND_DIAG_ENABLED || isLive) return;
+    const wv = webviewRef.current;
+    const frame = cardRef.current?.querySelector?.('.browser-island-frame') || null;
+    const domReady = webDiagDomReadyRef.current;
+    const payload = {
+      phase,
+      source,
+      title,
+      flavor: reader.flavor || '',
+      readerUrl: reader.url,
+      currentUrl,
+      loading,
+      progress,
+      selfLaunching,
+      hasTransition: !!transition,
+      transitionKey: transition?.key || '',
+      host: {
+        window: { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio },
+        stage: sizeSummary(stageRef.current),
+        card: sizeSummary(cardRef.current),
+        frame: sizeSummary(frame),
+        webview: sizeSummary(wv),
+        activeElement: nodeNameSummary(document.activeElement),
+      },
+      webviewState: wv ? {
+        domReady,
+        loading: safeWebviewCall(() => wv.isLoading?.(), null),
+        loadingMainFrame: safeWebviewCall(() => wv.isLoadingMainFrame?.(), null),
+        url: safeWebviewUrl(reader.url),
+        webContentsId: domReady ? safeWebviewCall(() => wv.getWebContentsId?.(), null) : null,
+      } : null,
+      extra,
+    };
+    if (wv && domReady) {
+      try {
+        payload.guest = await wv.executeJavaScript(WEB_ISLAND_GUEST_DIAG_JS, true);
+      } catch (error) {
+        payload.guestError = error?.message || String(error);
+      }
+    } else if (wv) {
+      payload.guestSkipped = 'waiting-for-dom-ready';
+    }
+    const message = JSON.stringify(payload);
+    console.warn('[webdiag]', message);
+    api.log?.('[webdiag]', message);
+  }
+
   useEffect(() => {
+    webDiagDomReadyRef.current = false;
     setCurrentUrl(reader.url);
   }, [reader.url]);
+
+  useEffect(() => {
+    if (!WEB_ISLAND_DIAG_ENABLED || isLive) return undefined;
+    const seq = webDiagSeqRef.current + 1;
+    webDiagSeqRef.current = seq;
+    const timers = WEB_ISLAND_DIAG_DELAYS.map(delay => window.setTimeout(() => {
+      if (webDiagSeqRef.current !== seq) return;
+      logWebIslandDiagnostics(`timer:${delay}ms`, { seq });
+    }, delay));
+    return () => timers.forEach(timer => window.clearTimeout(timer));
+  }, [reader.url, isLive]);
 
   useEffect(() => {
     setShowWebSignIn(!!reader.authUrl && !isOutlook);
@@ -906,10 +1107,6 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
       window.clearTimeout(liveResolveTimerRef.current);
     };
   }, [isLiveDirectHls, isLiveResolvable, isLiveYouTube, reader.hlsUrl, reader.url, reader.title, reader.source, reader.referrer, reader.hls, reader.youtube, reader.liveFeed]);
-
-  const liveNativeHlsUrl = isLive ? (reader.hlsUrl || liveHlsUrl || (/\.m3u8(?:[?#].*)?$/i.test(reader.url || '') ? reader.url : '')) : '';
-  const liveNativePending = isLiveResolvable && !liveNativeHlsUrl && !liveHlsFailed;
-  const liveUsesNativeVideo = isLive && !!liveNativeHlsUrl;
 
   useEffect(() => {
     window.clearTimeout(livePlaybackTimerRef.current);
@@ -1426,11 +1623,18 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
         try { wv.executeJavaScript(PRESSREADER_INTERACTION_TRACKER_JS, true); } catch {}
       }
     };
+    const onDomReady = () => {
+      webDiagDomReadyRef.current = true;
+      applyDark();
+      logWebIslandDiagnostics('dom-ready');
+    };
     const onStart = () => {
-      if (isLive) api.log?.('[live] zoom-webview-start-loading', title, wv.getURL?.() || reader.url);
+      webDiagDomReadyRef.current = false;
+      const url = safeWebviewUrl(reader.url);
+      if (isLive) api.log?.('[live] zoom-webview-start-loading', title, url);
+      logWebIslandDiagnostics('did-start-loading');
       if (!isLive) setLoading(true);
       setProgress(16);
-      const url = wv.getURL?.() || reader.url;
       updateWebAuthState(url);
       if (isPressReader) {
         const activeGate = pressGateRef.current && pressGateRef.current !== 'ready' ? pressGateRef.current : '';
@@ -1445,13 +1649,16 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
       }
     };
     const onStop = () => {
-      const url = wv.getURL?.() || reader.url;
+      const url = safeWebviewUrl(reader.url);
       if (isLive) api.log?.('[live] zoom-webview-stop-loading', title, url);
       setCurrentUrl(url);
       updateWebAuthState(url);
       applyDark();
+      logWebIslandDiagnostics('did-stop-loading', { url });
       setTimeout(applyDark, 400);
       setTimeout(applyDark, 1400);
+      setTimeout(() => logWebIslandDiagnostics('did-stop-loading+650ms', { url }), 650);
+      setTimeout(() => logWebIslandDiagnostics('did-stop-loading+1800ms', { url }), 1800);
       if (isLiveYouTube) {
         try { wv.executeJavaScript(YOUTUBE_PLAYER_DIAG_JS, true); } catch {}
         setTimeout(applyDark, 4000);
@@ -1464,11 +1671,12 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
       }
     };
     const onNavigate = () => {
-      const url = wv.getURL?.() || reader.url;
+      const url = safeWebviewUrl(reader.url);
       if (isLive) api.log?.('[live] zoom-webview-navigate', title, url);
       setCurrentUrl(url);
       updateWebAuthState(url);
       applyDark();
+      logWebIslandDiagnostics('did-navigate', { url });
     };
     const onConsole = (event) => {
       if (isLive && typeof event.message === 'string' && /^\[(wp-live-yt|wp-yt|live)\]/i.test(event.message)) {
@@ -1486,34 +1694,69 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
     };
     const onFail = event => {
       if (isLive) api.log?.('[live] zoom-webview-fail-load', title, event?.errorCode, event?.errorDescription, event?.validatedURL);
+      logWebIslandDiagnostics('did-fail-load', {
+        errorCode: event?.errorCode,
+        errorDescription: event?.errorDescription,
+        validatedURL: event?.validatedURL,
+        isMainFrame: event?.isMainFrame,
+      });
     };
+    const onFinish = () => logWebIslandDiagnostics('did-finish-load');
+    const onFrameFinish = event => logWebIslandDiagnostics('did-frame-finish-load', {
+      isMainFrame: event?.isMainFrame,
+      frameProcessId: event?.frameProcessId,
+      frameRoutingId: event?.frameRoutingId,
+    });
+    const onGone = event => logWebIslandDiagnostics('render-process-gone', {
+      reason: event?.reason,
+      exitCode: event?.exitCode,
+    });
+    const onUnresponsive = () => logWebIslandDiagnostics('unresponsive');
+    const onResponsive = () => logWebIslandDiagnostics('responsive');
+    const onTitle = event => logWebIslandDiagnostics('page-title-updated', { title: event?.title });
 
-    wv.addEventListener('dom-ready', applyDark);
+    wv.addEventListener('dom-ready', onDomReady);
     wv.addEventListener('did-start-loading', onStart);
     wv.addEventListener('did-stop-loading', onStop);
     wv.addEventListener('did-fail-load', onFail);
+    wv.addEventListener('did-finish-load', onFinish);
+    wv.addEventListener('did-frame-finish-load', onFrameFinish);
     wv.addEventListener('did-navigate', onNavigate);
     wv.addEventListener('did-navigate-in-page', onNavigate);
     wv.addEventListener('console-message', onConsole);
+    wv.addEventListener('render-process-gone', onGone);
+    wv.addEventListener('unresponsive', onUnresponsive);
+    wv.addEventListener('responsive', onResponsive);
+    wv.addEventListener('page-title-updated', onTitle);
+    logWebIslandDiagnostics('listeners-attached');
     return () => {
-      wv.removeEventListener('dom-ready', applyDark);
+      const wasDomReady = webDiagDomReadyRef.current;
+      webDiagDomReadyRef.current = false;
+      logWebIslandDiagnostics('listeners-detached', { wasDomReady });
+      wv.removeEventListener('dom-ready', onDomReady);
       wv.removeEventListener('did-start-loading', onStart);
       wv.removeEventListener('did-stop-loading', onStop);
       wv.removeEventListener('did-fail-load', onFail);
+      wv.removeEventListener('did-finish-load', onFinish);
+      wv.removeEventListener('did-frame-finish-load', onFrameFinish);
       wv.removeEventListener('did-navigate', onNavigate);
       wv.removeEventListener('did-navigate-in-page', onNavigate);
       wv.removeEventListener('console-message', onConsole);
+      wv.removeEventListener('render-process-gone', onGone);
+      wv.removeEventListener('unresponsive', onUnresponsive);
+      wv.removeEventListener('responsive', onResponsive);
+      wv.removeEventListener('page-title-updated', onTitle);
     };
   }, [reader.url, reader.authUrl, isOutlook, isPressReader, isLive, isLiveYouTube, liveHlsFailed, runPressReaderAutomation]);
 
   const pressReaderShielded = isPressReader && (loading || (pressGate && pressGate !== 'ready'));
 
   return (
-    <div ref={stageRef} className="reader-stage">
+    <div ref={stageRef} className="reader-stage browser-island-stage">
       <ReaderLaunchGhost active={launch.launching} style={launch.style} label={source} preview={ghostPreview} />
       <article
         ref={cardRef}
-        className={`reader-card browser-island-card${selfLaunching ? ' reader-card-pending' : reader.launchRect ? ' reader-card-settled' : ''}`}
+        className={`reader-card browser-island-card${selfLaunching ? ' reader-card-pending' : ' reader-card-settled'}`}
       >
         <div className="reader-card-glow" />
         <div className="reader-topbar">
@@ -1536,7 +1779,19 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
         </div>
 
         <div className={`browser-island-frame${isLive ? ' browser-island-frame-live' : ''}${pressReaderShielded ? ' browser-island-frame-shielded' : ''}`}>
-          {liveUsesNativeVideo ? (
+          {isLiveYouTube ? (
+            <div className="browser-island-live-native">
+              <LiveYouTubeEmbedTile
+                feed={liveYouTubeFeed}
+                muted={liveMuted}
+                onReady={() => {
+                  api.log?.('[live] zoom-youtube-embed-ready', reader.title || reader.url);
+                  setLoading(false);
+                  setProgress(100);
+                }}
+              />
+            </div>
+          ) : liveUsesNativeVideo ? (
             <div className="browser-island-live-native">
               <LiveHlsTile
                 src={liveNativeHlsUrl}
@@ -1565,6 +1820,7 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
             </div>
           ) : (
             <webview
+              className="browser-island-webview"
               ref={webviewRef}
               src={reader.url}
               partition={reader.partition === undefined ? 'persist:widget-browser' : reader.partition || undefined}
@@ -1574,8 +1830,8 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
               allowpopups="true"
               webpreferences="contextIsolation=yes,nodeIntegration=no"
               style={isLive
-                ? { width: '100%', height: 'auto', aspectRatio: '16 / 9', maxHeight: '100%', display: 'block', background: '#000' }
-                : { width: '100%', height: '100%', display: 'block', background: isPressReader ? '#111214' : '#050913' }}
+                ? { width: '100%', height: 'auto', aspectRatio: '16 / 9', maxHeight: '100%', display: 'inline-flex', background: '#000' }
+                : { position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'inline-flex', background: isPressReader ? '#111214' : '#050913' }}
             />
           )}
           {isLive && (
@@ -2066,9 +2322,22 @@ export default function App() {
     });
   }
 
-  function openWebCard({ url, title = 'Web content', source = 'Browser mode', partition = 'persist:widget-browser', authUrl = '', flavor = '', referrer = '', userAgent = '' }, event) {
+  function openWebCard(options = {}, event) {
+    const {
+      url,
+      title = 'Web content',
+      source = 'Browser mode',
+      partition = 'persist:widget-browser',
+      authUrl = '',
+      flavor = '',
+      referrer = '',
+      userAgent = '',
+      ...extra
+    } = options || {};
     if (!url) return;
-    readerRequestRef.current += 1;
+
+    const requestId = readerRequestRef.current + 1;
+    readerRequestRef.current = requestId;
     const launchRect = getReaderLaunchRect(event);
     launchReader({
       open: true,
@@ -2082,11 +2351,40 @@ export default function App() {
       flavor,
       referrer,
       userAgent,
+      ...extra,
       seed: null,
       article: null,
       error: '',
     }, launchRect);
   }
+
+  useEffect(() => {
+    const offAuthUrl = api.msGraph?.onAuthUrl?.((payload = {}) => {
+      if (!payload.url) return;
+      openWebCard({
+        url: payload.url,
+        title: payload.title || 'Microsoft sign-in',
+        source: payload.source || 'Microsoft',
+        partition: 'persist:widget-browser',
+        flavor: 'outlook',
+      });
+    });
+    const offAuthComplete = api.msGraph?.onAuthComplete?.((payload = {}) => {
+      if (!payload.ok) return;
+      readerRequestRef.current += 1;
+      readerTransitionRef.current = null;
+      setReaderTransition(null);
+      setReader(previous => (
+        previous.open && previous.mode === 'web' && previous.source === 'Microsoft'
+          ? { open: false, mode: 'article', status: 'idle', url: '', seed: null, article: null, error: '', launchRect: null }
+          : previous
+      ));
+    });
+    return () => {
+      offAuthUrl?.();
+      offAuthComplete?.();
+    };
+  }, [openWebCard]);
 
   function closeReader() {
     readerRequestRef.current += 1;
@@ -2434,7 +2732,7 @@ export default function App() {
     const fromRects = captureWorkstationRects();
 
     try {
-      await fitNativePanelForMode(nextMode);
+      await fitNativePanelForMode(nextMode, nextMode === 'base' ? baseColumnCount : DEFAULT_BASE_COLUMN_COUNT);
       if (modeSwitchSeqRef.current !== seq) return;
 
       if (workstationMode && nextMode !== 'monitor') {
@@ -2498,14 +2796,12 @@ export default function App() {
   const visibleIds = activeIds.filter(id => isKnownWidgetId(id, categories));
   const newsIds  = visibleIds.filter(id => id.startsWith("cat:"));
   const stageActive = reader.open || !!readerTransition || panelMode === 'monitor' || panelMode === 'live';
-  const keepNewsInRegularColumns = panelMode !== 'news';
-  const belongsInRegularColumn = id => (panelMode !== 'monitor' || !WORKSTATION_WIDGET_ID_SET.has(id)) && (keepNewsInRegularColumns || !id.startsWith('cat:'));
+  const webStageActive = (reader.open && reader.mode === 'web') || readerTransition?.nextReader?.mode === 'web';
+  const belongsInRegularColumn = id => panelMode !== 'monitor' || !WORKSTATION_WIDGET_ID_SET.has(id);
   const leftIds  = visibleIds.filter(id => getColFor(id) === "left" && belongsInRegularColumn(id));
   const monitorIds = visibleIds.filter(id => getColFor(id) === "monitor" && belongsInRegularColumn(id));
   const midIds = visibleIds.filter(id => getColFor(id) === "mid" && belongsInRegularColumn(id));
-  const feedIds = panelMode === 'news'
-    ? newsIds
-    : visibleIds.filter(id => getColFor(id) === "feed" && belongsInRegularColumn(id));
+  const feedIds = visibleIds.filter(id => getColFor(id) === "feed" && belongsInRegularColumn(id));
   const rightIds = visibleIds.filter(id => getColFor(id) === "right" && belongsInRegularColumn(id));
   const auxIds = visibleIds.filter(id => getColFor(id) === "aux" && belongsInRegularColumn(id));
   const workstationStageIds = WORKSTATION_WIDGET_IDS.filter(id => visibleIds.includes(id) || panelMode === 'monitor');
@@ -2517,12 +2813,13 @@ export default function App() {
 
   useEffect(() => {
     if (!visible || !loaded || browserPane.open) return;
-    const geometryMode = stageActive ? (panelMode === 'base' ? 'stage' : panelMode) : 'base';
-    fitNativePanelForMode(geometryMode);
+    const geometryMode = stageActive ? (panelMode === 'base' ? 'stage' : panelMode) : (panelMode === 'news' ? 'news' : 'base');
+    const geometryColumnCount = geometryMode === 'base' ? baseColumnCount : DEFAULT_BASE_COLUMN_COUNT;
+    fitNativePanelForMode(geometryMode, geometryColumnCount);
   }, [visible, loaded, browserPane.open, stageActive, panelMode, baseColumnCount]);
 
   const onUnread = useCallback((id, count)=>{
-    setUnreadMap(p=>({...p,[id]:count}));
+    setUnreadMap(p => (p[id] === count ? p : { ...p, [id]: count }));
   },[]);
 
   if (!storageReady) return (
@@ -2615,14 +2912,14 @@ export default function App() {
   function renderMonitorStage() {
     const present = id => workstationStageIds.includes(id);
     return (
-      <div style={{
+      <div className="monitor-stage" style={{
         flex: 1,
         minWidth: 0,
         minHeight: 0,
-        padding: '0 10px 12px 6px',
+        padding: '10px',
         display: 'flex',
         flexDirection: 'column',
-        gap: 8,
+        gap: 10,
         overflowY: 'auto',
         overflowX: 'hidden',
       }}>
@@ -2642,7 +2939,7 @@ export default function App() {
   function renderStageArea() {
     if (reader.open || readerTransition) {
       return reader.mode === 'web'
-        ? <BrowserIslandCard reader={reader} transition={readerTransition} onTransitionLanded={completeReaderTransition} onClose={closeReader} onOpenExternal={openReaderExternal} />
+        ? <BrowserIslandCard key={`web-${reader.url || ''}-${reader.flavor || ''}`} reader={reader} transition={readerTransition} onTransitionLanded={completeReaderTransition} onClose={closeReader} onOpenExternal={openReaderExternal} />
         : <ArticleReaderCard reader={reader} transition={readerTransition} onTransitionLanded={completeReaderTransition} onClose={closeReader} onOpenExternal={openReaderExternal} onOpenArchive={openReaderArchive} />;
     }
     if (panelMode === 'live') return <LiveFeedGrid onOpenWebContent={openWebCard} />;
@@ -2651,7 +2948,7 @@ export default function App() {
   }
 
   function columnFlexStyle(colName) {
-    const grows = !stageActive && panelMode === 'base' && colName === lastRegularColumn;
+    const grows = !stageActive && colName === lastRegularColumn;
     return grows
       ? { flex: '1 0 auto', width: colWidths[colName], minWidth: colWidths[colName] }
       : { flex: '0 0 auto', width: colWidths[colName] };
@@ -2688,6 +2985,39 @@ export default function App() {
         .wi{animation:fadeIn 0.2s ease both}
         .workstation-stage-card > .wp-acrylic-shell{height:100%;width:100%}
         .workstation-stage-card .wp-acrylic-body{min-height:0}
+        .monitor-stage{
+          position:relative;
+          border-radius:8px;
+          border:1px solid rgba(238,248,255,.18);
+          background:
+            radial-gradient(circle at 82% 8%, rgba(47,109,255,.16), transparent 34%),
+            radial-gradient(circle at 15% 92%, rgba(122,178,255,.08), transparent 32%),
+            linear-gradient(145deg, rgba(5,9,19,.92), rgba(2,5,12,.86));
+          box-shadow:
+            inset 0 0 0 1px rgba(47,109,255,.10),
+            inset 0 1px 0 rgba(255,255,255,.06),
+            0 0 26px rgba(47,109,255,.12);
+        }
+        .monitor-stage::before{
+          content:"";
+          position:absolute;
+          inset:0;
+          pointer-events:none;
+          border-radius:inherit;
+          background:linear-gradient(115deg, rgba(255,255,255,.055), transparent 26%, transparent 70%, rgba(47,109,255,.07));
+          mix-blend-mode:screen;
+        }
+        .monitor-stage .workstation-stage-card > .wp-acrylic-shell{
+          border-color:rgba(238,248,255,.34) !important;
+          background:
+            linear-gradient(145deg, rgba(9,16,30,.82), rgba(4,8,17,.76)),
+            rgba(4,8,17,.80) !important;
+          box-shadow:
+            0 0 0 1px rgba(255,255,255,.08),
+            0 0 18px rgba(31,111,255,.18),
+            inset 0 0 0 1px rgba(255,255,255,.08),
+            inset 0 16px 36px rgba(255,255,255,.018) !important;
+        }
         input{color-scheme:dark}
         button:focus{outline:none}
         a{color:var(--accent)}
@@ -2702,11 +3032,13 @@ export default function App() {
         }
         .resize-handle{
           width:5px;flex-shrink:0;cursor:ew-resize;
-          background:linear-gradient(180deg, transparent, rgba(244,250,255,0.20), rgba(31,111,255,0.25), rgba(244,250,255,0.16), transparent);
-          transition:background 0.15s;
+          background:transparent;
+          opacity:0;
+          transition:background 0.15s, opacity 0.15s;
           position:relative;z-index:10;
         }
         .resize-handle:hover,.resize-handle:active{
+          opacity:1;
           background:linear-gradient(180deg, transparent, rgba(244,250,255,0.40), rgba(31,111,255,0.48), rgba(244,250,255,0.28), transparent);
         }
         .col-divider{
@@ -2721,8 +3053,9 @@ export default function App() {
         .panel-surface{
           position:relative;
           isolation:isolate;
-          contain:paint;
-          transform:translateZ(0);
+        }
+        .panel-surface.web-stage{
+          isolation:auto;
         }
         .panel-surface::before{
           content:"";
@@ -3087,6 +3420,11 @@ export default function App() {
           perspective:1800px;
           perspective-origin:50% 48%;
         }
+        .browser-island-stage{
+          perspective:none;
+          perspective-origin:50% 50%;
+          transform-style:flat;
+        }
         .reader-card{
           position:relative;flex:1;min-height:0;overflow:hidden;border-radius:8px;
           border:1px solid rgba(238,248,255,.58);
@@ -3113,6 +3451,7 @@ export default function App() {
         .reader-card.reader-card-settled{
           opacity:1;
           animation:none;
+          transform:none;
         }
         .reader-launch-ghost{
           position:absolute;
@@ -3321,6 +3660,16 @@ export default function App() {
           background:
             linear-gradient(145deg, rgba(7,13,27,.76), rgba(3,6,14,.66)),
             radial-gradient(circle at 78% 8%, rgba(47,109,255,.22), transparent 30%);
+          backdrop-filter:none;
+          -webkit-backdrop-filter:none;
+          transform-style:flat;
+          will-change:auto;
+          contain:none;
+          isolation:auto;
+        }
+        .browser-island-card.reader-card-settled{
+          transform:none !important;
+          animation:none !important;
         }
         .browser-island-card .reader-topbar{
           background:linear-gradient(90deg, rgba(11,19,40,.78), rgba(11,19,40,.58));
@@ -3329,12 +3678,23 @@ export default function App() {
           position:relative;height:calc(100% - 44px);margin:12px;border-radius:8px;
           overflow:hidden;background:#050913;border:1px solid rgba(238,248,255,.18);
           box-shadow:inset 0 0 0 1px rgba(47,109,255,.10),0 0 26px rgba(47,109,255,.12);
+          transform:none;
+          filter:none;
+          contain:none;
         }
         .browser-island-frame-live{
           display:flex;align-items:center;justify-content:center;background:#000;
         }
         .browser-island-frame webview{
-          border:0;background:#050913;
+          border:0;background:#050913;transform:none;filter:none;contain:none;
+          min-width:0;min-height:0;
+        }
+        .browser-island-webview{
+          position:absolute !important;
+          inset:0 !important;
+          width:100% !important;
+          height:100% !important;
+          display:inline-flex !important;
         }
         .browser-island-frame-live webview{
           flex:0 0 auto;align-self:center;
@@ -3458,7 +3818,7 @@ export default function App() {
                    width: browserPane.open ? browserPane.braveX : '100vw'}}>
 
         {/* ── Panel content ── */}
-        <div ref={panelBgRef} className="panel-surface" style={{
+        <div ref={panelBgRef} className={`panel-surface${webStageActive ? ' web-stage' : ''}`} style={{
           flex:"0 0 auto",
           width: browserPane.open ? browserPane.braveX : '100vw',
           overflow:"hidden",
@@ -3471,8 +3831,8 @@ export default function App() {
           ].join(','),
           border:"1px solid rgba(238,248,255,0.34)",
           boxShadow:"inset 0 0 0 1px rgba(31,111,255,0.11), inset 0 1px 0 rgba(255,255,255,0.20), 0 0 30px rgba(31,111,255,0.12)",
-          backdropFilter:"none",
-          WebkitBackdropFilter:"none",
+          backdropFilter:webStageActive ? "none" : "blur(28px) saturate(178%) contrast(104%)",
+          WebkitBackdropFilter:webStageActive ? "none" : "blur(28px) saturate(178%) contrast(104%)",
           transition:"width 280ms cubic-bezier(0.32,0,0.16,1)"}}>
 
           <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -3554,7 +3914,7 @@ export default function App() {
             {/* ── Body ── */}
             {!loaded && <OPMLDrop onLoaded={handleOPML} />}
             {loaded && (
-              <div style={{flex:1,overflowX:"auto",overflowY:"hidden",display:"flex"}}>
+              <div style={{flex:1,minWidth:0,overflowX:stageActive?"visible":"auto",overflowY:stageActive?"visible":"hidden",display:"flex"}}>
 
                 {/* Column 1 */}
                 <div style={{...columnFlexStyle("left"),overflowY:"auto",padding:"0px 6px 12px 10px",display:"flex",flexDirection:"column",gap:8}}
@@ -3593,7 +3953,7 @@ export default function App() {
 
                 {/* Column 3 — Feeds */}
                 {stageActive ? (
-                  <div style={{flex:1,minWidth:0,minHeight:0,overflow:"hidden",padding:"0px 10px 12px 6px",display:"flex"}}
+                  <div style={{flex:1,minWidth:0,minHeight:0,overflow:"visible",padding:"0px 10px 12px 6px",display:"flex"}}
                     onDragOver={e=>{e.preventDefault();setDropTarget({col:"feed",beforeId:null});}}
                     onDrop={e=>{e.preventDefault();if(dragId&&dropTarget)handleDrop(dragId,dropTarget.col,dropTarget.beforeId);}}>
                     {renderStageArea()}

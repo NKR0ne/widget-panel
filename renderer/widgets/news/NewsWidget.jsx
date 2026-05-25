@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import DemoBadge from '../../ui/DemoBadge.jsx';
 import Skel from '../../ui/Skel.jsx';
 import { C } from '../../ui/theme.js';
@@ -6,6 +6,30 @@ import { fetchCategoryNews } from './news.service.js';
 import { getNewsCategoryColor } from './news.theme.js';
 
 const NEWS_REFRESH_MS = 30 * 60 * 1000;
+const NEWS_LOAD_TIMEOUT_MS = 18000;
+const newsCache = new Map();
+
+function newsCacheKey(category) {
+  const feeds = (category.feeds || []).map((feed) => feed.url).join('|');
+  return `${category.label}::${feeds}`;
+}
+
+function withRefreshTimeout(promise) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('News refresh timed out')), NEWS_LOAD_TIMEOUT_MS);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 const NEWS_LIST_SURFACE = {
   position: 'relative',
   isolation: 'isolate',
@@ -31,29 +55,66 @@ const NEWS_THUMB_STYLE = {
 
 export default function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl }) {
   const color = getNewsCategoryColor(category.label, colorIdx);
-  const [items, setItems] = useState([]);
-  const [demo, setDemo] = useState(false);
-  const [status, setStatus] = useState('loading');
+  const cacheKey = newsCacheKey(category);
+  const cached = newsCache.get(cacheKey);
+  const [items, setItems] = useState(() => cached?.items || []);
+  const [demo, setDemo] = useState(() => cached?.demo || false);
+  const [status, setStatus] = useState(() => cached?.items?.length ? 'ok' : 'loading');
   const [readIds, setReadIds] = useState(new Set());
-  const [lastUpdated, setLastUpdated] = useState(null);
+  const [lastUpdated, setLastUpdated] = useState(() => cached?.lastUpdated || null);
+  const itemsRef = useRef(items);
+  const demoRef = useRef(demo);
+  const requestRef = useRef(0);
+  const lastUnreadRef = useRef(null);
   const unread = items.filter((item) => !readIds.has(item.id)).length;
 
-  useEffect(() => { onUnreadChange?.(unread); }, [onUnreadChange, unread]);
+  useEffect(() => {
+    if (lastUnreadRef.current === unread) return;
+    lastUnreadRef.current = unread;
+    onUnreadChange?.(unread);
+  }, [onUnreadChange, unread]);
+
+  useEffect(() => { itemsRef.current = items; }, [items]);
+  useEffect(() => { demoRef.current = demo; }, [demo]);
 
   useEffect(() => {
     let alive = true;
+    const cachedResult = newsCache.get(cacheKey);
+
+    if (cachedResult?.items?.length) {
+      itemsRef.current = cachedResult.items;
+      demoRef.current = cachedResult.demo;
+      setItems(cachedResult.items);
+      setDemo(cachedResult.demo);
+      setLastUpdated(cachedResult.lastUpdated || null);
+      setStatus('ok');
+    }
 
     const load = () => {
-      setStatus(previous => (previous === 'ok' || previous === 'refreshing') ? 'refreshing' : 'loading');
-      fetchCategoryNews(category).then(({ items: nextItems, demo: isDemo }) => {
+      const requestId = requestRef.current + 1;
+      requestRef.current = requestId;
+      setStatus(previous => (previous === 'ok' || previous === 'refreshing' || itemsRef.current.length > 0) ? 'refreshing' : 'loading');
+      withRefreshTimeout(fetchCategoryNews(category)).then(({ items: nextItems, demo: isDemo }) => {
         if (!alive) return;
-        setItems(nextItems);
-        setDemo(isDemo);
+        if (requestRef.current !== requestId) return;
+        const cleanItems = Array.isArray(nextItems) ? nextItems.filter(Boolean) : [];
+        if (!cleanItems.length) throw new Error('No news items returned');
+        if (isDemo && itemsRef.current.length > 0 && !demoRef.current) {
+          setStatus('ok');
+          return;
+        }
+        const updatedAt = Date.now();
+        newsCache.set(cacheKey, { items: cleanItems, demo: !!isDemo, lastUpdated: updatedAt });
+        itemsRef.current = cleanItems;
+        demoRef.current = !!isDemo;
+        setItems(cleanItems);
+        setDemo(!!isDemo);
         setStatus('ok');
-        setLastUpdated(Date.now());
+        setLastUpdated(updatedAt);
       }).catch(() => {
         if (!alive) return;
-        setStatus(previous => previous === 'refreshing' ? 'ok' : 'error');
+        if (requestRef.current !== requestId) return;
+        setStatus(itemsRef.current.length > 0 ? 'ok' : 'error');
       });
     };
 
@@ -63,7 +124,7 @@ export default function NewsWidget({ category, colorIdx, onUnreadChange, onOpenU
       alive = false;
       clearInterval(timer);
     };
-  }, [category]);
+  }, [category, cacheKey]);
 
   const badgeEl = status === 'loading'
     ? <span style={{ fontSize: 10, color: '#c4c4d4' }}>fetching...</span>
@@ -79,7 +140,7 @@ export default function NewsWidget({ category, colorIdx, onUnreadChange, onOpenU
     title: category.label,
     lastUpdated,
     badge: badgeEl,
-    shellProps: { stableBackground: true, disableBackdrop: true },
+    shellProps: { stableBackground: true },
     content: (
       <div>
         {status === 'loading' && !hasItems && <Skel />}

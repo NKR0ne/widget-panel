@@ -17,7 +17,7 @@ export default function AcrylicWidgetShell({
   lastUpdated,
   softText = false,
   stableBackground = false,
-  disableBackdrop = true,
+  disableBackdrop = false,
   children,
 }) {
   const [now, setNow] = useState(Date.now());

@@ -1,12 +1,26 @@
 import { api } from '../../services/electronApi.js';
 import { getMockNewsForCategory } from './news.mock.js';
 
-const RSS_PROXY_RAW = 'https://api.allorigins.win/raw?url=';
-const RSS_PROXY_JSON = 'https://api.rss2json.com/v1/api.json?rss_url=';
-const CORS_PROXY = 'https://corsproxy.io/?';
 const MAX_ITEMS = 7;
 const MAX_AGE_MS = 30 * 86400000;
-const REFRESH_BUCKET_MS = 5 * 60 * 1000;
+const RSS_ATTEMPT_TIMEOUT_MS = 6500;
+const RSS_FEED_TIMEOUT_MS = 18000;
+
+function withTimeout(promise, ms) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('RSS request timed out')), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 function normalizeFeedUrl(url) {
   const raw = (url || '').trim();
@@ -148,54 +162,28 @@ export function parseRSSXml(xml, baseUrl = '') {
   }).filter((item) => item.title && item.link);
 }
 
-async function fetchRSS(url) {
+async function fetchRSSInner(url) {
   url = normalizeFeedUrl(url);
   if (!url) return null;
-  const bucket = Math.floor(Date.now() / REFRESH_BUCKET_MS);
-  const cacheBustedUrl = url + (url.includes('?') ? '&' : '?') + `_cb=${bucket}`;
 
   try {
-    const response = await api.rss.fetch(url);
+    if (!api.rss?.fetch) return null;
+    const response = await withTimeout(api.rss.fetch(url), RSS_ATTEMPT_TIMEOUT_MS);
     if (response?.ok) {
       const items = parseRSSXml(response.text, url).slice(0, MAX_ITEMS);
       if (items.length) return items;
     }
   } catch {}
 
-  try {
-    const response = await fetch(RSS_PROXY_RAW + encodeURIComponent(cacheBustedUrl));
-    if (response.ok) {
-      const items = parseRSSXml(await response.text(), url).slice(0, MAX_ITEMS);
-      if (items.length) return items;
-    }
-  } catch {}
-
-  try {
-    const response = await fetch(RSS_PROXY_JSON + encodeURIComponent(cacheBustedUrl) + '&count=6');
-    const data = await response.json();
-    if (data.status === 'ok') {
-      return data.items.map((item) => ({
-        id: item.guid || item.link,
-        title: item.title,
-        link: item.link,
-        image: item.thumbnail || item.enclosure?.link || null,
-        description: cleanItemText(item.description || item.content || ''),
-        author: item.author || '',
-        source: getHostname(item.link),
-        time: relTime(item.pubDate),
-      }));
-    }
-  } catch {}
-
-  try {
-    const response = await fetch(CORS_PROXY + encodeURIComponent(cacheBustedUrl));
-    if (response.ok) {
-      const items = parseRSSXml(await response.text(), url).slice(0, MAX_ITEMS);
-      if (items.length) return items;
-    }
-  } catch {}
-
   return null;
+}
+
+async function fetchRSS(url) {
+  try {
+    return await withTimeout(fetchRSSInner(url), RSS_FEED_TIMEOUT_MS);
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchCategoryNews(category) {
