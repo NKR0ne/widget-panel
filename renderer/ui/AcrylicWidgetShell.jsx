@@ -24,6 +24,7 @@ export default function AcrylicWidgetShell({
   const [hoverFocused, setHoverFocused] = useState(false);
   const shellId = useId().replace(/:/g, '');
   const accent = '#1f6fff';
+  const glow = color || accent;
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30000);
@@ -71,27 +72,31 @@ export default function AcrylicWidgetShell({
         contain: 'paint',
         overflow: 'hidden',
         borderRadius: 8,
-        border: hoverFocused ? '1px solid rgba(244,250,255,0.72)' : '1px solid rgba(244,250,255,0.54)',
+        border: hoverFocused ? '1px solid rgba(171,211,255,0.84)' : '1px solid rgba(122,178,255,0.48)',
         background: [
-          'linear-gradient(145deg, var(--acrylic-card-top, rgba(10,18,34,0.22)), var(--acrylic-card-bottom, rgba(8,10,18,0.14)))',
+          'radial-gradient(circle at 16% 0%, rgba(47,109,255,0.13), transparent 30%)',
+          'radial-gradient(circle at 88% 6%, rgba(122,178,255,0.09), transparent 28%)',
+          'linear-gradient(145deg, var(--acrylic-card-top, rgba(10,18,34,0.34)), var(--acrylic-card-bottom, rgba(8,10,18,0.22)))',
           stableBackground
-            ? 'var(--acrylic-card-fill, rgba(8,14,28,0.14))'
-            : 'var(--acrylic-card-fill-soft, rgba(8,14,28,0.08))',
+            ? 'var(--acrylic-card-fill, rgba(8,14,28,0.20))'
+            : 'var(--acrylic-card-fill-soft, rgba(8,14,28,0.14))',
         ].join(','),
         backgroundColor: stableBackground
-          ? 'var(--acrylic-card-fill, rgba(8,14,28,0.14))'
-          : 'var(--acrylic-card-fill-soft, rgba(8,14,28,0.08))',
+          ? 'var(--acrylic-card-fill, rgba(8,14,28,0.20))'
+          : 'var(--acrylic-card-fill-soft, rgba(8,14,28,0.14))',
         boxShadow: (hoverFocused ? [
-          '0 0 0 1px rgba(255,255,255,0.14)',
-          '0 0 20px rgba(31,111,255,0.32)',
-          '0 0 34px rgba(31,111,255,0.12)',
-          'inset 0 0 0 1px rgba(255,255,255,0.14)',
-          'inset 0 16px 36px rgba(255,255,255,0.04)',
+          '0 0 0 1px rgba(171,211,255,0.18)',
+          `0 0 18px ${glow}`,
+          '0 0 36px rgba(31,111,255,0.34)',
+          '0 0 62px rgba(47,109,255,0.16)',
+          'inset 0 0 0 1px rgba(171,211,255,0.20)',
+          'inset 0 18px 38px rgba(122,178,255,0.055)',
         ] : [
-          '0 0 0 1px rgba(255,255,255,0.10)',
-          '0 0 14px rgba(31,111,255,0.20)',
-          'inset 0 0 0 1px rgba(255,255,255,0.10)',
-          'inset 0 16px 36px rgba(255,255,255,0.028)',
+          '0 0 0 1px rgba(122,178,255,0.12)',
+          '0 0 16px rgba(31,111,255,0.28)',
+          '0 0 30px rgba(47,109,255,0.10)',
+          'inset 0 0 0 1px rgba(171,211,255,0.11)',
+          'inset 0 16px 34px rgba(122,178,255,0.035)',
         ]).join(','),
         backdropFilter: disableBackdrop ? 'none' : 'blur(18px) saturate(150%)',
         WebkitBackdropFilter: disableBackdrop ? 'none' : 'blur(18px) saturate(150%)',
@@ -122,20 +127,23 @@ export default function AcrylicWidgetShell({
           height: 58,
           pointerEvents: 'none',
           background: [
-            'linear-gradient(90deg, rgba(255,255,255,0.14), transparent 24%, transparent 78%, rgba(255,255,255,0.08))',
-            'linear-gradient(180deg, rgba(31,111,255,0.12), transparent 24%)',
+            'radial-gradient(ellipse at 16% 0%, rgba(47,109,255,0.24), transparent 42%)',
+            'radial-gradient(ellipse at 84% 0%, rgba(122,178,255,0.16), transparent 42%)',
+            'linear-gradient(180deg, rgba(47,109,255,0.10), transparent 64%)',
           ].join(','),
-          opacity: 0.48,
+          opacity: hoverFocused ? 0.78 : 0.58,
           borderRadius: '8px 8px 0 0',
+          transition: 'opacity 0.18s',
         }}
       />
       <div
         style={{
           height: 1,
           margin: '0 18px',
-          background: `linear-gradient(90deg, transparent, rgba(31,111,255,0.62), rgba(255,255,255,0.82), rgba(31,111,255,0.62), transparent)`,
-          boxShadow: `0 0 10px rgba(31,111,255,0.42)`,
-          opacity: 0.52,
+          background: `linear-gradient(90deg, transparent, rgba(47,109,255,0.76), rgba(171,211,255,0.86), rgba(47,109,255,0.76), transparent)`,
+          boxShadow: `0 0 12px rgba(31,111,255,0.58), 0 0 24px rgba(47,109,255,0.24)`,
+          opacity: hoverFocused ? 0.9 : 0.68,
+          transition: 'opacity 0.18s',
         }}
       />
       <div
@@ -174,7 +182,7 @@ export default function AcrylicWidgetShell({
             style={{
               ...C.dot,
               background: color || accent,
-              boxShadow: `0 0 10px ${color || accent}`,
+              boxShadow: `0 0 10px ${color || accent}, 0 0 20px rgba(31,111,255,0.42)`,
             }}
           />
           <span

@@ -778,6 +778,13 @@ function ArticleReaderCard({ reader, transition, onTransitionLanded, onClose, on
     if (imageCount < 2) return;
     setImageIndex(index => (index + delta + imageCount) % imageCount);
   }, [imageCount]);
+  const handleContentWheel = useCallback((event) => {
+    const scroller = event.currentTarget;
+    if (!scroller || scroller.scrollHeight <= scroller.clientHeight) return;
+    const before = scroller.scrollTop;
+    scroller.scrollTop += event.deltaY;
+    if (scroller.scrollTop !== before) event.preventDefault();
+  }, []);
 
   return (
     <div ref={stageRef} className="reader-stage">
@@ -803,7 +810,7 @@ function ArticleReaderCard({ reader, transition, onTransitionLanded, onClose, on
           <div className="reader-progress-fill" style={{ width: `${progress}%`, opacity: loading ? 1 : 0.55 }} />
         </div>
 
-        <div className="reader-content">
+        <div className="reader-content" onWheel={handleContentWheel}>
           <div className="reader-copy">
             <h1>{title}</h1>
             {!loading && article.description && <p className="reader-deck">{article.description}</p>}
@@ -3427,6 +3434,7 @@ export default function App() {
         }
         .reader-card{
           position:relative;flex:1;min-height:0;overflow:hidden;border-radius:8px;
+          display:flex;flex-direction:column;
           border:1px solid rgba(238,248,255,.58);
           background:
             linear-gradient(145deg, rgba(10,18,34,.74), rgba(5,9,18,.60)),
@@ -3539,6 +3547,7 @@ export default function App() {
         .reader-topbar{
           height:42px;display:flex;align-items:center;justify-content:space-between;
           padding:0 12px 0 14px;border-bottom:1px solid rgba(247,250,255,.10);
+          flex:0 0 auto;
         }
         .reader-source{display:flex;align-items:center;gap:8px;color:#f7faff;font-size:11px;min-width:0}
         .reader-dot{width:7px;height:7px;border-radius:50%;background:#2f6dff;box-shadow:0 0 12px rgba(47,109,255,.9);flex-shrink:0}
@@ -3568,17 +3577,37 @@ export default function App() {
           box-shadow:0 0 18px rgba(47,109,255,.28),inset 0 0 0 1px rgba(255,255,255,.10);
         }
         .reader-text-button:active{transform:translateY(1px)}
-        .reader-progress-track{height:2px;background:rgba(255,255,255,.06);overflow:hidden}
+        .reader-progress-track{height:2px;background:rgba(255,255,255,.06);overflow:hidden;flex:0 0 auto}
         .reader-progress-fill{
           height:100%;background:linear-gradient(90deg,rgba(47,109,255,.20),rgba(238,248,255,.95),rgba(47,109,255,.70));
           box-shadow:0 0 14px rgba(47,109,255,.58);transition:width .22s ease,opacity .35s;
         }
-        .reader-content{height:calc(100% - 44px);display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:18px;padding:18px;overflow:hidden}
-        .reader-copy{min-width:0;overflow-y:auto;padding-right:8px}
+        .reader-content{
+          flex:1 1 0;height:0;min-height:0;display:grid;
+          grid-template-columns:minmax(0,1fr) 260px;grid-auto-rows:auto;
+          align-content:start;
+          align-items:start;gap:18px;padding:18px 12px 18px 18px;
+          overflow-y:scroll;overflow-x:hidden;overscroll-behavior:contain;
+          scrollbar-color:rgba(47,109,255,.58) rgba(255,255,255,.06);
+          scrollbar-width:thin;scrollbar-gutter:stable;
+        }
+        .reader-content::-webkit-scrollbar{width:8px}
+        .reader-content::-webkit-scrollbar-track{background:rgba(255,255,255,.035);border-radius:999px}
+        .reader-content::-webkit-scrollbar-thumb{
+          background:linear-gradient(180deg,rgba(122,178,255,.76),rgba(31,111,255,.55));
+          border-radius:999px;border:2px solid rgba(4,8,17,.78);
+          box-shadow:0 0 12px rgba(47,109,255,.36);
+        }
+        .reader-copy{
+          min-width:0;min-height:0;overflow:visible;padding-right:0;
+        }
         .reader-copy h1{font-size:26px;line-height:1.08;color:#fff;font-weight:650;margin-bottom:12px;letter-spacing:0}
         .reader-copy p{font-size:14px;line-height:1.72;color:rgba(247,250,255,.88);margin:0 0 13px}
         .reader-deck{font-size:15px!important;color:rgba(247,250,255,.68)!important;line-height:1.55!important;margin-bottom:18px!important}
-        .reader-media{min-width:0;display:flex;flex-direction:column;gap:10px}
+        .reader-media{
+          position:sticky;top:0;align-self:start;
+          min-width:0;min-height:0;display:flex;flex-direction:column;gap:10px;
+        }
         .reader-image-shell{position:relative;min-width:0}
         .reader-image-shell img{cursor:zoom-in}
         .reader-image-count{
@@ -3628,11 +3657,15 @@ export default function App() {
         }
         .reader-error-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
         .reader-image-overlay{
-          position:absolute;inset:0;z-index:12;display:flex;align-items:center;justify-content:center;
-          background:rgba(2,5,12,.76);backdrop-filter:blur(14px);
+          position:absolute;inset:0;z-index:12;display:flex;align-items:flex-start;justify-content:center;
+          padding-top:clamp(72px, 14%, 150px);
+          background:
+            radial-gradient(circle at 50% 18%, rgba(47,109,255,.16), transparent 32%),
+            rgba(2,5,12,.76);
+          backdrop-filter:blur(14px);
         }
         .reader-image-viewer{
-          position:relative;width:min(86%,920px);height:min(86%,620px);display:flex;align-items:center;justify-content:center;
+          position:relative;width:min(86%,920px);height:min(72%,620px);display:flex;align-items:center;justify-content:center;
           border:1px solid rgba(238,248,255,.42);border-radius:9px;
           background:linear-gradient(145deg,rgba(8,13,23,.82),rgba(3,6,14,.72));
           box-shadow:0 0 0 1px rgba(255,255,255,.08),0 24px 80px rgba(0,0,0,.44),0 0 38px rgba(47,109,255,.24);

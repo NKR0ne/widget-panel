@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import DemoBadge from '../../ui/DemoBadge.jsx';
 import Skel from '../../ui/Skel.jsx';
 import { C } from '../../ui/theme.js';
@@ -174,6 +174,26 @@ function HeaderBadgeGroup({ children }) {
   );
 }
 
+function RefreshingBadge() {
+  return (
+    <div style={{
+      display:'inline-flex',alignItems:'center',gap:6,
+      fontSize:9,color:'rgba(220,230,255,0.74)',fontFamily:'DM Mono,monospace',
+      padding:'3px 7px',borderRadius:999,
+      border:'1px solid rgba(122,178,255,0.18)',
+      background:'rgba(31,111,255,0.08)',
+      boxShadow:'0 0 12px rgba(31,111,255,0.12)',
+      marginBottom:8,
+    }}>
+      <span style={{
+        width:5,height:5,borderRadius:'50%',background:'#7ab2ff',
+        boxShadow:'0 0 10px rgba(122,178,255,0.72)',
+      }} />
+      refreshing
+    </div>
+  );
+}
+
 // ── Outlook Agenda widget ─────────────────────────────────────────────────────
 function AgendaWidget() {
   const auth = useMsAuth();
@@ -185,6 +205,9 @@ function AgendaWidget() {
   const [loading,     setLoading]     = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [cardHeight,  setCardHeight]  = useState(360);
+  const eventsRef = useRef(events);
+
+  useEffect(() => { eventsRef.current = events; }, [events]);
 
   useEffect(() => {
     api.store.get(SK_AGENDA_CAL_IDS).then(v => {
@@ -246,7 +269,12 @@ function AgendaWidget() {
       const toMs = e => { const s = e.start.dateTime || e.start.date; return new Date(s.endsWith('Z') ? s : s + 'Z'); };
       const sorted = chunks.flat().sort((a, b) => toMs(a) - toMs(b));
       setEvents(sorted); setDemo(false);
-    } catch { setEvents(MOCK_EVENTS); setDemo(true); }
+    } catch {
+      if (!eventsRef.current.length) {
+        setEvents(MOCK_EVENTS);
+        setDemo(true);
+      }
+    }
     setLoading(false); setLastUpdated(Date.now());
   }
 
@@ -295,6 +323,7 @@ function AgendaWidget() {
   const visible = selCals ? events.filter(ev => selCals.has(ev._calId)) : events;
   const groups = {};
   visible.forEach(ev => { const k = dayKey(ev); (groups[k] = groups[k]||[]).push(ev); });
+  const hasAgendaContent = visible.length > 0;
 
   const showAuth = ['loading','setup','authenticating','error'].includes(auth.step);
 
@@ -329,9 +358,10 @@ function AgendaWidget() {
                 })}
               </div>
             )}
-            {loading && <Skel n={2}/>}
-            {!loading && (
+            {loading && !hasAgendaContent && <Skel n={2}/>}
+            {(!loading || hasAgendaContent) && (
               <div>
+                {loading && hasAgendaContent && <RefreshingBadge/>}
                 {demo && <DemoBadge/>}
                 {Object.keys(groups).length === 0 && (
                   <div style={{paddingTop:10,fontSize:11,color:"#dcdcec",textAlign:"center"}}>Aucun événement à venir</div>
@@ -399,6 +429,9 @@ function MailWidget({ onOpenWebContent } = {}) {
   const [loading,     setLoading]     = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
   const [cardHeight,  setCardHeight]  = useState(360);
+  const messagesRef = useRef(messages);
+
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
 
   useEffect(() => {
     api.store.get(SK_MAIL_HEIGHT).then(v => {
@@ -423,7 +456,12 @@ function MailWidget({ onOpenWebContent } = {}) {
       if (res.status === 401) { auth.signOut(); setLoading(false); return; }
       const msgs = res.body?.value || [];
       setMessages(msgs); setDemo(false);
-    } catch { setMessages(MOCK_MAIL); setDemo(true); }
+    } catch {
+      if (!messagesRef.current.length) {
+        setMessages(MOCK_MAIL);
+        setDemo(true);
+      }
+    }
     setLoading(false); setLastUpdated(Date.now());
   }
 
@@ -531,6 +569,7 @@ function MailWidget({ onOpenWebContent } = {}) {
   const mailBadge = auth.step === 'ok'
     ? <HeaderBadgeGroup>{mailUnreadBadge}<HeaderKeyButton onClick={auth.signOut} /></HeaderBadgeGroup>
     : mailUnreadBadge;
+  const hasMailContent = messages.length > 0;
 
   return { color:"#0078d4", title:"Outlook Mail", lastUpdated,
     badge: mailBadge,
@@ -539,9 +578,10 @@ function MailWidget({ onOpenWebContent } = {}) {
         {showAuth && <MsSetupPane {...auth}/>}
         {auth.step === 'ok' && (
           <div>
-            {loading && <Skel n={3}/>}
-            {!loading && (
+            {loading && !hasMailContent && <Skel n={3}/>}
+            {(!loading || hasMailContent) && (
               <div>
+                {loading && hasMailContent && <RefreshingBadge/>}
                 {demo && <DemoBadge/>}
                 {messages.length === 0 && (
                   <div style={{paddingTop:10,fontSize:11,color:"#dcdcec",textAlign:"center"}}>Aucun message</div>
@@ -631,6 +671,11 @@ function TodoWidget() {
   const [demo,         setDemo]        = useState(false);
   const [loading,      setLoading]     = useState(false);
   const [lastUpdated,  setLastUpdated] = useState(null);
+  const tasksRef = useRef(tasks);
+  const activeListIdRef = useRef(activeListId);
+
+  useEffect(() => { tasksRef.current = tasks; }, [tasks]);
+  useEffect(() => { activeListIdRef.current = activeListId; }, [activeListId]);
 
   useEffect(() => {
     api.store.get(SK_TODO_LIST_ID).then(id => { if (id) setActiveListId(id); });
@@ -649,17 +694,22 @@ function TodoWidget() {
     try {
       const res = await window.electronAPI.msGraph.fetch(
         'https://graph.microsoft.com/v1.0/me/todo/lists', token);
-      if (res.status === 401) { auth.signOut(); return; }
+      if (res.status === 401) { auth.signOut(); setLoading(false); return; }
       const all = res.body?.value || [];
       setLists(all);
-      const targetId = activeListId
+      const targetId = activeListIdRef.current
         || all.find(l => l.wellknownListName === 'defaultList')?.id
         || all[0]?.id;
       if (targetId) {
-        if (!activeListId) { setActiveListId(targetId); api.store.set(SK_TODO_LIST_ID, targetId); }
+        if (!activeListIdRef.current) { setActiveListId(targetId); api.store.set(SK_TODO_LIST_ID, targetId); }
         await loadTasks(token, targetId);
       }
-    } catch { setTasks(MOCK_TASKS); setDemo(true); }
+    } catch {
+      if (!tasksRef.current.length) {
+        setTasks(MOCK_TASKS);
+        setDemo(true);
+      }
+    }
     setLoading(false); setLastUpdated(Date.now());
   }
 
@@ -668,7 +718,7 @@ function TodoWidget() {
       `https://graph.microsoft.com/v1.0/me/todo/lists/${lid}/tasks`
       + `?$filter=status ne 'completed'&$orderby=importance desc,createdDateTime&$top=20`, token);
     if (res.body?.value) { setTasks(res.body.value); setDemo(false); }
-    else { setTasks(MOCK_TASKS); setDemo(true); }
+    else if (!tasksRef.current.length) { setTasks(MOCK_TASKS); setDemo(true); }
     setLastUpdated(Date.now());
   }
 
@@ -677,7 +727,12 @@ function TodoWidget() {
     api.store.set(SK_TODO_LIST_ID, id);
     if (!auth.tokens) return;
     setLoading(true);
-    try { await loadTasks(auth.tokens.accessToken, id); } catch {}
+    try { await loadTasks(auth.tokens.accessToken, id); } catch {
+      if (!tasksRef.current.length) {
+        setTasks(MOCK_TASKS);
+        setDemo(true);
+      }
+    }
     setLoading(false);
   }
 
@@ -711,6 +766,7 @@ function TodoWidget() {
   const showAuth = ['loading','setup','authenticating','error'].includes(auth.step);
   const activeList = lists.find(l => l.id === activeListId);
   const todoBadge = auth.step === 'ok' ? <HeaderKeyButton onClick={auth.signOut} /> : null;
+  const hasTodoContent = tasks.length > 0;
 
   return { color:"#2564cf", title:"Microsoft To-Do", lastUpdated, badge: todoBadge,
     content:(
@@ -727,9 +783,10 @@ function TodoWidget() {
                 {lists.map(l => <option key={l.id} value={l.id} style={{background:"#18181c"}}>{l.displayName}</option>)}
               </select>
             )}
-            {loading && <Skel n={3}/>}
-            {!loading && (
+            {loading && !hasTodoContent && <Skel n={3}/>}
+            {(!loading || hasTodoContent) && (
               <div>
+                {loading && hasTodoContent && <RefreshingBadge/>}
                 {demo && <DemoBadge/>}
                 {tasks.length === 0 && (
                   <div style={{paddingTop:10,fontSize:11,color:"#2a2a34",textAlign:"center"}}>Aucune tâche en cours ✓</div>
