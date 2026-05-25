@@ -4,6 +4,7 @@ import Skel from '../../ui/Skel.jsx';
 import { C } from '../../ui/theme.js';
 import { fetchCategoryNews } from './news.service.js';
 import { getNewsCategoryColor } from './news.theme.js';
+import { publishStarvisContext } from '../../services/starvisContext.service.js';
 
 const NEWS_REFRESH_MS = 30 * 60 * 1000;
 const NEWS_LOAD_TIMEOUT_MS = 18000;
@@ -40,6 +41,25 @@ const NEWS_LIST_SURFACE = {
   boxShadow: 'inset 0 0 0 1px rgba(205,230,255,0.045)',
   transform: 'translateZ(0)',
 };
+
+function newsTheme(title = '') {
+  const text = title.toLowerCase();
+  if (/ai|artificial intelligence|openai|anthropic|model|chip|nvidia|semiconductor/.test(text)) return 'AI and chips';
+  if (/market|stock|fed|rate|inflation|bond|earnings|ipo|bank|dollar|oil/.test(text)) return 'Markets and economy';
+  if (/trump|biden|election|minister|government|policy|court|congress|senate|war|china|russia|ukraine|israel/.test(text)) return 'Politics and geopolitics';
+  if (/security|hack|breach|privacy|malware|ransomware|cyber/.test(text)) return 'Security';
+  if (/health|drug|medical|hospital|disease|climate|weather|storm|fire/.test(text)) return 'Health and environment';
+  return 'General';
+}
+
+function summarizeThemes(items = []) {
+  const counts = new Map();
+  items.forEach(item => counts.set(newsTheme(item.title), (counts.get(newsTheme(item.title)) || 0) + 1));
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 4)
+    .map(([theme, count]) => `${theme} (${count})`);
+}
 
 const NEWS_THUMB_STYLE = {
   width: 44,
@@ -134,6 +154,27 @@ export default function NewsWidget({ category, colorIdx, onUnreadChange, onOpenU
       ? <span style={{ ...C.badge, background: color + '22', color }}>{unread}</span>
       : null;
   const hasItems = items.length > 0;
+
+  useEffect(() => {
+    if (!hasItems) return;
+    const themes = summarizeThemes(items);
+    publishStarvisContext(`news:${category.label}`, {
+      title: `News: ${category.label}`,
+      summary: `${category.label}: ${unread} unread. Themes: ${themes.join(', ') || 'General'}.`,
+      data: {
+        category: category.label,
+        unread,
+        demo,
+        themes,
+        topItems: items.slice(0, 8).map(item => ({
+          title: item.title,
+          source: item.source,
+          time: item.time,
+          link: item.link,
+        })),
+      },
+    });
+  }, [category.label, demo, hasItems, items, unread]);
 
   return {
     color,

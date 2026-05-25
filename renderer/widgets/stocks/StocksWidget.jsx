@@ -18,6 +18,7 @@ import {
   saveStoredWidgetHeight,
   setModalOpen,
 } from './stocks.service.js';
+import { publishStarvisContext } from '../../services/starvisContext.service.js';
 
 const STOCKS_SHELL = 'acrylic';
 const STOCKS_SHELL_PROPS = { stableBackground: true };
@@ -30,6 +31,30 @@ const STOCKS_CLIENT_STYLE = {
 };
 const EARNINGS_EVENTS_TAB = { id: 'wp-market-events-earnings', name: 'Revenus', kind: 'earnings' };
 const IPO_EVENTS_TAB = { id: 'wp-market-events-ipos', name: 'IPOs', kind: 'ipos' };
+const DEFAULT_WATCHLIST_NAMES = new Set(['liste de surveillance']);
+const SURVEILLANCE_LIST_NAMES = new Set(['surveillance', 'liste de surveillance', 'watchlist']);
+
+function normalizeListName(name) {
+  return String(name || '').trim().toLowerCase();
+}
+
+function isDefaultWatchlist(list) {
+  return DEFAULT_WATCHLIST_NAMES.has(normalizeListName(list?.name));
+}
+
+function isSurveillanceList(list) {
+  return SURVEILLANCE_LIST_NAMES.has(normalizeListName(list?.name));
+}
+
+function getSurveillanceList(lists) {
+  return lists.find(isSurveillanceList) || lists.find(list => (list?.symbols || []).length) || null;
+}
+
+function toTradingViewSymbol(item) {
+  const symbol = item?.s || '';
+  if (symbol.includes(':')) return symbol;
+  return '';
+}
 
 function HeaderKeyButton({ onClick, title = 'Se d\u00e9connecter' }) {
   return (
@@ -669,7 +694,7 @@ export default function StocksWidget({ onOpenWebContent } = {}) {
   // pass through unchanged).
   const effectiveLists = [
     MARKETS_OVERVIEW_LIST,
-    ...lists.filter(l => (l?.name || '').trim().toLowerCase() !== 'liste de surveillance'),
+    ...lists.filter(l => !isDefaultWatchlist(l)),
     EARNINGS_EVENTS_TAB,
     IPO_EVENTS_TAB,
     HEATMAP_TAB,
@@ -691,7 +716,7 @@ export default function StocksWidget({ onOpenWebContent } = {}) {
       const nextUserLists = r.data;
       const nextEffectiveLists = [
         MARKETS_OVERVIEW_LIST,
-        ...nextUserLists.filter(l => (l?.name || '').trim().toLowerCase() !== 'liste de surveillance'),
+        ...nextUserLists.filter(l => !isDefaultWatchlist(l)),
         EARNINGS_EVENTS_TAB,
         IPO_EVENTS_TAB,
         HEATMAP_TAB,
@@ -735,26 +760,16 @@ export default function StocksWidget({ onOpenWebContent } = {}) {
 
   useEffect(() => {
     if (!auth || auth === false) return;
-    const active = effectiveListsRef.current[listIdxRef.current];
-    const sourceSymbols = active?.kind
-      ? lists.flatMap(list => list?.symbols || [])
-      : active?.id && active.id !== MARKETS_OVERVIEW_LIST.id
-        ? (active.symbols || [])
-        : lists.flatMap(list => list?.symbols || []);
-    const tickers = Array.from(new Set(sourceSymbols
-      .map(({ s, y }) => y || (s?.includes(':') ? s.split(':')[1] : s))
+    const surveillance = getSurveillanceList(lists);
+    const earningsSymbols = Array.from(new Set((surveillance?.symbols || [])
+      .map(toTradingViewSymbol)
       .filter(Boolean)))
-      .slice(0, 18);
-    if (!tickers.length) {
-      setMarketEvents({ earnings: [], ipos: [] });
-      setMarketEventsLoading(false);
-      return;
-    }
+      .slice(0, 48);
     let cancelled = false;
     const refreshMarketEvents = async () => {
       setMarketEventsLoading(true);
       try {
-        const result = await fetchMarketEvents(tickers);
+        const result = await fetchMarketEvents({ earningsSymbols });
         if (cancelled || !result?.ok) return;
         setMarketEvents({
           earnings: result.earnings || [],
@@ -797,6 +812,35 @@ export default function StocksWidget({ onOpenWebContent } = {}) {
   const fmtPct = n => n == null ? '' : (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
   const clr    = n => (n ?? 0) >= 0 ? '#4caf73' : '#ef5350';
   const fmtDate = d => d ? `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')}` : '';
+  const activeTab = effectiveLists[listIdx];
+
+  useEffect(() => {
+    if (!symbols.length && !marketEvents?.earnings?.length && !marketEvents?.ipos?.length) return;
+    const rows = symbols.slice(0, 12).map(({ s, d, y }) => {
+      const ticker = y || (s.includes(':') ? s.split(':')[1] : s);
+      const q = quotes[ticker];
+      return {
+        ticker,
+        name: q?.name || d || ticker,
+        price: q?.price,
+        change: q?.change,
+        pct: q?.pct,
+      };
+    });
+    publishStarvisContext('stocks', {
+      title: 'Markets',
+      summary: rows.length
+        ? `Markets: ${rows.slice(0, 5).map(row => `${row.ticker} ${row.price ?? '--'} ${row.pct != null ? `${row.pct.toFixed(2)}%` : ''}`).join(' | ')}`
+        : 'Markets calendar available.',
+      data: {
+        activeList: activeTab?.name || '',
+        quotes: rows,
+        earnings: (marketEvents?.earnings || []).slice(0, 6),
+        ipos: (marketEvents?.ipos || []).slice(0, 6),
+        updatedAt: lastFetch,
+      },
+    });
+  }, [activeTab?.name, lastFetch, marketEvents, quotes, symbols]);
 
   if (auth === false) return { shell: STOCKS_SHELL, shellProps: STOCKS_SHELL_PROPS, color:'#5cc8a8', title:'Marchés', sub:'TradingView',
     content:(
@@ -818,7 +862,6 @@ export default function StocksWidget({ onOpenWebContent } = {}) {
     ? new Date(lastFetch).toLocaleTimeString('en-CA',{hour:'2-digit',minute:'2-digit',hour12:false})
     : '';
 
-  const activeTab = effectiveLists[listIdx];
   const openChartWebContent = (symbol, event) => {
     if (onOpenWebContent) {
       onOpenWebContent({

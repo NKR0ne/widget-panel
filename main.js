@@ -6,12 +6,51 @@ const https  = require('https')
 const { exec, spawn } = require('child_process')
 const { getStore, setStore, deleteStore } = require('./store')
 
+function loadEnvFile() {
+  const envPath = path.join(__dirname, '.env')
+  let raw = ''
+  try { raw = fs.readFileSync(envPath, 'utf8') }
+  catch { return }
+  raw.split(/\r?\n/).forEach(line => {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) return
+    const eq = trimmed.indexOf('=')
+    if (eq <= 0) return
+    const key = trimmed.slice(0, eq).trim()
+    let value = trimmed.slice(eq + 1).trim()
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1)
+    }
+    if (key && process.env[key] == null) process.env[key] = value
+  })
+}
+
+loadEnvFile()
+
 const PANEL_GAP = 10   // px gap between window edge and screen; window is inset so the gap shows raw desktop
 const PANEL_BACKGROUND_MATERIAL = 'acrylic'
 const PANEL_COLUMNS = ['left', 'monitor', 'mid', 'feed', 'right', 'aux']
 const PANEL_DEFAULT_COL_WIDTHS = { left: 220, monitor: 220, mid: 240, feed: 260, right: 260, aux: 260 }
 const PANEL_DIVIDER_WIDTH = 4
 const PANEL_RESIZE_HANDLE_WIDTH = 5
+const PANEL_SLIDE_MS = 390
+const SK_STARVIS_OPENAI_KEY = 'wp-starvis-openai-key'
+const SK_STARVIS_BASE_URL = 'wp-starvis-base-url'
+const SK_STARVIS_CONFIG = 'wp-starvis-config'
+const STARVIS_DEFAULT_MODEL = 'gpt-5.5'
+const STARVIS_SYSTEM_PROMPT = [
+  'You are Starvis, a concise, capable AI command center assistant inspired by a polished cinematic operating system.',
+  'Be useful first and brief by default. The user is busy and often listening, so avoid long explanations unless explicitly requested.',
+  'For dashboard/report requests, use one short sentence per card or data source. Do not list every metric or headline.',
+  'For news, synthesize into themes and implications; group related headlines, mention only the most important examples, and avoid reading a feed item by item.',
+  'Use a maximum of 5 bullets for normal reports. If there are more cards, combine lower-priority cards into a final summary sentence.',
+  'Personality: calm, dry wit, technically sharp, composed, and quietly confident. Do not roleplay as Jarvis or mention Iron Man.',
+  'Use the supplied local widget-panel context for reports. Treat it as a bounded local API snapshot, not full filesystem or renderer access.',
+  'If web search is enabled for this request, cite web-derived claims. If web search is disabled, say you only used local widget context and model knowledge.',
+  'If the user asks for current, live, scheduled, price, weather, sports, news, or other time-sensitive data that is not present in local context and web search is disabled, reply exactly: INTERNET_PERMISSION_REQUEST: I need web access to check that live data. May I fetch it?',
+].join('\n')
+const STARVIS_CONTEXT_MAX_ITEMS = 24
+const STARVIS_CONTEXT_MAX_CHARS = 16000
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
@@ -147,6 +186,8 @@ let panelOnlyWidth      = parseInt(getStore('wp-width')) || 720  // panel width 
 let browserEmbedded     = false  // whether brave window is currently embedded in win
 let _showStateTimeout   = null   // ID of the 350ms post-show notifyHelperState timer
 let panelGeometryLockUntil = 0
+let _hideFallbackTimeout = null
+const starvisContext = new Map()
 
 // ── Single instance lock ──────────────────────────────────────────────────────
 const gotLock = app.requestSingleInstanceLock()
@@ -264,7 +305,8 @@ function fadeOpacity(from, to, ms, onDone) {
 function showPanel() {
   if (!win || win.isVisible() || _showAnimating) return
   _showAnimating = true
-  win.setOpacity(0)
+  if (_hideFallbackTimeout) { clearTimeout(_hideFallbackTimeout); _hideFallbackTimeout = null }
+  win.setOpacity(isPinned ? pinnedWinOpacity() : 1)
   win.show()
   if (!isPinned) setTimeout(() => win.focus(), 150)
   // Always send panel-show regardless of rendererReady — the renderer has already
@@ -272,10 +314,12 @@ function showPanel() {
   // Guarding on rendererReady here caused silent failures when did-start-loading fired
   // spuriously (e.g. from iframes) and left rendererReady=false.
   win.webContents.send('panel-show')
-  fadeOpacity(0, isPinned ? pinnedWinOpacity() : 1, 120, () => { _showAnimating = false })
+  setTimeout(() => { _showAnimating = false }, PANEL_SLIDE_MS)
 }
 
-// Initiate slide-out: fade window to invisible first so DWM ghost never shows
+// Initiate slide-out in the renderer and hide the native window after the
+// compositor transform lands. Avoid per-frame window opacity changes here;
+// those are visibly uneven on high-refresh 4K desktops.
 function hidePanel(opts = {}) {
   if (!win || !win.isVisible() || isHiding) return
   if (!opts.force && Date.now() < panelGeometryLockUntil) {
@@ -296,12 +340,20 @@ function hidePanel(opts = {}) {
     win.setBounds({ x: PANEL_GAP, y: workArea.y + PANEL_GAP, width: panelOnlyWidth, height: workArea.height - PANEL_GAP * 2 })
   }
   win.webContents.send('panel-hide')
-  fadeOpacity(win.getOpacity(), 0, 260, () => {
+  let completed = false
+  const completeHide = () => {
+    if (completed) return
+    completed = true
+    if (_hideFallbackTimeout) { clearTimeout(_hideFallbackTimeout); _hideFallbackTimeout = null }
+    ipcMain.removeListener('panel-hide-done', completeHide)
+    if (!win || win.isDestroyed()) return
     win.hide()
-    win.setOpacity(1)
+    win.setOpacity(isPinned ? pinnedWinOpacity() : 1)
     notifyHelperState(false)
     isHiding = false
-  })
+  }
+  ipcMain.once('panel-hide-done', completeHide)
+  _hideFallbackTimeout = setTimeout(completeHide, PANEL_SLIDE_MS + 160)
 }
 
 // Send badge count to C++ helper (and to Electron's own overlay icon)
@@ -523,6 +575,307 @@ ipcMain.handle('store-set',    (_e, key, value) => { log('[store-set]', key, '='
 ipcMain.handle('store-delete', (_e, key)       => deleteStore(key))
 ipcMain.on('renderer-log',     (_e, ...args)   => log('[renderer]', ...args))
 
+function getStarvisApiKey() {
+  return getStore(SK_STARVIS_OPENAI_KEY) || process.env.OPENAI_API_KEY || ''
+}
+
+function getStarvisConfig() {
+  const defaults = {
+    provider: 'openai',
+    model: STARVIS_DEFAULT_MODEL,
+    temperature: 0.8,
+    maxTokens: 900,
+    baseUrl: getStore(SK_STARVIS_BASE_URL) || 'https://api.openai.com/v1',
+    voiceOn: true,
+  }
+  const raw = getStore(SK_STARVIS_CONFIG)
+  if (!raw) return defaults
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+    return { ...defaults, ...(parsed || {}) }
+  } catch {
+    return defaults
+  }
+}
+
+function saveStarvisConfig(config = {}) {
+  const current = getStarvisConfig()
+  const next = {
+    ...current,
+    provider: String(config.provider || current.provider || 'openai'),
+    model: String(config.model || current.model || STARVIS_DEFAULT_MODEL),
+    temperature: Number.isFinite(Number(config.temperature)) ? Number(config.temperature) : current.temperature,
+    maxTokens: Number.isFinite(Number(config.maxTokens)) ? Math.round(Number(config.maxTokens)) : current.maxTokens,
+    baseUrl: String(config.baseUrl || current.baseUrl || 'https://api.openai.com/v1').trim().replace(/\/+$/, ''),
+    voiceOn: typeof config.voiceOn === 'boolean' ? config.voiceOn : current.voiceOn,
+  }
+  setStore(SK_STARVIS_CONFIG, JSON.stringify(next))
+  if (next.baseUrl) setStore(SK_STARVIS_BASE_URL, next.baseUrl)
+  return next
+}
+
+function compactJson(value, maxChars = 2800) {
+  let text = ''
+  try { text = JSON.stringify(value) }
+  catch { text = String(value || '') }
+  return text.length > maxChars ? `${text.slice(0, maxChars)}...` : text
+}
+
+function getStarvisContextSnapshot() {
+  return Array.from(starvisContext.values())
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    .slice(0, STARVIS_CONTEXT_MAX_ITEMS)
+    .map(item => ({
+      id: item.id,
+      title: item.title || item.id,
+      summary: item.summary || '',
+      updatedAt: item.updatedAt || 0,
+      data: summarizeStarvisContextItem(item),
+    }))
+}
+
+async function refreshStarvisWorkstationContext() {
+  try {
+    const connected = await ensureWorkstationConnected()
+    if (!connected) return false
+    const snapshot = await workstationRequest({ type: 'snapshot' }, 1600)
+    if (!snapshot) return false
+    starvisContext.set('workstation', {
+      id: 'workstation',
+      title: 'Workstation telemetry',
+      summary: [
+        snapshot.cpu ? `CPU ${Math.round(snapshot.cpu.usagePct || 0)}% ${Math.round(snapshot.cpu.temperatureC || 0)}C` : '',
+        snapshot.gpu ? `GPU ${Math.round(snapshot.gpu.usagePct || 0)}% ${Math.round(snapshot.gpu.temperatureC || 0)}C` : '',
+        snapshot.ram ? `RAM ${Math.round(snapshot.ram.usedPct || 0)}%` : '',
+        snapshot.disk ? `Disk ${Number(snapshot.disk.activityPct || 0).toFixed(1)}%` : '',
+        snapshot.network ? `Net down ${Number(snapshot.network.downMbps || 0).toFixed(1)} Mbps up ${Number(snapshot.network.upMbps || 0).toFixed(1)} Mbps` : '',
+      ].filter(Boolean).join(' | '),
+      updatedAt: Date.now(),
+      data: {
+        sampling: snapshot.sampling,
+        stale: snapshot.stale,
+        cpu: snapshot.cpu ? {
+          name: snapshot.cpu.name,
+          usagePct: snapshot.cpu.usagePct,
+          temperatureC: snapshot.cpu.temperatureC,
+          powerW: snapshot.cpu.powerW,
+          frequencyMHz: snapshot.cpu.frequencyMHz,
+        } : null,
+        gpu: snapshot.gpu ? {
+          name: snapshot.gpu.name,
+          usagePct: snapshot.gpu.usagePct,
+          temperatureC: snapshot.gpu.temperatureC,
+          powerW: snapshot.gpu.powerW,
+          vramUsedMB: snapshot.gpu.vramUsedMB,
+          vramTotalMB: snapshot.gpu.vramTotalMB,
+        } : null,
+        ram: snapshot.ram ? {
+          usedPct: snapshot.ram.usedPct,
+          availableGB: snapshot.ram.availableGB,
+          totalGB: snapshot.ram.totalGB,
+        } : null,
+        disk: snapshot.disk ? {
+          model: snapshot.disk.model,
+          activityPct: snapshot.disk.activityPct,
+        } : null,
+        network: snapshot.network ? {
+          adapter: snapshot.network.adapter,
+          downMbps: snapshot.network.downMbps,
+          upMbps: snapshot.network.upMbps,
+          valid: snapshot.network.valid,
+        } : null,
+      },
+    })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function summarizeStarvisContextItem(item = {}) {
+  const data = item.data || null;
+  if (!data) return null;
+  if (String(item.id || '').startsWith('news:')) {
+    return {
+      category: data.category,
+      unread: data.unread,
+      topThemes: (data.themes || []).slice(0, 4),
+      headlineSamples: (data.topItems || []).slice(0, 3).map(entry => ({
+        title: entry.title,
+        source: entry.source,
+        time: entry.time,
+      })),
+    };
+  }
+  if (item.id === 'stocks') {
+    return {
+      activeList: data.activeList,
+      movers: (data.quotes || [])
+        .filter(row => row.pct != null)
+        .sort((a, b) => Math.abs(b.pct || 0) - Math.abs(a.pct || 0))
+        .slice(0, 5),
+      earnings: (data.earnings || []).slice(0, 3),
+      ipos: (data.ipos || []).slice(0, 3),
+    };
+  }
+  return data;
+}
+
+function extractResponseText(payload) {
+  if (!payload) return ''
+  if (typeof payload.output_text === 'string' && payload.output_text.trim()) return payload.output_text.trim()
+  const chunks = []
+  for (const item of payload.output || []) {
+    for (const part of item.content || []) {
+      if (typeof part.text === 'string') chunks.push(part.text)
+    }
+  }
+  return chunks.join('\n').trim()
+}
+
+function parseStarvisInternetPermission(text = '') {
+  const match = String(text).trim().match(/^INTERNET_PERMISSION_REQUEST:\s*(.+)$/i)
+  if (!match) return null
+  const reason = match[1].trim() || 'I need web access to check that live data. May I fetch it?'
+  return {
+    reason,
+    response: reason,
+  }
+}
+
+function normalizeStarvisMessages(messages = [], latest = '') {
+  const items = Array.isArray(messages) ? messages.slice(-10) : []
+  const transcript = items
+    .filter(item => item?.text)
+    .map(item => `${item.role === 'assistant' ? 'Starvis' : 'User'}: ${String(item.text).slice(0, 4000)}`)
+    .join('\n')
+  return [transcript, `User: ${latest}`].filter(Boolean).join('\n\n')
+}
+
+function buildStarvisInput(request = {}) {
+  const context = getStarvisContextSnapshot()
+  const contextText = compactJson(context, STARVIS_CONTEXT_MAX_CHARS)
+  return [
+    context.length ? `Local widget context snapshot:\n${contextText}` : 'Local widget context snapshot: none published yet.',
+    request.allowInternet
+      ? 'Internet permission: enabled for this request. Use web search only if needed and include citations for web-derived facts.'
+      : 'Internet permission: disabled for this request. Do not use web search.',
+    normalizeStarvisMessages(request.messages, request.message || ''),
+  ].filter(Boolean).join('\n\n')
+}
+
+function starvisSupportsTemperature(model = '') {
+  return !/^gpt-5(\.|-|$)/i.test(String(model).trim())
+}
+
+ipcMain.handle('starvis-status', () => {
+  const config = getStarvisConfig()
+  return {
+    configured: !!getStarvisApiKey(),
+    reasoning: 'medium',
+    keySource: getStore(SK_STARVIS_OPENAI_KEY) ? 'stored' : (process.env.OPENAI_API_KEY ? 'env' : ''),
+    contextCount: starvisContext.size,
+    ...config,
+  }
+})
+
+ipcMain.handle('starvis-context', () => getStarvisContextSnapshot())
+
+ipcMain.on('starvis-context-update', (_e, payload = {}) => {
+  const id = String(payload.id || '').trim()
+  if (!id) return
+  starvisContext.set(id, {
+    id,
+    title: String(payload.title || id).slice(0, 80),
+    summary: String(payload.summary || '').slice(0, 1200),
+    updatedAt: Number(payload.updatedAt) || Date.now(),
+    data: payload.data || null,
+  })
+})
+
+ipcMain.handle('starvis-configure', (_e, config = {}) => {
+  const apiKey = String(config.apiKey || '').trim()
+  const nextConfig = saveStarvisConfig(config)
+  if (apiKey) setStore(SK_STARVIS_OPENAI_KEY, apiKey)
+  return {
+    configured: !!getStarvisApiKey(),
+    keySource: getStore(SK_STARVIS_OPENAI_KEY) ? 'stored' : (process.env.OPENAI_API_KEY ? 'env' : ''),
+    reasoning: 'medium',
+    ...nextConfig,
+  }
+})
+
+ipcMain.handle('starvis-chat', async (_e, request = {}) => {
+  const started = Date.now()
+  await refreshStarvisWorkstationContext()
+  const apiKey = getStarvisApiKey()
+  if (!apiKey) {
+    return {
+      ok: false,
+      error: 'OpenAI API key is not configured. Add OPENAI_API_KEY to .env or save a key in Starvis settings.',
+      model: STARVIS_DEFAULT_MODEL,
+      latencyMs: Date.now() - started,
+    }
+  }
+
+  const savedConfig = getStarvisConfig()
+  const model = String(request.model || savedConfig.model || STARVIS_DEFAULT_MODEL).trim() || STARVIS_DEFAULT_MODEL
+  const temperature = Number.isFinite(Number(request.temperature)) ? Number(request.temperature) : savedConfig.temperature
+  const maxOutputTokens = Number.isFinite(Number(request.maxTokens))
+    ? Math.max(128, Math.min(8192, Math.round(Number(request.maxTokens))))
+    : Math.max(128, Math.min(8192, Math.round(Number(savedConfig.maxTokens) || 900)))
+  const baseUrl = (String(request.baseUrl || '').trim() || savedConfig.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
+  const endpoint = `${baseUrl}/responses`
+
+  try {
+    const body = {
+      model,
+      instructions: STARVIS_SYSTEM_PROMPT,
+      input: buildStarvisInput(request),
+      max_output_tokens: maxOutputTokens,
+      reasoning: { effort: 'medium' },
+    }
+    if (starvisSupportsTemperature(model)) body.temperature = temperature
+    if (request.allowInternet) body.tools = [{ type: 'web_search_preview' }]
+
+    const response = await session.defaultSession.fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+    const data = await response.json().catch(() => null)
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: data?.error?.message || `OpenAI request failed (${response.status})`,
+        model,
+        latencyMs: Date.now() - started,
+      }
+    }
+    const text = extractResponseText(data)
+    const permissionRequest = !request.allowInternet ? parseStarvisInternetPermission(text) : null
+    return {
+      ok: true,
+      response: permissionRequest?.response || text || 'Command acknowledged.',
+      internetPermissionRequired: !!permissionRequest,
+      internetPermissionReason: permissionRequest?.reason || '',
+      model: data?.model || model,
+      usage: data?.usage || null,
+      latencyMs: Date.now() - started,
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      error: error?.message || String(error),
+      model,
+      latencyMs: Date.now() - started,
+    }
+  }
+})
+
 ipcMain.handle('set-window-opacity', (_e, value) => {
   setStore('wp-opacity', String(Math.max(0.1, Math.min(1, value))))
   // Transparency is now CSS-based (body/panel background rgba); no win.setOpacity() needed.
@@ -683,47 +1036,178 @@ ipcMain.handle('yahoo-chart', async (_e, ticker) => {
   });
 });
 
-function yahooJson(url) {
-  return new Promise((resolve) => {
-    const options = {
+const TV_EARNINGS_COLUMNS = [
+  'name',
+  'description',
+  'earnings_release_next_date',
+  'earnings_release_next_calendar_date',
+  'revenue_forecast_next_fq',
+  'earnings_per_share_forecast_next_fq',
+  'fundamental_currency_code',
+  'market',
+  'exchange',
+  'logoid',
+]
+
+const TV_IPO_COLUMNS = [
+  'name',
+  'description',
+  'pro_name',
+  'exchange',
+  'ipo_offer_time',
+  'ipo_offer_price_usd',
+  'ipo_price_range_usd',
+  'ipo_offered_shares',
+  'ipo_deal_amount_usd',
+  'ipo_market_cap_usd',
+  'source-logoid',
+  'ipo_offer_status',
+]
+
+function asNumber(value) {
+  if (value == null || value === '') return null
+  const n = Number(value)
+  return Number.isFinite(n) ? n : null
+}
+
+function asIsoFromUnixSeconds(value) {
+  const n = asNumber(value)
+  if (!n) return null
+  return new Date(n * 1000).toISOString()
+}
+
+function tvCell(row, columns, name) {
+  const index = columns.indexOf(name)
+  return index >= 0 ? row?.d?.[index] : null
+}
+
+function normalizeTradingViewSymbol(value) {
+  const text = String(value?.s || value || '').trim()
+  if (!text || !text.includes(':')) return ''
+  return text.toUpperCase()
+}
+
+function displayTicker(symbol, fallback = '') {
+  const text = String(symbol || fallback || '')
+  return text.includes(':') ? text.split(':').pop() : text
+}
+
+function parseIpoPriceRange(value) {
+  const text = String(value || '').replace(/[$,]/g, '').trim()
+  if (!text) return {}
+  const parts = text.split(/\s*[-–]\s*/).map(part => asNumber(part))
+  if (parts.length >= 2 && parts[0] && parts[1]) return { priceLow: parts[0], priceHigh: parts[1] }
+  if (parts[0]) return { priceLow: parts[0] }
+  return {}
+}
+
+async function tradingViewScanner(path, body) {
+  const payload = JSON.stringify(body)
+  try {
+    const result = await httpsRequest({
+      hostname: 'scanner.tradingview.com',
+      path,
+      method: 'POST',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
         'Accept': 'application/json,text/plain,*/*',
+        'Origin': 'https://www.tradingview.com',
+        'Referer': 'https://www.tradingview.com/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       },
-    };
-    https.get(url, options, (res) => {
-      let data = '';
-      res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); }
-        catch { resolve(null); }
-      });
-    }).on('error', () => resolve(null));
-  });
+    }, payload)
+    if (result.status < 200 || result.status >= 300) {
+      log('[tv-events] scanner status', result.status, path)
+      return null
+    }
+    return result.body
+  } catch (e) {
+    log('[tv-events] scanner error', path, e.message)
+    return null
+  }
 }
 
-function asDateFromYahoo(value) {
-  if (!value) return null;
-  const raw = Array.isArray(value) ? value[0] : value;
-  const seconds = raw?.raw ?? raw;
-  const n = Number(seconds);
-  if (Number.isFinite(n)) return new Date(n * 1000).toISOString();
-  const text = raw?.fmt ?? raw?.date ?? raw?.value ?? raw;
-  if (!text) return null;
-  const parsed = new Date(String(text));
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+async function fetchTradingViewEarnings(symbols) {
+  const cleanSymbols = Array.from(new Set((symbols || [])
+    .map(normalizeTradingViewSymbol)
+    .filter(Boolean)))
+    .slice(0, 48)
+  if (!cleanSymbols.length) return []
+
+  const from = Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000)
+  const to = Math.floor((Date.now() + 90 * 24 * 60 * 60 * 1000) / 1000)
+  const json = await tradingViewScanner('/global/scan?label-product=calendar-earnings', {
+    symbols: { tickers: cleanSymbols, query: { types: [] } },
+    columns: TV_EARNINGS_COLUMNS,
+    filter: [{
+      left: 'earnings_release_date,earnings_release_next_date',
+      operation: 'in_range',
+      right: [from, to],
+    }],
+    range: [0, Math.max(50, cleanSymbols.length)],
+  })
+
+  return (Array.isArray(json?.data) ? json.data : [])
+    .map(row => {
+      const symbol = normalizeTradingViewSymbol(row?.s)
+      const ticker = tvCell(row, TV_EARNINGS_COLUMNS, 'name') || displayTicker(symbol)
+      const date = asIsoFromUnixSeconds(tvCell(row, TV_EARNINGS_COLUMNS, 'earnings_release_next_date'))
+        || asIsoFromUnixSeconds(tvCell(row, TV_EARNINGS_COLUMNS, 'earnings_release_next_calendar_date'))
+      if (!symbol || !date) return null
+      return {
+        source: 'TradingView',
+        symbol,
+        ticker,
+        name: tvCell(row, TV_EARNINGS_COLUMNS, 'description') || ticker,
+        date,
+        revenueAverage: asNumber(tvCell(row, TV_EARNINGS_COLUMNS, 'revenue_forecast_next_fq')),
+        epsForecast: asNumber(tvCell(row, TV_EARNINGS_COLUMNS, 'earnings_per_share_forecast_next_fq')),
+        currency: tvCell(row, TV_EARNINGS_COLUMNS, 'fundamental_currency_code') || 'USD',
+        exchange: tvCell(row, TV_EARNINGS_COLUMNS, 'exchange') || symbol.split(':')[0],
+      }
+    })
+    .filter(Boolean)
 }
 
-function asNumberFromYahoo(value) {
-  const n = Number(value?.raw ?? value);
-  return Number.isFinite(n) ? n : null;
-}
+async function fetchTradingViewIpos() {
+  const from = Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000)
+  const to = Math.floor((Date.now() + 120 * 24 * 60 * 60 * 1000) / 1000)
+  const json = await tradingViewScanner('/global/scan?label-product=calendar-ipo', {
+    preset: 'ipo_calendar',
+    columns: TV_IPO_COLUMNS,
+    filter: [{
+      left: 'ipo_offer_time',
+      operation: 'in_range',
+      right: [from, to],
+    }],
+    range: [0, 40],
+  })
 
-function normalizeYahooTicker(ticker) {
-  return String(ticker || '')
-    .trim()
-    .replace(/^.*:/, '')
-    .replace(/\//g, '-');
+  return (Array.isArray(json?.data) ? json.data : [])
+    .map(row => {
+      const symbol = normalizeTradingViewSymbol(row?.s)
+      const shortName = tvCell(row, TV_IPO_COLUMNS, 'name') || displayTicker(symbol)
+      const exactPrice = asNumber(tvCell(row, TV_IPO_COLUMNS, 'ipo_offer_price_usd'))
+      const range = parseIpoPriceRange(tvCell(row, TV_IPO_COLUMNS, 'ipo_price_range_usd'))
+      const date = asIsoFromUnixSeconds(tvCell(row, TV_IPO_COLUMNS, 'ipo_offer_time'))
+      if (!symbol || !date) return null
+      return {
+        source: 'TradingView',
+        symbol: shortName || displayTicker(symbol),
+        tradingViewSymbol: symbol,
+        name: tvCell(row, TV_IPO_COLUMNS, 'description') || shortName || symbol,
+        date,
+        exchange: tvCell(row, TV_IPO_COLUMNS, 'exchange') || symbol.split(':')[0],
+        priceLow: exactPrice || range.priceLow || null,
+        priceHigh: range.priceHigh || null,
+        sharesOffered: asNumber(tvCell(row, TV_IPO_COLUMNS, 'ipo_offered_shares')),
+        dealAmount: asNumber(tvCell(row, TV_IPO_COLUMNS, 'ipo_deal_amount_usd')),
+        marketCap: asNumber(tvCell(row, TV_IPO_COLUMNS, 'ipo_market_cap_usd')),
+        status: tvCell(row, TV_IPO_COLUMNS, 'ipo_offer_status') || '',
+      }
+    })
+    .filter(Boolean)
 }
 
 function eventSortTime(value) {
@@ -731,47 +1215,19 @@ function eventSortTime(value) {
   return Number.isFinite(time) ? time : Number.MAX_SAFE_INTEGER;
 }
 
-ipcMain.handle('market-events', async (_e, tickers = []) => {
-  const cleanTickers = Array.from(new Set((tickers || [])
-    .map(normalizeYahooTicker)
-    .filter(Boolean)))
-    .slice(0, 24);
-  const earnings = [];
-  await Promise.all(cleanTickers.map(async ticker => {
-    const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${encodeURIComponent(ticker)}?modules=calendarEvents,price`;
-    const json = await yahooJson(url);
-    const result = json?.quoteSummary?.result?.[0];
-    const events = result?.calendarEvents;
-    const date = asDateFromYahoo(events?.earnings?.earningsDate);
-    if (!date) return;
-    earnings.push({
-      ticker,
-      name: result?.price?.shortName || result?.price?.longName || '',
-      date,
-      revenueAverage: asNumberFromYahoo(events?.earnings?.revenueAverage),
-      revenueLow: asNumberFromYahoo(events?.earnings?.revenueLow),
-      revenueHigh: asNumberFromYahoo(events?.earnings?.revenueHigh),
-    });
-  }));
+ipcMain.handle('market-events', async (_e, request = {}) => {
+  const earningsSymbols = Array.isArray(request)
+    ? request
+    : (request?.earningsSymbols || request?.symbols || request?.tickers || [])
 
-  const today = new Date();
-  const end = new Date(today.getTime() + 30 * 86400000);
-  const fmt = d => d.toISOString().slice(0, 10);
-  const ipoUrl = `https://query1.finance.yahoo.com/v1/finance/calendar/ipo?from=${fmt(today)}&to=${fmt(end)}`;
-  const ipoJson = await yahooJson(ipoUrl);
-  const documents = ipoJson?.finance?.result?.[0]?.documents || ipoJson?.ipoCalendar?.result || [];
-  const ipos = documents.slice(0, 12).map(item => ({
-    name: item.companyName || item.name || item.company || item.symbol || 'IPO',
-    symbol: item.symbol || item.ticker || '',
-    date: asDateFromYahoo(item.expectedDate || item.pricingDate || item.date || item.startDate) || '',
-    exchange: item.exchange || '',
-    priceLow: asNumberFromYahoo(item.priceLow),
-    priceHigh: asNumberFromYahoo(item.priceHigh),
-  })).filter(item => item.name || item.symbol);
+  const [earnings, ipos] = await Promise.all([
+    fetchTradingViewEarnings(earningsSymbols),
+    fetchTradingViewIpos(),
+  ])
 
-  earnings.sort((a, b) => eventSortTime(a.date) - eventSortTime(b.date));
-  ipos.sort((a, b) => eventSortTime(a.date) - eventSortTime(b.date));
-  return { ok: true, earnings: earnings.slice(0, 12), ipos, updatedAt: Date.now() };
+  earnings.sort((a, b) => eventSortTime(a.date) - eventSortTime(b.date))
+  ipos.sort((a, b) => eventSortTime(a.date) - eventSortTime(b.date))
+  return { ok: true, source: 'TradingView', earnings: earnings.slice(0, 12), ipos: ipos.slice(0, 12), updatedAt: Date.now() }
 });
 
 // ── Brave host TCP server (port 47322) ────────────────────────────────────────
@@ -1561,12 +2017,19 @@ async function resolveTvaPlusHls(feed) {
   const source = sources.find(item => /mpegurl|m3u8/i.test(`${item?.type || ''} ${item?.src || ''}`))
   log('[live-hls] tvaplus-playback', `referenceId=${referenceId}`, `status=${playback.status || '--'}`, `ok=${!!playback.ok}`, `sources=${sources.length}`)
   if (playback.ok && source?.src) return { ok: true, provider: 'tvaplus', referenceId, hlsUrl: source.src }
+  const brightcoveError = Array.isArray(playback.data) ? playback.data[0] : playback.data
+  const brightcoveCode = brightcoveError?.error_code || brightcoveError?.errorCode || ''
+  const brightcoveMessage = brightcoveError?.message || playback.data?.message || ''
+  const error = brightcoveCode === 'VIDEO_NOT_PLAYABLE'
+    ? 'TVA+ / Brightcove reports this LCN video is not playable with the current public playback policy.'
+    : brightcoveMessage || playback.error || 'TVA+ HLS source not found'
   return {
     ok: false,
     provider: 'tvaplus',
     referenceId,
     status: playback.status,
-    error: playback.data?.message || playback.error || 'TVA+ HLS source not found',
+    error,
+    code: brightcoveCode || undefined,
   }
 }
 

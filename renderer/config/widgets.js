@@ -18,6 +18,7 @@ export const SYS = [
   { id: 'agenda', label: 'Outlook Agenda', note: 'Microsoft Graph · OAuth', color: '#0078d4' },
   { id: 'mail', label: 'Outlook Mail', note: 'Microsoft Graph · OAuth', color: '#0078d4' },
   { id: 'todo', label: 'Microsoft To-Do', note: 'Microsoft Graph · OAuth', color: '#2564cf' },
+  { id: 'starvis', label: 'Starvis', note: 'AI command center · prototype', color: '#62e6ff' },
   { id: 'camera', label: 'Caméra', note: 'Security Center · local', color: '#5e8af5' },
   { id: 'euronews', label: 'Euronews', note: 'HLS · Antik', color: '#1e4ba8' },
   { id: 'live-bloomberg', label: 'Bloomberg Live', note: 'Live feed', color: '#2f6dff' },
@@ -62,6 +63,7 @@ export function defaultColumns(categories) {
   cols.clock = 'left';
   cols.agenda = 'right';
   cols.mail = 'right';
+  cols.starvis = 'right';
   cols.camera = 'left';
   cols.todo = 'right';
   LIVE_WIDGET_IDS.forEach(id => { cols[id] = 'aux'; });

@@ -52,6 +52,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     fetch: (url) => ipcRenderer.invoke('rss-fetch', url),
   },
 
+  starvis: {
+    status:    ()       => ipcRenderer.invoke('starvis-status'),
+    configure: (config) => ipcRenderer.invoke('starvis-configure', config),
+    chat:      (body)   => ipcRenderer.invoke('starvis-chat', body),
+    updateContext: (body) => ipcRenderer.send('starvis-context-update', body),
+    context:   ()       => ipcRenderer.invoke('starvis-context'),
+  },
+
   browser: {
     open:                (url)    => ipcRenderer.send('browser-open',            url),
     navigate:            (url)    => ipcRenderer.send('browser-navigate',        url),
@@ -85,7 +93,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     watchlists:   (options) => ipcRenderer.invoke('tv-watchlists', options),
     logout:       ()      => ipcRenderer.invoke('tv-logout'),
     chart:        (ticker)     => ipcRenderer.invoke('yahoo-chart', ticker),
-    events:       (tickers)    => ipcRenderer.invoke('market-events', tickers),
+    events:       (options)    => ipcRenderer.invoke('market-events', options),
   },
 
   workstation: {

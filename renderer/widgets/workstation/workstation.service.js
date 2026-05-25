@@ -1,4 +1,5 @@
 import { api } from '../../services/electronApi.js';
+import { publishStarvisContext } from '../../services/starvisContext.service.js';
 
 const subscribers = new Set();
 const REPLAY_MAX_AGE_MS = 2500;
@@ -18,6 +19,49 @@ async function poll() {
     if (snapshot) {
       currentSnapshotAt = Date.now();
       currentSnapshot = { ...snapshot, receivedAt: currentSnapshotAt };
+      publishStarvisContext('workstation', {
+        title: 'Workstation telemetry',
+        summary: [
+          snapshot.cpu ? `CPU ${Math.round(snapshot.cpu.usagePct || 0)}% ${Math.round(snapshot.cpu.temperatureC || 0)}C` : '',
+          snapshot.gpu ? `GPU ${Math.round(snapshot.gpu.usagePct || 0)}% ${Math.round(snapshot.gpu.temperatureC || 0)}C` : '',
+          snapshot.ram ? `RAM ${Math.round(snapshot.ram.usedPct || 0)}%` : '',
+          snapshot.network ? `Net down ${Number(snapshot.network.downMbps || 0).toFixed(1)} Mbps up ${Number(snapshot.network.upMbps || 0).toFixed(1)} Mbps` : '',
+        ].filter(Boolean).join(' | '),
+        data: {
+          sampling: snapshot.sampling,
+          stale: snapshot.stale,
+          cpu: snapshot.cpu ? {
+            name: snapshot.cpu.name,
+            usagePct: snapshot.cpu.usagePct,
+            temperatureC: snapshot.cpu.temperatureC,
+            powerW: snapshot.cpu.powerW,
+            frequencyMHz: snapshot.cpu.frequencyMHz,
+          } : null,
+          gpu: snapshot.gpu ? {
+            name: snapshot.gpu.name,
+            usagePct: snapshot.gpu.usagePct,
+            temperatureC: snapshot.gpu.temperatureC,
+            powerW: snapshot.gpu.powerW,
+            vramUsedMB: snapshot.gpu.vramUsedMB,
+            vramTotalMB: snapshot.gpu.vramTotalMB,
+          } : null,
+          ram: snapshot.ram ? {
+            usedPct: snapshot.ram.usedPct,
+            availableGB: snapshot.ram.availableGB,
+            totalGB: snapshot.ram.totalGB,
+          } : null,
+          disk: snapshot.disk ? {
+            model: snapshot.disk.model,
+            activityPct: snapshot.disk.activityPct,
+          } : null,
+          network: snapshot.network ? {
+            adapter: snapshot.network.adapter,
+            downMbps: snapshot.network.downMbps,
+            upMbps: snapshot.network.upMbps,
+            valid: snapshot.network.valid,
+          } : null,
+        },
+      });
       subscribers.forEach(callback => callback(currentSnapshot));
     }
   } finally {

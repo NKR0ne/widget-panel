@@ -4,6 +4,7 @@ import { api } from '../../services/electronApi.js';
 import { DEFAULT_LOC } from './weather.constants.js';
 import { wmo } from './weather.format.js';
 import { fetchWeather } from './weather.service.js';
+import { publishStarvisContext } from '../../services/starvisContext.service.js';
 
 const SK_WEATHER_DAILY_HEIGHT = 'wp-weather-daily-height';
 const DEFAULT_DAILY_HEIGHT = 164;
@@ -80,6 +81,36 @@ export default function WeatherWidget({ location = DEFAULT_LOC }) {
   const hourly = wx?.hourly;
   const nowIdx = hourly ? Math.max(0, hourly.time.findIndex(t => new Date(t) > new Date()) - 1) : 0;
   const [cond, icon] = cur ? wmo(cur.weather_code) : ['', '\u26c5'];
+
+  useEffect(() => {
+    if (!cur) return;
+    const [condition] = wmo(cur.weather_code);
+    publishStarvisContext('weather', {
+      title: 'Weather',
+      summary: `${location.name}: ${Math.round(cur.temperature_2m)} C, ${condition}, feels ${Math.round(cur.apparent_temperature)} C, wind ${Math.round(cur.wind_speed_10m)} km/h.`,
+      data: {
+        location: location.name,
+        current: {
+          temperatureC: cur.temperature_2m,
+          apparentTemperatureC: cur.apparent_temperature,
+          condition,
+          humidityPct: cur.relative_humidity_2m,
+          windKmh: cur.wind_speed_10m,
+        },
+        forecast: (daily?.time || []).slice(0, 5).map((date, index) => {
+          const [dayCondition] = wmo(daily.weather_code[index]);
+          return {
+            date,
+            condition: dayCondition,
+            minC: daily.temperature_2m_min[index],
+            maxC: daily.temperature_2m_max[index],
+            precipitationMm: daily.precipitation_sum?.[index],
+            windKmh: daily.wind_speed_10m_max?.[index],
+          };
+        }),
+      },
+    });
+  }, [cur, daily, location.name]);
 
   const onDailyResizeMouseDown = (event) => {
     event.preventDefault();

@@ -47,8 +47,8 @@ export function fetchChart(ticker) {
   return api.tv.chart(ticker);
 }
 
-export function fetchMarketEvents(tickers) {
-  return api.tv.events(tickers);
+export function fetchMarketEvents(options) {
+  return api.tv.events(options);
 }
 
 export function openTradingViewChart(symbol) {

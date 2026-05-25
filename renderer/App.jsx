@@ -28,6 +28,7 @@ import { parseOPML } from "./widgets/news/news.service.js";
 import { getNewsCategoryColor } from "./widgets/news/news.theme.js";
 import StocksWidget from "./widgets/stocks/StocksWidget.jsx";
 import { DEFAULT_TV_SYMBOLS } from "./widgets/stocks/stocks.constants.js";
+import StarvisWidget from "./widgets/starvis/StarvisWidget.jsx";
 import TrafficWidget from "./widgets/traffic/TrafficWidget.jsx";
 import WeatherWidget from "./widgets/weather/WeatherWidget.jsx";
 import { CpuWidget, DiskWidget, GpuWidget, NetworkWidget, RamWidget } from "./widgets/workstation/WorkstationWidgets.jsx";
@@ -50,6 +51,7 @@ const DEFAULT_COL_WIDTHS = { left: 220, monitor: 220, mid: 240, feed: 260, right
 const PANEL_MODES = ['base', 'news', 'monitor', 'live'];
 const BASE_COLUMN_ORDER = ['left', 'monitor', 'mid', 'feed', 'right', 'aux'];
 const DEFAULT_BASE_COLUMN_COUNT = 6;
+const PANEL_SLIDE_MS = 390;
 const EXPAND_DIAG_ENABLED = false;
 const EXPAND_DIAG_DELAYS = [0, 16, 80, 180, 260, 420, 700];
 const WEB_ISLAND_DIAG_ENABLED = true;
@@ -446,6 +448,7 @@ const PRESSREADER_START_READING_JS = `
     return { ok:true };
   })();
 `;
+const PRESSREADER_AUTO_START_READING = false;
 
 const PRESSREADER_INTERACTION_TRACKER_JS = `
   (() => {
@@ -523,6 +526,11 @@ function TodoWidgetCard(props) {
   return <WidgetFrame data={data} {...props} />;
 }
 
+function StarvisWidgetCard(props) {
+  const data = StarvisWidget();
+  return <WidgetFrame data={data} {...props} />;
+}
+
 function EuronewsWidgetCard(props) {
   const data = EuronewsWidget({ expanded: props.expanded });
   return <WidgetFrame data={data} {...props} />;
@@ -568,6 +576,7 @@ const WIDGET_CARD_COMPONENTS = {
   mail: MailWidgetCard,
   camera: CameraWidgetCard,
   todo: TodoWidgetCard,
+  starvis: StarvisWidgetCard,
   euronews: EuronewsWidgetCard,
   'live-bloomberg': LiveFeedWidgetCard,
   'live-radio-canada': LiveFeedWidgetCard,
@@ -1341,6 +1350,17 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
       return true;
     }
 
+    if (probe.hasStartReading && !PRESSREADER_AUTO_START_READING) {
+      pressSubmittingRef.current = false;
+      pressSubmitTimeRef.current = 0;
+      setLoading(false);
+      setProgress(100);
+      updatePressGate('ready', '');
+      api.log?.('[pressreader] start-reading-auto-disabled', probe.href || '');
+      pressRevealTimerRef.current = setTimeout(() => updatePressGate('', ''), 180);
+      return false;
+    }
+
     if (probe.hasStartReading) {
       const nextGate = probe.recentUserClick || pressGateRef.current === 'opening-publication'
         ? 'opening-publication'
@@ -2105,7 +2125,7 @@ export default function App() {
   const [storageReady, setStorageReady] = useState(false);
   const [pinned,       setPinned]       = useState(false);
   const [time,         setTime]         = useState(new Date());
-  const [visible,      setVisible]      = useState(false);
+  const [visible,      setVisible]      = useState(!window.electronAPI);
   const [opacity,       setOpacity]       = useState(0.55);
   const [cardOpacity,   setCardOpacity]   = useState(1);
   const [pinnedOpacity, setPinnedOpacity] = useState(0.25);
@@ -2443,7 +2463,7 @@ export default function App() {
       setShowMgr(false);
       closeReader();
       api.modal?.close();
-      setTimeout(() => panelApi.hideDone(), 270);
+      setTimeout(() => panelApi.hideDone(), PANEL_SLIDE_MS + 40);
     });
     panelApi.ready();
   }, []);
@@ -2495,7 +2515,8 @@ export default function App() {
         // means they stop being written back to wp-config.
         const knownCats = new Set((saved.categories||[]).map(c => 'cat:' + c.label));
         const cleaned = (saved.activeIds||[]).filter(id => SYSTEM_WIDGET_ID_SET.has(id) || knownCats.has(id));
-        setActiveIds(cleaned);
+        const seeded = cleaned.includes('starvis') ? cleaned : [...cleaned, 'starvis'];
+        setActiveIds(seeded);
         const cols = saved.columns || {};
         const stale = cols.weather==="right" || cols.stocks==="right" || cols.traffic==="right";
         const hasMid = Object.values(cols).some(v => v === "mid");
@@ -2525,6 +2546,7 @@ export default function App() {
             finalCols[id] = "monitor";
           }
         }
+        finalCols.starvis = finalCols.starvis || 'right';
         setColumns(finalCols);
         setApiKeys(saved.apiKeys||{});
       }
@@ -2647,7 +2669,7 @@ export default function App() {
   const { snippet, visible: tickerVisible } = useNotificationRotator(snippets, totalUnread);
 
   function handleOPML(cats) {
-    const defaults=[...cats.slice(0,2).map(c=>"cat:"+c.label),"weather","stocks","traffic"];
+    const defaults=[...cats.slice(0,2).map(c=>"cat:"+c.label),"weather","stocks","traffic","starvis"];
     setCategories(cats); setActiveIds(defaults); setColumns(defaultColumns(cats));
   }
   function resetColumns() { setColumns(defaultColumns(categories)); }
@@ -3031,11 +3053,30 @@ export default function App() {
         /* Global text vibrancy */
         body{color:#eeeef8}
         .panel-wrap{
-          transform: translateX(-100%);
-          transition: transform 260ms cubic-bezier(0.32,0,0.16,1);
+          --panel-slide-duration:${PANEL_SLIDE_MS}ms;
+          opacity:.90;
+          transform:
+            perspective(1800px)
+            translate3d(calc(-100% - 18px),0,0)
+            rotateY(-6deg)
+            scale3d(.982,.996,1);
+          transform-origin:left center;
+          transform-style:preserve-3d;
+          backface-visibility:hidden;
+          will-change:transform,opacity;
+          contain:paint style;
+          transition:
+            transform var(--panel-slide-duration) cubic-bezier(.16,.84,.22,1),
+            opacity 260ms cubic-bezier(.22,1,.36,1);
+          isolation:isolate;
         }
         .panel-wrap.open{
-          transform: translateX(0);
+          opacity:1;
+          transform:
+            perspective(1800px)
+            translate3d(0,0,0)
+            rotateY(0deg)
+            scale3d(1,1,1);
         }
         .resize-handle{
           width:5px;flex-shrink:0;cursor:ew-resize;
