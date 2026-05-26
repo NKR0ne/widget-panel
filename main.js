@@ -2181,6 +2181,11 @@ const READER_MARKDOWN_STOP = /^(?:#{1,6}\s*)?(?:0\s+comments?|add your comment|a
 const READER_MARKDOWN_SKIP = /^(?:\*\*)?(?:advertisement|analytics|applications|automotive|business|community|contact|design|download|events?|featured|home|image|input your search keywords|login|markets?|menu|news|newsletter|podcasts?|privacy|register|resources?|search|semiconductors?|sign in|submit|subscribe|terms|topics|view all|webinars?|white papers?)(?:\*\*)?$/i
 const READER_MAX_CHARS = 18000
 const READER_MAX_BLOCKS = 60
+const READER_FAST_BUDGET_MS = 4800
+const READER_DIRECT_TIMEOUT_MS = 2800
+const READER_PROXY_TIMEOUT_MS = 2200
+const READER_FEED_TIMEOUT_MS = 1600
+const READER_FAST_MIN_CHARS = 320
 
 function stripReaderNoise(html) {
   let cleaned = html
@@ -2364,6 +2369,16 @@ function articleTextLength(article) {
   return (article?.paragraphs || []).join(' ').length
 }
 
+function readerHost(url = '') {
+  try { return new URL(url).hostname.replace(/^www\./, '').toLowerCase() } catch { return '' }
+}
+
+function isFastUsableArticle(article, minChars = READER_FAST_MIN_CHARS) {
+  if (!article?.ok) return false
+  const chars = articleTextLength(article)
+  return chars >= minChars || (article.paragraphs?.length >= 2 && chars >= 240)
+}
+
 function readerAttempt(source, response, article, extra = {}) {
   return {
     source,
@@ -2378,9 +2393,10 @@ function readerAttempt(source, response, article, extra = {}) {
 function jinaReaderUrls(url) {
   const clean = String(url || '').trim()
   if (!clean) return []
+  const noProtocol = clean.replace(/^https?:\/\//i, '')
   return Array.from(new Set([
+    `https://r.jina.ai/http://${noProtocol}`,
     `https://r.jina.ai/http://${clean}`,
-    `https://r.jina.ai/http://r.jina.ai/http://${clean}`,
   ]))
 }
 
@@ -2555,11 +2571,13 @@ function detectBotChallenge(text = '') {
   return /cf-mitigated:\s*challenge|checking your browser|cloudflare|captcha|performing security verification|protect against malicious bots|verify you are not a bot|returned error 403:\s*forbidden/i.test(sample)
 }
 
-function readerFetchText(url, redirects = 0) {
+function readerFetchText(url, redirects = 0, options = {}) {
   return new Promise((resolve, reject) => {
     if (redirects > 5) { reject(new Error('too many redirects')); return }
     const u = new URL(url)
     const mod = u.protocol === 'http:' ? require('http') : require('https')
+    const timeout = Math.max(500, Number(options.timeout) || 12000)
+    const maxBytes = Math.max(64 * 1024, Number(options.maxBytes) || 2200000)
     const req = mod.request({
       hostname: u.hostname,
       path: u.pathname + u.search,
@@ -2571,11 +2589,19 @@ function readerFetchText(url, redirects = 0) {
     }, res => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         res.resume()
-        resolve(readerFetchText(new URL(res.headers.location, url).href, redirects + 1))
+        resolve(readerFetchText(new URL(res.headers.location, url).href, redirects + 1, options))
         return
       }
       const chunks = []
-      res.on('data', chunk => chunks.push(chunk))
+      let bytes = 0
+      res.on('data', chunk => {
+        bytes += chunk.length
+        if (bytes > maxBytes) {
+          req.destroy(new Error('reader response too large'))
+          return
+        }
+        chunks.push(chunk)
+      })
       res.on('end', () => resolve({
         ok: res.statusCode >= 200 && res.statusCode < 300,
         status: res.statusCode,
@@ -2585,7 +2611,7 @@ function readerFetchText(url, redirects = 0) {
       }))
     })
     req.on('error', reject)
-    req.setTimeout(12000, () => req.destroy(new Error('reader timeout')))
+    req.setTimeout(timeout, () => req.destroy(new Error('reader timeout')))
     req.end()
   })
 }
@@ -2698,6 +2724,14 @@ const PUBLISHER_FEED_FALLBACKS = [
       'https://feeds.bloomberg.com/markets/news.rss',
     ],
   },
+  {
+    host: /(^|\.)eetimes\.com$/i,
+    source: 'eetimes.com',
+    sourceLabel: 'feed',
+    feeds: [
+      'https://www.eetimes.com/feed/',
+    ],
+  },
 ]
 
 function comparableUrl(value = '') {
@@ -2733,7 +2767,7 @@ function extractXmlAttr(xml = '', tag = '', attr = '') {
   return cleanXmlText(match?.[1] || '')
 }
 
-async function fetchPublisherFeedFallback(url) {
+async function fetchPublisherFeedFallback(url, timeout = READER_FEED_TIMEOUT_MS) {
   let parsed
   try { parsed = new URL(url) } catch { return null }
   const config = PUBLISHER_FEED_FALLBACKS.find(item => item.host.test(parsed.hostname))
@@ -2742,7 +2776,7 @@ async function fetchPublisherFeedFallback(url) {
   const target = comparableUrl(url)
   for (const feedUrl of config.feeds) {
     try {
-      const res = await readerFetchText(feedUrl)
+      const res = await readerFetchText(feedUrl, 0, { timeout, maxBytes: 900000 })
       if (!res.ok || !res.text) continue
       const items = Array.from(res.text.matchAll(/<item\b[^>]*>([\s\S]*?)<\/item>/gi)).map(match => match[1])
       for (const item of items) {
@@ -2774,12 +2808,51 @@ async function fetchPublisherFeedFallback(url) {
   return null
 }
 
-async function fetchReaderArticle(url) {
+function seedReaderFallback(url, seed = null, attempts = [], error = '') {
+  if (!seed) return null
+  const description = decodeHtml(String(seed.description || seed.summary || seed.excerpt || '').replace(/<[^>]+>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (description.length < 80) return null
+  const source = readerHost(url) || seed.source || ''
+  const image = seed.image || ''
+  return {
+    ok: true,
+    url,
+    finalUrl: url,
+    source,
+    sourceLabel: 'feed',
+    title: seed.title || source || 'Reader preview',
+    description: error || 'Publisher feed preview',
+    date: seed.time || '',
+    image,
+    images: image ? [image] : [],
+    paragraphs: [description],
+    excerpt: description,
+    attempts,
+  }
+}
+
+async function fetchReaderArticle(url, seed = null) {
   const attempts = []
   let directArticle = null
   let paywallFallback = null
+  const started = Date.now()
+  const host = readerHost(url)
+  const remaining = () => Math.max(0, READER_FAST_BUDGET_MS - (Date.now() - started))
+  const isAlwaysPaywallish = /(^|\.)ft\.com$/i.test(host)
+  const skipProxy = /(^|\.)ft\.com$|(^|\.)bloomberg\.com$/i.test(host)
+
+  const quickSeed = seedReaderFallback(url, seed, attempts)
+  if (isAlwaysPaywallish && quickSeed) {
+    return {
+      ...quickSeed,
+      description: 'Publisher feed preview; full FT reader extraction requires sign-in.',
+    }
+  }
+
   try {
-    const direct = await readerFetchText(url)
+    const direct = await readerFetchText(url, 0, { timeout: Math.min(READER_DIRECT_TIMEOUT_MS, remaining() || READER_DIRECT_TIMEOUT_MS) })
     if (direct.ok && direct.text) {
       const article = parseArticleHtml(direct.text, direct.finalUrl || url, url, 'direct')
       directArticle = article
@@ -2793,7 +2866,7 @@ async function fetchReaderArticle(url) {
           attempts,
           error: 'This article appears to require a subscription or sign-in.',
         }
-      } else if (article.ok && article.paragraphs.join(' ').length > 450) {
+      } else if (isFastUsableArticle(article)) {
         return { ...article, attempts }
       }
     } else {
@@ -2808,9 +2881,44 @@ async function fetchReaderArticle(url) {
     attempts.push({ source: 'direct', error: e.message })
   }
 
-  for (const readerUrl of jinaReaderUrls(url)) {
+  if (isAlwaysPaywallish) {
+    if (paywallFallback) return { ...paywallFallback, attempts }
+    if (quickSeed) return { ...quickSeed, attempts, description: 'Publisher feed preview; full FT reader extraction requires sign-in.' }
+    return {
+      ok: false,
+      url,
+      source: host,
+      sourceLabel: 'direct',
+      title: 'Reader view unavailable',
+      description: '',
+      image: '',
+      images: [],
+      paragraphs: [],
+      attempts,
+      error: 'FT usually requires sign-in, so reader extraction stopped quickly instead of waiting on doomed fallbacks.',
+    }
+  }
+
+  try {
+    if (remaining() > 900) {
+      const feedFallback = await fetchPublisherFeedFallback(url, Math.min(READER_FEED_TIMEOUT_MS, remaining()))
+      if (feedFallback) {
+        attempts.push({
+          source: 'publisher feed',
+          status: 200,
+          paragraphs: feedFallback.paragraphs.length,
+          chars: articleTextLength(feedFallback),
+        })
+        if (articleTextLength(feedFallback) > 120) return { ...feedFallback, attempts }
+      }
+    }
+  } catch (e) {
+    attempts.push({ source: 'publisher feed', error: e.message })
+  }
+
+  if (!skipProxy && remaining() > 900) for (const readerUrl of jinaReaderUrls(url).slice(0, 1)) {
     try {
-      const res = await readerFetchText(readerUrl)
+      const res = await readerFetchText(readerUrl, 0, { timeout: Math.min(READER_PROXY_TIMEOUT_MS, remaining()), maxBytes: 1400000 })
       if (res.ok && res.text) {
         if (detectBotChallenge(res.text)) {
           attempts.push({ source: 'reader proxy', status: res.status, bytes: res.text.length, challenge: true })
@@ -2818,7 +2926,7 @@ async function fetchReaderArticle(url) {
         }
         const article = parseJinaMarkdown(res.text, res.finalUrl || readerUrl, url, directArticle?.image || '')
         attempts.push(readerAttempt('reader proxy', res, article))
-        if (article.ok && articleTextLength(article) > 450) return { ...article, attempts }
+        if (isFastUsableArticle(article)) return { ...article, attempts }
       } else {
         attempts.push({ source: 'reader proxy', status: res.status, bytes: res.text?.length || 0, challenge: res.text ? detectBotChallenge(res.text) || undefined : undefined })
       }
@@ -2827,42 +2935,14 @@ async function fetchReaderArticle(url) {
     }
   }
 
-  try {
-    const archived = await latestWaybackUrl(url)
-    if (archived) {
-      const res = await readerFetchText(archived)
-      if (res.ok && res.text) {
-        const article = parseArticleHtml(res.text, archived, url, 'archive.org')
-        attempts.push(readerAttempt('archive.org', res, article))
-        if (article.ok) return { ...article, attempts }
-      }
-    }
-  } catch (e) {
-    attempts.push({ source: 'archive.org', error: e.message })
-  }
-
-  try {
-    const feedFallback = await fetchPublisherFeedFallback(url)
-    if (feedFallback) {
-      attempts.push({
-        source: 'publisher feed',
-        status: 200,
-        paragraphs: feedFallback.paragraphs.length,
-        chars: articleTextLength(feedFallback),
-      })
-      if (articleTextLength(feedFallback) > 450) return { ...feedFallback, attempts }
-      return {
-        ...feedFallback,
-        ok: false,
-        attempts,
-        error: 'The publisher feed only provided a short preview, so the article was not treated as a complete reader view.',
-      }
-    }
-  } catch (e) {
-    attempts.push({ source: 'publisher feed', error: e.message })
-  }
-
   if (paywallFallback) return { ...paywallFallback, attempts }
+  if (quickSeed) {
+    return {
+      ...quickSeed,
+      attempts,
+      description: 'Publisher feed preview; full reader extraction did not finish inside the fast window.',
+    }
+  }
 
   return {
     ok: false,
@@ -2877,7 +2957,7 @@ async function fetchReaderArticle(url) {
     attempts,
     error: attempts.some(a => a.challenge)
       ? 'The source returned a bot verification page, so reader extraction could not access the article text automatically.'
-      : 'The article could not be purified automatically.',
+      : 'Reader extraction stopped after the fast window. Open the original article or try archive.org.',
   }
 }
 
@@ -2946,8 +3026,23 @@ async function fetchArchivedReaderArticle(url) {
   }
 }
 
-ipcMain.handle('reader-fetch', async (_e, url) => {
-  try { return await fetchReaderArticle(url) }
+ipcMain.handle('reader-fetch', async (_e, url, seed) => {
+  try {
+    return await Promise.race([
+      fetchReaderArticle(url, seed),
+      new Promise(resolve => setTimeout(() => resolve({
+        ok: false,
+        url,
+        source: readerHost(url),
+        sourceLabel: 'direct',
+        title: 'Reader view unavailable',
+        paragraphs: [],
+        images: [],
+        attempts: [{ source: 'fast deadline', error: `${READER_FAST_BUDGET_MS}ms exceeded` }],
+        error: 'Reader extraction stopped after 5 seconds. Open the original article or try archive.org.',
+      }), READER_FAST_BUDGET_MS)),
+    ])
+  }
   catch (e) { return { ok: false, url, title: 'Reader view unavailable', paragraphs: [], images: [], error: e.message } }
 })
 

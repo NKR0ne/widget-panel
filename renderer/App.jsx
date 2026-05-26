@@ -56,6 +56,7 @@ const EXPAND_DIAG_ENABLED = false;
 const EXPAND_DIAG_DELAYS = [0, 16, 80, 180, 260, 420, 700];
 const WEB_ISLAND_DIAG_ENABLED = true;
 const WEB_ISLAND_DIAG_DELAYS = [0, 60, 180, 420, 900, 1800, 3600, 7200, 12000];
+const READER_CLIENT_TIMEOUT_MS = 5200;
 const WORKSTATION_MODE_COLUMNS = {
   'workstation-cpu': 'monitor',
   'workstation-disk': 'monitor',
@@ -2313,12 +2314,36 @@ export default function App() {
     const launchRect = getReaderLaunchRect(event);
     readerRequestRef.current = requestId;
     const transitionKey = launchReader({ open: true, mode: 'article', status: 'loading', url, seed, article: null, error: '' }, launchRect);
-    api.reader?.fetch?.(url).then(article => {
+    const timeout = window.setTimeout(() => {
       if (readerRequestRef.current !== requestId) return;
+      readerRequestRef.current += 1;
+      updateLaunchedReader(transitionKey, {
+        open: true,
+        mode: 'article',
+        status: 'error',
+        url,
+        seed,
+        article: {
+          ok: false,
+          title: seed?.title || 'Reader view unavailable',
+          source: seed?.source || '',
+          sourceLabel: 'direct',
+          paragraphs: [],
+          images: seed?.image ? [seed.image] : [],
+          image: seed?.image || '',
+          attempts: [{ source: 'fast deadline', error: `${READER_CLIENT_TIMEOUT_MS}ms exceeded` }],
+        },
+        error: 'Reader extraction stopped after 5 seconds. Open the original article or try archive.org.',
+      }, transitionKey ? null : launchRect);
+    }, READER_CLIENT_TIMEOUT_MS);
+    api.reader?.fetch?.(url, seed).then(article => {
+      if (readerRequestRef.current !== requestId) return;
+      window.clearTimeout(timeout);
       if (article?.ok) updateLaunchedReader(transitionKey, { open: true, mode: 'article', status: 'ready', url, seed, article, error: '' }, transitionKey ? null : launchRect);
       else updateLaunchedReader(transitionKey, { open: true, mode: 'article', status: 'error', url, seed, article, error: article?.error || 'Reader extraction failed.' }, transitionKey ? null : launchRect);
     }).catch(error => {
       if (readerRequestRef.current !== requestId) return;
+      window.clearTimeout(timeout);
       updateLaunchedReader(transitionKey, { open: true, mode: 'article', status: 'error', url, seed, article: null, error: error?.message || 'Reader extraction failed.' }, transitionKey ? null : launchRect);
     });
   }
