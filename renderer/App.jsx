@@ -21,7 +21,7 @@ import CalendarWidget from "./widgets/calendar/CalendarWidget.jsx";
 import CameraWidget from "./widgets/camera/CameraWidget.jsx";
 import ClockWidget from "./widgets/clock/ClockWidget.jsx";
 import EuronewsWidget from "./widgets/euronews/EuronewsWidget.jsx";
-import LiveFeedGrid, { LiveFeedWidget, LiveHlsTile, LiveYouTubeEmbedTile, YOUTUBE_PLAYER_CSS, YOUTUBE_PLAYER_DIAG_JS } from "./widgets/live/LiveFeedGrid.jsx";
+import LiveFeedGrid, { LiveFeedWidget, LiveHlsTile, LiveYouTubeEmbedTile, useLiveAudioOwner, YOUTUBE_PLAYER_CSS, YOUTUBE_PLAYER_DIAG_JS } from "./widgets/live/LiveFeedGrid.jsx";
 import { AgendaWidget, MailWidget, TodoWidget } from "./widgets/microsoft/MicrosoftWidgets.jsx";
 import NewsWidget from "./widgets/news/NewsWidget.jsx";
 import { parseOPML } from "./widgets/news/news.service.js";
@@ -938,12 +938,15 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
   const isLiveDirectHls = isLive && /\.m3u8(?:[?#].*)?$/i.test(reader.url || '');
   const isLiveResolvable = isLive && !isLiveYouTube && !isLiveDirectHls;
   const [showWebSignIn, setShowWebSignIn] = useState(!!reader.authUrl && !isOutlook);
-  const [liveMuted, setLiveMuted] = useState(true);
+  const liveFeedId = isLive ? (reader.liveFeed?.id || reader.liveFeedId || reader.url || title) : '';
+  const [liveAudioOwnerId, setLiveAudioOwnerId] = useLiveAudioOwner(liveFeedId);
+  const liveMuted = !liveFeedId || liveAudioOwnerId !== liveFeedId;
   const [liveHlsUrl, setLiveHlsUrl] = useState('');
   const [liveHlsFailed, setLiveHlsFailed] = useState(false);
   const liveMutedRef = useRef(true);
   const liveResolveTimerRef = useRef(0);
   const livePlaybackTimerRef = useRef(0);
+  const liveAudioSyncTimersRef = useRef([]);
   const [pressAuth, setPressAuth] = useState(null);
   const [pressAuthReady, setPressAuthReady] = useState(!isPressReader);
   const [pressGate, setPressGate] = useState(isPressReader ? 'preparing' : '');
@@ -1165,11 +1168,23 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
     } catch {}
   }
 
+  function scheduleLiveAudioState(nextMuted = liveMutedRef.current) {
+    liveAudioSyncTimersRef.current.forEach(timer => window.clearTimeout(timer));
+    liveAudioSyncTimersRef.current = [0, 180, 520, 1200, 2600, 5000, 7600].map(delay => (
+      window.setTimeout(() => applyLiveAudioState(nextMuted), delay)
+    ));
+  }
+
   useEffect(() => {
     liveMutedRef.current = liveMuted;
     if (!isLive) return;
-    applyLiveAudioState(liveMuted);
+    scheduleLiveAudioState(liveMuted);
   }, [isLive, liveMuted, reader.url, liveHlsFailed]);
+
+  useEffect(() => () => {
+    liveAudioSyncTimersRef.current.forEach(timer => window.clearTimeout(timer));
+    liveAudioSyncTimersRef.current = [];
+  }, []);
 
   useEffect(() => {
     if (!isLive) return;
@@ -1196,8 +1211,8 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
   function toggleLiveMute(event) {
     event.stopPropagation();
     const next = !liveMuted;
-    setLiveMuted(next);
-    applyLiveAudioState(next);
+    setLiveAudioOwnerId(next ? '' : liveFeedId);
+    scheduleLiveAudioState(next);
     const wv = webviewRef.current;
     if (!wv) return;
     if (!next) {

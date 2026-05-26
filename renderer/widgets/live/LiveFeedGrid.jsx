@@ -7,10 +7,42 @@ const LIVE_ASPECT = '16 / 9';
 const LIVE_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 const CBC_REFERRER = 'https://gem.cbc.ca/';
 const YOUTUBE_EMBEDDER_ORIGIN = 'https://widget-panel.local';
+let liveAudioOwnerId = '';
+const liveAudioOwnerListeners = new Set();
+const liveAudioMountCounts = new Map();
 
 function liveLog(...args) {
   try { api.log?.('[live]', ...args.map(value => typeof value === 'string' ? value : JSON.stringify(value))); } catch {}
   try { console.log('[live]', ...args); } catch {}
+}
+
+function setLiveAudioOwnerId(nextOwnerId = '') {
+  const cleanOwnerId = nextOwnerId || '';
+  if (liveAudioOwnerId === cleanOwnerId) return;
+  liveAudioOwnerId = cleanOwnerId;
+  liveAudioOwnerListeners.forEach(listener => listener(liveAudioOwnerId));
+}
+
+export function useLiveAudioOwner(feedId = '') {
+  const [ownerId, setOwnerId] = useState(liveAudioOwnerId);
+
+  useEffect(() => {
+    const listener = nextOwnerId => setOwnerId(nextOwnerId);
+    liveAudioOwnerListeners.add(listener);
+    return () => liveAudioOwnerListeners.delete(listener);
+  }, []);
+
+  useEffect(() => {
+    if (!feedId) return undefined;
+    liveAudioMountCounts.set(feedId, (liveAudioMountCounts.get(feedId) || 0) + 1);
+    return () => {
+      const nextCount = Math.max(0, (liveAudioMountCounts.get(feedId) || 0) - 1);
+      if (nextCount) liveAudioMountCounts.set(feedId, nextCount);
+      else liveAudioMountCounts.delete(feedId);
+    };
+  }, [feedId]);
+
+  return [ownerId, setLiveAudioOwnerId];
 }
 
 function youtubeWatch(id) {
@@ -287,6 +319,20 @@ function applyWebviewAudioState(webview, muted) {
   } catch {}
 }
 
+function scheduleAudioSync(apply, delays = [0, 160, 450, 1000, 2200, 4200]) {
+  const timers = delays.map(delay => setTimeout(() => {
+    try { apply(); } catch {}
+  }, delay));
+  return () => timers.forEach(timer => clearTimeout(timer));
+}
+
+function applyVideoAudioState(video, muted) {
+  if (!video) return;
+  video.muted = !!muted;
+  video.volume = muted ? 0 : Math.max(video.volume || 0, 0.72);
+  if (!muted) video.play?.().catch(() => {});
+}
+
 export function LiveHlsTile({ src = EURONEWS_HLS_URL, muted, objectFit = 'cover', label = 'hls', onReady, onFatal }) {
   const videoRef = useRef(null);
   const hlsRef = useRef(null);
@@ -356,7 +402,7 @@ export function LiveHlsTile({ src = EURONEWS_HLS_URL, muted, objectFit = 'cover'
   }, [src, label]);
 
   useEffect(() => {
-    if (videoRef.current) videoRef.current.muted = muted;
+    return scheduleAudioSync(() => applyVideoAudioState(videoRef.current, muted));
   }, [muted]);
 
   return (
@@ -397,14 +443,11 @@ export function LiveYouTubeEmbedTile({ feed, muted, iframeRef: externalIframeRef
   };
 
   useEffect(() => {
-    applyYouTubeAudioState(iframeRef.current, muted);
+    return scheduleAudioSync(() => applyYouTubeAudioState(iframeRef.current, muted), [0, 180, 500, 1100, 2400, 4800, 7200]);
   }, [muted]);
 
   const handleLoad = () => {
-    const apply = () => applyYouTubeAudioState(iframeRef.current, muted);
-    apply();
-    setTimeout(apply, 250);
-    setTimeout(apply, 1000);
+    scheduleAudioSync(() => applyYouTubeAudioState(iframeRef.current, muted), [0, 250, 800, 1600, 3200, 5600]);
     onReady?.();
   };
 
@@ -431,9 +474,10 @@ function LiveFeedTile({ feed, onOpenWebContent, showHeader = true, allowWebviewF
   const hlsPlaybackTimerRef = useRef(null);
   const revealedRef = useRef(false);
   const [loading, setLoading] = useState(true);
-  const [muted, setMuted] = useState(true);
+  const [audioOwnerId, setAudioOwnerId] = useLiveAudioOwner(feed.id);
   const [resolvedHlsUrl, setResolvedHlsUrl] = useState(feed.hls ? feed.embedUrl : '');
   const [hlsFailed, setHlsFailed] = useState(false);
+  const muted = audioOwnerId !== feed.id;
 
   const openZoomCard = (event) => {
     event?.stopPropagation?.();
@@ -526,7 +570,7 @@ function LiveFeedTile({ feed, onOpenWebContent, showHeader = true, allowWebviewF
     mutedRef.current = muted;
     const wv = webviewRef.current;
     if (!allowWebviewFallback || !wv || feed.hls) return;
-    applyWebviewAudioState(wv, muted);
+    return scheduleAudioSync(() => applyWebviewAudioState(wv, muted), [0, 200, 650, 1400, 3000, 5200]);
   }, [allowWebviewFallback, feed.hls, muted]);
 
   useEffect(() => {
@@ -633,7 +677,7 @@ function LiveFeedTile({ feed, onOpenWebContent, showHeader = true, allowWebviewF
   const toggleMute = (event) => {
     event.stopPropagation();
     const next = !muted;
-    setMuted(next);
+    setAudioOwnerId(next ? '' : feed.id);
     if (feed.youtube) {
       liveLog('youtube-audio-toggle', feed.id, next ? 'muted' : 'sound');
       applyYouTubeAudioState(youtubeIframeRef.current, next);
