@@ -72,7 +72,7 @@ export default function AcrylicWidgetShell({
         contain: 'paint',
         overflow: 'hidden',
         borderRadius: 8,
-        border: hoverFocused ? '1px solid rgba(171,211,255,0.84)' : '1px solid rgba(122,178,255,0.48)',
+        border: hoverFocused ? '1px solid rgba(171,211,255,0.62)' : '1px solid rgba(122,178,255,0.48)',
         background: [
           'radial-gradient(circle at 16% 0%, rgba(47,109,255,0.13), transparent 30%)',
           'radial-gradient(circle at 88% 6%, rgba(122,178,255,0.09), transparent 28%)',
@@ -85,12 +85,12 @@ export default function AcrylicWidgetShell({
           ? 'var(--acrylic-card-fill, rgba(8,14,28,0.20))'
           : 'var(--acrylic-card-fill-soft, rgba(8,14,28,0.14))',
         boxShadow: (hoverFocused ? [
-          '0 0 0 1px rgba(171,211,255,0.18)',
-          `0 0 18px ${glow}`,
-          '0 0 36px rgba(31,111,255,0.34)',
-          '0 0 62px rgba(47,109,255,0.16)',
-          'inset 0 0 0 1px rgba(171,211,255,0.20)',
-          'inset 0 18px 38px rgba(122,178,255,0.055)',
+          '0 0 0 1px rgba(171,211,255,0.10)',
+          `0 0 10px ${glow}`,
+          '0 0 22px rgba(31,111,255,0.18)',
+          '0 0 38px rgba(47,109,255,0.08)',
+          'inset 0 0 0 1px rgba(171,211,255,0.14)',
+          'inset 0 14px 28px rgba(122,178,255,0.035)',
         ] : [
           '0 0 0 1px rgba(122,178,255,0.12)',
           '0 0 16px rgba(31,111,255,0.28)',
@@ -131,7 +131,7 @@ export default function AcrylicWidgetShell({
             'radial-gradient(ellipse at 84% 0%, rgba(122,178,255,0.16), transparent 42%)',
             'linear-gradient(180deg, rgba(47,109,255,0.10), transparent 64%)',
           ].join(','),
-          opacity: hoverFocused ? 0.78 : 0.58,
+          opacity: hoverFocused ? 0.64 : 0.54,
           borderRadius: '8px 8px 0 0',
           transition: 'opacity 0.18s',
         }}
@@ -141,8 +141,8 @@ export default function AcrylicWidgetShell({
           height: 1,
           margin: '0 18px',
           background: `linear-gradient(90deg, transparent, rgba(47,109,255,0.76), rgba(171,211,255,0.86), rgba(47,109,255,0.76), transparent)`,
-          boxShadow: `0 0 12px rgba(31,111,255,0.58), 0 0 24px rgba(47,109,255,0.24)`,
-          opacity: hoverFocused ? 0.9 : 0.68,
+          boxShadow: `0 0 8px rgba(31,111,255,0.34), 0 0 16px rgba(47,109,255,0.14)`,
+          opacity: hoverFocused ? 0.74 : 0.62,
           transition: 'opacity 0.18s',
         }}
       />

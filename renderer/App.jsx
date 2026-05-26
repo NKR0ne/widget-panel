@@ -448,7 +448,7 @@ const PRESSREADER_START_READING_JS = `
     return { ok:true };
   })();
 `;
-const PRESSREADER_AUTO_START_READING = false;
+const PRESSREADER_AUTO_START_READING = true;
 
 const PRESSREADER_INTERACTION_TRACKER_JS = `
   (() => {
@@ -1287,6 +1287,13 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
     setShowWebSignIn(/login|signin|oauth|microsoftonline\.com|live\.com/i.test(url || ''));
   }
 
+  function isPressReaderSettled() {
+    return isPressReader
+      && pressAuthReadyRef.current
+      && !pressSubmittingRef.current
+      && (!pressGateRef.current || pressGateRef.current === 'ready');
+  }
+
   const runPressReaderAutomation = useCallback(async () => {
     if (!isPressReader) return false;
     const wv = webviewRef.current;
@@ -1302,6 +1309,7 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
     let probe = null;
     try { probe = await wv.executeJavaScript(PRESSREADER_PROBE_JS, true); } catch {}
     if (!probe) {
+      if (isPressReaderSettled()) return false;
       setLoading(true);
       const activeGate = pressGateRef.current && pressGateRef.current !== 'ready';
       if (activeGate || !pressAuthReadyRef.current) {
@@ -1660,10 +1668,11 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
       const url = safeWebviewUrl(reader.url);
       if (isLive) api.log?.('[live] zoom-webview-start-loading', title, url);
       logWebIslandDiagnostics('did-start-loading');
-      if (!isLive) setLoading(true);
+      const pressSettled = isPressReaderSettled();
+      if (!isLive && !pressSettled) setLoading(true);
       setProgress(16);
       updateWebAuthState(url);
-      if (isPressReader) {
+      if (isPressReader && !pressSettled) {
         const activeGate = pressGateRef.current && pressGateRef.current !== 'ready' ? pressGateRef.current : '';
         const nextGate = activeGate || (pressSubmittingRef.current ? 'signing-in' : (!pressAuthReadyRef.current ? 'preparing' : 'opening-publication'));
         updatePressGate(
@@ -1711,6 +1720,10 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
       }
       if (!isPressReader || typeof event.message !== 'string') return;
       if (!event.message.startsWith('[wp-pressreader-user-click]')) return;
+      if (isPressReaderSettled()) {
+        queuePressAutomation(220);
+        return;
+      }
       setLoading(true);
       setProgress(24);
       updatePressGate('opening-publication', 'Opening PressReader publication');

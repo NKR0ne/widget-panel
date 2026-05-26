@@ -1076,6 +1076,14 @@ function asIsoFromUnixSeconds(value) {
   return new Date(n * 1000).toISOString()
 }
 
+function asIsoTradingViewDate(value) {
+  if (value == null || value === '') return null
+  const numeric = asNumber(value)
+  if (numeric) return new Date(numeric * 1000).toISOString()
+  const time = new Date(String(value)).getTime()
+  return Number.isFinite(time) ? new Date(time).toISOString() : null
+}
+
 function tvCell(row, columns, name) {
   const index = columns.indexOf(name)
   return index >= 0 ? row?.d?.[index] : null
@@ -1132,42 +1140,51 @@ async function fetchTradingViewEarnings(symbols) {
   const cleanSymbols = Array.from(new Set((symbols || [])
     .map(normalizeTradingViewSymbol)
     .filter(Boolean)))
-    .slice(0, 48)
   if (!cleanSymbols.length) return []
 
-  const from = Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000)
-  const to = Math.floor((Date.now() + 90 * 24 * 60 * 60 * 1000) / 1000)
-  const json = await tradingViewScanner('/global/scan?label-product=calendar-earnings', {
-    symbols: { tickers: cleanSymbols, query: { types: [] } },
-    columns: TV_EARNINGS_COLUMNS,
-    filter: [{
-      left: 'earnings_release_date,earnings_release_next_date',
-      operation: 'in_range',
-      right: [from, to],
-    }],
-    range: [0, Math.max(50, cleanSymbols.length)],
-  })
+  const chunks = []
+  for (let i = 0; i < cleanSymbols.length; i += 50) chunks.push(cleanSymbols.slice(i, i + 50))
 
-  return (Array.isArray(json?.data) ? json.data : [])
-    .map(row => {
+  const batches = await Promise.all(chunks.map(batch => tradingViewScanner('/global/scan?label-product=calendar-earnings', {
+    symbols: { tickers: batch, query: { types: [] } },
+    columns: TV_EARNINGS_COLUMNS,
+    range: [0, Math.max(50, batch.length)],
+  })))
+
+  const bySymbol = new Map()
+  batches.flatMap(json => Array.isArray(json?.data) ? json.data : [])
+    .forEach(row => {
       const symbol = normalizeTradingViewSymbol(row?.s)
       const ticker = tvCell(row, TV_EARNINGS_COLUMNS, 'name') || displayTicker(symbol)
-      const date = asIsoFromUnixSeconds(tvCell(row, TV_EARNINGS_COLUMNS, 'earnings_release_next_date'))
-        || asIsoFromUnixSeconds(tvCell(row, TV_EARNINGS_COLUMNS, 'earnings_release_next_calendar_date'))
-      if (!symbol || !date) return null
-      return {
+      const date = asIsoTradingViewDate(tvCell(row, TV_EARNINGS_COLUMNS, 'earnings_release_next_date'))
+        || asIsoTradingViewDate(tvCell(row, TV_EARNINGS_COLUMNS, 'earnings_release_next_calendar_date'))
+      if (!symbol) return
+      bySymbol.set(symbol, {
         source: 'TradingView',
         symbol,
         ticker,
         name: tvCell(row, TV_EARNINGS_COLUMNS, 'description') || ticker,
         date,
+        dateUnavailable: !date,
         revenueAverage: asNumber(tvCell(row, TV_EARNINGS_COLUMNS, 'revenue_forecast_next_fq')),
         epsForecast: asNumber(tvCell(row, TV_EARNINGS_COLUMNS, 'earnings_per_share_forecast_next_fq')),
         currency: tvCell(row, TV_EARNINGS_COLUMNS, 'fundamental_currency_code') || 'USD',
         exchange: tvCell(row, TV_EARNINGS_COLUMNS, 'exchange') || symbol.split(':')[0],
-      }
+      })
     })
-    .filter(Boolean)
+
+  return cleanSymbols.map(symbol => bySymbol.get(symbol) || {
+    source: 'TradingView',
+    symbol,
+    ticker: displayTicker(symbol),
+    name: displayTicker(symbol),
+    date: null,
+    dateUnavailable: true,
+    revenueAverage: null,
+    epsForecast: null,
+    currency: '',
+    exchange: symbol.split(':')[0],
+  })
 }
 
 async function fetchTradingViewIpos() {
@@ -1227,7 +1244,7 @@ ipcMain.handle('market-events', async (_e, request = {}) => {
 
   earnings.sort((a, b) => eventSortTime(a.date) - eventSortTime(b.date))
   ipos.sort((a, b) => eventSortTime(a.date) - eventSortTime(b.date))
-  return { ok: true, source: 'TradingView', earnings: earnings.slice(0, 12), ipos: ipos.slice(0, 12), updatedAt: Date.now() }
+  return { ok: true, source: 'TradingView', earnings, ipos: ipos.slice(0, 12), updatedAt: Date.now() }
 });
 
 // ── Brave host TCP server (port 47322) ────────────────────────────────────────

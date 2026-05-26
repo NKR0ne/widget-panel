@@ -32,7 +32,8 @@ const STOCKS_CLIENT_STYLE = {
 const EARNINGS_EVENTS_TAB = { id: 'wp-market-events-earnings', name: 'Revenus', kind: 'earnings' };
 const IPO_EVENTS_TAB = { id: 'wp-market-events-ipos', name: 'IPOs', kind: 'ipos' };
 const DEFAULT_WATCHLIST_NAMES = new Set(['liste de surveillance']);
-const SURVEILLANCE_LIST_NAMES = new Set(['surveillance', 'liste de surveillance', 'watchlist']);
+const SURVEILLANCE_LIST_NAMES = new Set(['surveillance']);
+const GENERIC_WATCHLIST_NAMES = new Set(['liste de surveillance', 'watchlist']);
 
 function normalizeListName(name) {
   return String(name || '').trim().toLowerCase();
@@ -47,7 +48,11 @@ function isSurveillanceList(list) {
 }
 
 function getSurveillanceList(lists) {
-  return lists.find(isSurveillanceList) || lists.find(list => (list?.symbols || []).length) || null;
+  return lists.find(isSurveillanceList)
+    || lists.find(list => !isDefaultWatchlist(list) && GENERIC_WATCHLIST_NAMES.has(normalizeListName(list?.name)))
+    || lists.find(list => GENERIC_WATCHLIST_NAMES.has(normalizeListName(list?.name)))
+    || lists.find(list => (list?.symbols || []).length)
+    || null;
 }
 
 function toTradingViewSymbol(item) {
@@ -103,6 +108,15 @@ function formatRevenue(value) {
   if (n >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
   if (n >= 1e6) return `$${(n / 1e6).toFixed(0)}M`;
   return `$${new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(n)}`;
+}
+
+function formatEarningsDate(item) {
+  return item?.dateUnavailable ? 'A confirmer' : formatEventDate(item?.date);
+}
+
+function formatEarningsDetail(item) {
+  if (item?.dateUnavailable) return item?.name || 'Date a confirmer';
+  return formatRevenue(item?.revenueAverage) || item?.name || 'Publication';
 }
 
 function formatIpoPrice(item) {
@@ -193,8 +207,8 @@ function MarketEventsPanel({ events, loading }) {
             <EventMiniRow
               key={`${item.ticker}-${item.date}`}
               primary={item.ticker}
-              secondary={formatEventDate(item.date)}
-              detail={formatRevenue(item.revenueAverage) || item.name || 'Publication'}
+              secondary={formatEarningsDate(item)}
+              detail={formatEarningsDetail(item)}
             />
           )) : (
             <div style={{ color: 'rgba(247,250,255,0.34)', fontSize: 9, paddingTop: 5 }}>Aucune date</div>
@@ -222,6 +236,7 @@ function MarketEventsPanel({ events, loading }) {
 
 function MarketEventsTabView({ type, events, loading }) {
   const rows = type === 'ipos' ? (events?.ipos || []) : (events?.earnings || []);
+  const visibleRows = type === 'ipos' ? rows.slice(0, 10) : rows;
   const empty = type === 'ipos' ? 'Aucune IPO a venir' : 'Aucune date de revenus';
   return (
     <div style={{
@@ -244,16 +259,20 @@ function MarketEventsTabView({ type, events, loading }) {
           {loading ? 'MAJ...' : events?.updatedAt ? formatEventDate(events.updatedAt) : ''}
         </div>
       </div>
-      {rows.length ? rows.slice(0, 10).map(item => (
-        <EventMiniRow
-          key={type === 'ipos' ? `${item.symbol || item.name}-${item.date}` : `${item.ticker}-${item.date}`}
-          primary={type === 'ipos' ? (item.symbol || item.name) : item.ticker}
-          secondary={formatEventDate(item.date)}
-          detail={type === 'ipos'
-            ? (item.symbol ? item.name : formatIpoPrice(item))
-            : (formatRevenue(item.revenueAverage) || item.name || 'Publication')}
-        />
-      )) : (
+      {visibleRows.length ? (
+        <div style={{ maxHeight: 360, overflowY: 'auto', marginRight: -4, paddingRight: 4 }}>
+          {visibleRows.map(item => (
+            <EventMiniRow
+              key={type === 'ipos' ? `${item.symbol || item.name}-${item.date}` : `${item.symbol || item.ticker}-${item.date || 'pending'}`}
+              primary={type === 'ipos' ? (item.symbol || item.name) : item.ticker}
+              secondary={type === 'ipos' ? formatEventDate(item.date) : formatEarningsDate(item)}
+              detail={type === 'ipos'
+                ? (item.symbol ? item.name : formatIpoPrice(item))
+                : formatEarningsDetail(item)}
+            />
+          ))}
+        </div>
+      ) : (
         <div style={{ color: 'rgba(247,250,255,0.40)', fontSize: 10, padding: '12px 2px' }}>
           {loading ? 'Chargement...' : empty}
         </div>
@@ -763,8 +782,7 @@ export default function StocksWidget({ onOpenWebContent } = {}) {
     const surveillance = getSurveillanceList(lists);
     const earningsSymbols = Array.from(new Set((surveillance?.symbols || [])
       .map(toTradingViewSymbol)
-      .filter(Boolean)))
-      .slice(0, 48);
+      .filter(Boolean)));
     let cancelled = false;
     const refreshMarketEvents = async () => {
       setMarketEventsLoading(true);

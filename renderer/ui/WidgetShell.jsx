@@ -62,9 +62,9 @@ export default function WidgetShell({
       style={{
       ...C.card,
       ...(transparent ? { background: 'transparent', border: '1px solid rgba(255,255,255,0.08)' } : {}),
-      border: hoverFocused ? '1px solid rgba(244,250,255,0.62)' : (transparent ? '1px solid rgba(255,255,255,0.08)' : C.card.border),
+      border: hoverFocused ? '1px solid rgba(244,250,255,0.46)' : (transparent ? '1px solid rgba(255,255,255,0.08)' : C.card.border),
       boxShadow: hoverFocused
-        ? '0 0 0 1px rgba(255,255,255,0.12), 0 0 18px rgba(31,111,255,0.24), inset 0 0 0 1px rgba(255,255,255,0.10)'
+        ? '0 0 0 1px rgba(255,255,255,0.08), 0 0 10px rgba(31,111,255,0.14), inset 0 0 0 1px rgba(255,255,255,0.07)'
         : C.card.boxShadow,
       opacity: isDragging ? 0.35 : 1,
       outline: 'none',
