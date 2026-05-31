@@ -73,7 +73,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   reader: {
-    fetch:        (url) => ipcRenderer.invoke('reader-fetch', url),
+    fetch:        (url, seed) => ipcRenderer.invoke('reader-fetch', url, seed),
     fetchArchive: (url) => ipcRenderer.invoke('reader-fetch-archive', url),
     openExternal: (url) => ipcRenderer.invoke('reader-open-external', url),
     setZoomActive: (active) => ipcRenderer.send('reader-zoom-active', active),

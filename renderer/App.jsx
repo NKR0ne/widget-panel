@@ -8,6 +8,8 @@ import {
   SK_COLW,
   SK_EXPANDED,
   SK_LOCATION,
+  SK_NEWS_CAROUSEL,
+  SK_NEWS_CAROUSEL_MS,
   SK_OPACITY,
   SK_PINNED,
   SK_PINNED_OPACITY,
@@ -477,7 +479,14 @@ const PRESSREADER_INTERACTION_TRACKER_JS = `
 function NewsWidgetCard(props) {
   const category = props.categories.find(c => c.label === props.id.slice(4));
   const data = category
-    ? NewsWidget({ category, colorIdx: props.colorIdx, onUnreadChange: props.onUnreadChange, onOpenUrl: props.onOpenUrl })
+    ? NewsWidget({
+        category,
+        colorIdx: props.colorIdx,
+        onUnreadChange: props.onUnreadChange,
+        onOpenUrl: props.onOpenUrl,
+        carouselEnabled: props.newsCarouselEnabled,
+        carouselIntervalMs: props.newsCarouselIntervalMs,
+      })
     : null;
   return <WidgetFrame data={data} {...props} />;
 }
@@ -2037,7 +2046,7 @@ function SettingsSlider({ label, value, min, max, step=0.01, onChange }) {
   );
 }
 
-function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardOpacityChange, pinnedOpacity, onPinnedOpacityChange, location, onLocationChange, apiKeys, onApiKeyChange }) {
+function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardOpacityChange, pinnedOpacity, onPinnedOpacityChange, location, onLocationChange, apiKeys, onApiKeyChange, newsCarouselEnabled, onNewsCarouselEnabledChange, newsCarouselIntervalMs, onNewsCarouselIntervalMsChange }) {
   const [autostart, setAutostart] = useState(false);
   const [locDraft, setLocDraft] = useState('');
   const [tomtomDraft, setTomtomDraft] = useState(apiKeys?.traffic || '');
@@ -2088,6 +2097,29 @@ function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardO
         <SettingsSlider label="Background opacity" min="0" max="1" value={opacity} onChange={onOpacityChange}/>
         <SettingsSlider label="Card opacity" min="0" max="1" value={cardOpacity} onChange={onCardOpacityChange}/>
         <SettingsSlider label="Pinned opacity" min="0" max="1" value={pinnedOpacity} onChange={onPinnedOpacityChange}/>
+        <div style={{padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+            <div>
+              <div style={{fontSize:13,color:"#e4e4f4"}}>News carousel</div>
+              <div style={{fontSize:10,color:"#c4c4d4",marginTop:2}}>Use rotating hero cards</div>
+            </div>
+            <button onClick={()=>onNewsCarouselEnabledChange(!newsCarouselEnabled)} style={{
+              width:36,height:20,borderRadius:10,border:"none",cursor:"pointer",transition:"background 0.2s",position:"relative",flexShrink:0,
+              background:newsCarouselEnabled?"var(--accent)":"rgba(255,255,255,0.1)"
+            }}>
+              <span style={{position:"absolute",top:2,left:newsCarouselEnabled?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:"left 0.2s",display:"block"}}/>
+            </button>
+          </div>
+          <div style={{marginTop:10,opacity:newsCarouselEnabled?1:0.42,pointerEvents:newsCarouselEnabled?'auto':'none'}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+              <div style={{fontSize:12,color:"#e4e4f4"}}>Rotation speed</div>
+              <div style={{fontSize:11,color:"#d0d0e0",fontFamily:"DM Mono,monospace"}}>{Math.round(newsCarouselIntervalMs / 1000)}s</div>
+            </div>
+            <input type="range" min="2" max="20" step="1" value={Math.round(newsCarouselIntervalMs / 1000)}
+              onChange={e=>onNewsCarouselIntervalMsChange(parseInt(e.target.value, 10) * 1000)}
+              style={{width:"100%",accentColor:"var(--accent)",cursor:"pointer"}}/>
+          </div>
+        </div>
         <div style={{padding:"12px 0",borderBottom:"1px solid rgba(255,255,255,0.05)"}}>
           <div style={{fontSize:13,color:"#e4e4f4",marginBottom:2}}>Location</div>
           <div style={{fontSize:10,color:"#c4c4d4",marginBottom:8}}>Weather &amp; traffic</div>
@@ -2158,6 +2190,8 @@ export default function App() {
   const [opacity,       setOpacity]       = useState(0.55);
   const [cardOpacity,   setCardOpacity]   = useState(1);
   const [pinnedOpacity, setPinnedOpacity] = useState(0.25);
+  const [newsCarouselEnabled, setNewsCarouselEnabled] = useState(false);
+  const [newsCarouselIntervalMs, setNewsCarouselIntervalMs] = useState(5000);
   const [location,      setLocation]      = useState(DEFAULT_LOC);
   const [tvSymbols,     setTvSymbols]     = useState(null);
   const [accentColor,    setAccentColor]    = useState('#202020');
@@ -2559,7 +2593,9 @@ export default function App() {
       api.store.get(SK_CARD_OPACITY),
       api.store.get(SK_PINNED_OPACITY),
       api.store.get(SK_LOCATION),
-    ]).then(([saved, opv, cardv, pinnedv, locv]) => {
+      api.store.get(SK_NEWS_CAROUSEL),
+      api.store.get(SK_NEWS_CAROUSEL_MS),
+    ]).then(([saved, opv, cardv, pinnedv, locv, newsCarouselV, newsCarouselMsV]) => {
       if (saved?.categories?.length) {
         setCategories(saved.categories);
         // Strip orphan IDs (e.g. 'pressreader' left over from earlier sessions
@@ -2608,6 +2644,11 @@ export default function App() {
       setCardOpacity(cardVal);
       document.documentElement.style.setProperty('--card-bg', `rgba(38,40,50,${cardVal})`);
       if (pinnedv) setPinnedOpacity(parseFloat(pinnedv));
+      setNewsCarouselEnabled(newsCarouselV === '1');
+      if (newsCarouselMsV) {
+        const parsed = parseInt(newsCarouselMsV, 10);
+        if (Number.isFinite(parsed)) setNewsCarouselIntervalMs(Math.max(1000, Math.min(60000, parsed)));
+      }
       if (locv) { try { setLocation(JSON.parse(locv)); } catch {} }
       api.store.get(SK_TV_SYMBOLS).then(v => {
         let syms = DEFAULT_TV_SYMBOLS;
@@ -2677,6 +2718,16 @@ export default function App() {
     if (!storageReady) return;
     api.store.set(SK_PINNED_OPACITY, String(pinnedOpacity));
   },[pinnedOpacity, storageReady]);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    api.store.set(SK_NEWS_CAROUSEL, newsCarouselEnabled ? '1' : '');
+  }, [newsCarouselEnabled, storageReady]);
+
+  useEffect(() => {
+    if (!storageReady) return;
+    api.store.set(SK_NEWS_CAROUSEL_MS, String(newsCarouselIntervalMs));
+  }, [newsCarouselIntervalMs, storageReady]);
 
   useEffect(() => {
     if (!storageReady) return;
@@ -2876,16 +2927,19 @@ export default function App() {
   // this, WidgetCard returns null but renderCol still renders the wrapping
   // .wi div, taking up space in whichever column the phantom ID was placed.
   const visibleIds = activeIds.filter(id => isKnownWidgetId(id, categories));
-  const newsIds  = visibleIds.filter(id => id.startsWith("cat:"));
+  const layoutVisibleIds = panelMode === 'news'
+    ? visibleIds.filter(id => id !== 'starvis')
+    : visibleIds;
+  const newsIds  = layoutVisibleIds.filter(id => id.startsWith("cat:"));
   const stageActive = reader.open || !!readerTransition || panelMode === 'monitor' || panelMode === 'live';
   const webStageActive = (reader.open && reader.mode === 'web') || readerTransition?.nextReader?.mode === 'web';
   const belongsInRegularColumn = id => panelMode !== 'monitor' || !WORKSTATION_WIDGET_ID_SET.has(id);
-  const leftIds  = visibleIds.filter(id => getColFor(id) === "left" && belongsInRegularColumn(id));
-  const monitorIds = visibleIds.filter(id => getColFor(id) === "monitor" && belongsInRegularColumn(id));
-  const midIds = visibleIds.filter(id => getColFor(id) === "mid" && belongsInRegularColumn(id));
-  const feedIds = visibleIds.filter(id => getColFor(id) === "feed" && belongsInRegularColumn(id));
-  const rightIds = visibleIds.filter(id => getColFor(id) === "right" && belongsInRegularColumn(id));
-  const auxIds = visibleIds.filter(id => getColFor(id) === "aux" && belongsInRegularColumn(id));
+  const leftIds  = layoutVisibleIds.filter(id => getColFor(id) === "left" && belongsInRegularColumn(id));
+  const monitorIds = layoutVisibleIds.filter(id => getColFor(id) === "monitor" && belongsInRegularColumn(id));
+  const midIds = layoutVisibleIds.filter(id => getColFor(id) === "mid" && belongsInRegularColumn(id));
+  const feedIds = layoutVisibleIds.filter(id => getColFor(id) === "feed" && belongsInRegularColumn(id));
+  const rightIds = layoutVisibleIds.filter(id => getColFor(id) === "right" && belongsInRegularColumn(id));
+  const auxIds = layoutVisibleIds.filter(id => getColFor(id) === "aux" && belongsInRegularColumn(id));
   const workstationStageIds = WORKSTATION_WIDGET_IDS.filter(id => visibleIds.includes(id) || panelMode === 'monitor');
   const regularColumnCount = panelMode === 'base' && !stageActive
     ? baseColumnCount
@@ -2952,6 +3006,8 @@ export default function App() {
             onUnreadChange={count=>onUnread(id,count)}
             onOpenUrl={openBrowser}
             onOpenWebContent={openWebCard}
+            newsCarouselEnabled={newsCarouselEnabled}
+            newsCarouselIntervalMs={newsCarouselIntervalMs}
             location={location}
             tvSymbols={tvSymbols}
             expanded={getExpanded(id)}
@@ -2980,6 +3036,8 @@ export default function App() {
           onUnreadChange={count => onUnread(id, count)}
           onOpenUrl={openBrowser}
           onOpenWebContent={openWebCard}
+          newsCarouselEnabled={newsCarouselEnabled}
+          newsCarouselIntervalMs={newsCarouselIntervalMs}
           location={location}
           tvSymbols={tvSymbols}
           expanded={true}
@@ -3107,7 +3165,21 @@ export default function App() {
         body{color:#eeeef8}
         .panel-wrap{
           --panel-slide-duration:${PANEL_SLIDE_MS}ms;
+          --panel-bg:
+            linear-gradient(145deg, rgba(48,58,88,${opacityRange(panelAlpha, 0, 1)}), rgba(10,16,30,${opacityRange(panelLowAlpha, 0, 1)})),
+            radial-gradient(circle at 88% 96%, rgba(31,111,255,${panelGlowAlpha}), transparent 25%),
+            radial-gradient(circle at 8% 2%, rgba(255,255,255,${opacityRange(panelAlpha, 0, 0.10)}), transparent 18%),
+            linear-gradient(90deg, rgba(255,255,255,${opacityRange(panelAlpha, 0, 0.10)}), transparent 16%, transparent 84%, rgba(255,255,255,${opacityRange(panelAlpha, 0, 0.055)}));
           opacity:.90;
+          box-sizing:border-box;
+          background:var(--panel-bg);
+          border:1px solid rgba(238,248,255,0.34);
+          box-shadow:
+            inset 0 0 0 1px rgba(31,111,255,0.11),
+            inset 0 1px 0 rgba(255,255,255,0.20),
+            0 0 30px rgba(31,111,255,0.12);
+          backdrop-filter:blur(28px) saturate(178%) contrast(104%);
+          -webkit-backdrop-filter:blur(28px) saturate(178%) contrast(104%);
           transform:
             perspective(1800px)
             translate3d(calc(-100% - 18px),0,0)
@@ -3154,6 +3226,11 @@ export default function App() {
         .panel-surface{
           position:relative;
           isolation:isolate;
+          background:transparent;
+          border:0;
+          box-shadow:none;
+          backdrop-filter:none;
+          -webkit-backdrop-filter:none;
         }
         .panel-surface.web-stage{
           isolation:auto;
@@ -3942,7 +4019,9 @@ export default function App() {
       {/* ── Sliding wrapper ── */}
       <div className={`panel-wrap${visible?" open":""}`}
            style={{display:"flex",flexDirection:"row",height:"100vh",
-                   width: browserPane.open ? browserPane.braveX : '100vw'}}>
+                   width: browserPane.open ? browserPane.braveX : '100vw',
+                   backdropFilter:webStageActive ? "none" : undefined,
+                   WebkitBackdropFilter:webStageActive ? "none" : undefined}}>
 
         {/* ── Panel content ── */}
         <div ref={panelBgRef} className={`panel-surface${webStageActive ? ' web-stage' : ''}`} style={{
@@ -3950,16 +4029,6 @@ export default function App() {
           width: browserPane.open ? browserPane.braveX : '100vw',
           overflow:"hidden",
           display:"flex",flexDirection:"row",
-          background:[
-            `linear-gradient(145deg, rgba(48,58,88,${opacityRange(panelAlpha, 0, 1)}), rgba(10,16,30,${opacityRange(panelLowAlpha, 0, 1)}))`,
-            `radial-gradient(circle at 88% 96%, rgba(31,111,255,${panelGlowAlpha}), transparent 25%)`,
-            `radial-gradient(circle at 8% 2%, rgba(255,255,255,${opacityRange(panelAlpha, 0, 0.10)}), transparent 18%)`,
-            `linear-gradient(90deg, rgba(255,255,255,${opacityRange(panelAlpha, 0, 0.10)}), transparent 16%, transparent 84%, rgba(255,255,255,${opacityRange(panelAlpha, 0, 0.055)}))`
-          ].join(','),
-          border:"1px solid rgba(238,248,255,0.34)",
-          boxShadow:"inset 0 0 0 1px rgba(31,111,255,0.11), inset 0 1px 0 rgba(255,255,255,0.20), 0 0 30px rgba(31,111,255,0.12)",
-          backdropFilter:webStageActive ? "none" : "blur(28px) saturate(178%) contrast(104%)",
-          WebkitBackdropFilter:webStageActive ? "none" : "blur(28px) saturate(178%) contrast(104%)",
           transition:"width 280ms cubic-bezier(0.32,0,0.16,1)"}}>
 
           <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -4133,6 +4202,8 @@ export default function App() {
         opacity={opacity} onOpacityChange={setOpacity}
         cardOpacity={cardOpacity} onCardOpacityChange={v=>{ setCardOpacity(v); document.documentElement.style.setProperty('--card-bg',`rgba(38,40,50,${v})`); }}
         pinnedOpacity={pinnedOpacity} onPinnedOpacityChange={setPinnedOpacity}
+        newsCarouselEnabled={newsCarouselEnabled} onNewsCarouselEnabledChange={setNewsCarouselEnabled}
+        newsCarouselIntervalMs={newsCarouselIntervalMs} onNewsCarouselIntervalMsChange={setNewsCarouselIntervalMs}
         location={location} onLocationChange={setLocation}
         apiKeys={apiKeys} onApiKeyChange={(service,key)=>saveKey(service,key)}/>}
 

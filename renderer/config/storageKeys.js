@@ -21,3 +21,5 @@ export const SK_EURONEWS_HEIGHT = 'wp-euronews-height';
 export const SK_CAMERA_AUTH = 'wp-camera-auth';
 export const SK_CAMERA_HEIGHT = 'wp-camera-height';
 export const SK_CAMERA_ID = 'wp-camera-id';
+export const SK_NEWS_CAROUSEL = 'wp-news-carousel';
+export const SK_NEWS_CAROUSEL_MS = 'wp-news-carousel-ms';

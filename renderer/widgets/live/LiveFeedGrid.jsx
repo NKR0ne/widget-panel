@@ -5,7 +5,6 @@ import { loadHlsJs } from '../euronews/euronews.service.js';
 
 const LIVE_ASPECT = '16 / 9';
 const LIVE_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-const CBC_REFERRER = 'https://gem.cbc.ca/';
 const YOUTUBE_EMBEDDER_ORIGIN = 'https://widget-panel.local';
 let liveAudioOwnerId = '';
 const liveAudioOwnerListeners = new Set();
@@ -253,28 +252,29 @@ export const LIVE_FEEDS = [
     id: 'live-france24',
     title: 'France 24',
     source: 'YouTube',
-    url: youtubeWatch('l8PMl7tUDIE'),
-    embedUrl: youtubeWatch('l8PMl7tUDIE'),
+    url: youtubeWatch('HvZt-nh9sGg'),
+    embedUrl: youtubeWatch('HvZt-nh9sGg'),
     partition: 'persist:live-france24',
     youtube: true,
   },
   {
     id: 'live-cbc-news',
     title: 'CBC News',
-    source: 'CBC Gem',
-    url: 'https://gem.cbc.ca/live/43?autoplay=10',
-    embedUrl: 'https://gem.cbc.ca/live/43?autoplay=10',
+    source: 'YouTube',
+    url: youtubeWatch('5vfaDsMhCF4'),
+    embedUrl: youtubeWatch('5vfaDsMhCF4'),
     partition: 'persist:live-cbc',
-    referrer: CBC_REFERRER,
+    youtube: true,
   },
   {
     id: 'live-lcn',
     title: 'LCN',
-    source: 'TVA+',
-    url: 'https://www.tvaplus.ca/lcn/en-direct',
-    embedUrl: 'https://www.tvaplus.ca/lcn/en-direct',
+    source: 'Teleon',
+    url: 'https://tvalive.akamaized.net/hls/live/2014213/tvan01/tvan01.m3u8',
+    embedUrl: 'https://tvalive.akamaized.net/hls/live/2014213/tvan01/tvan01.m3u8',
     partition: 'persist:live-lcn',
-    referrer: 'https://www.tvaplus.ca/',
+    referrer: 'https://player.teleon.tv/',
+    hls: true,
   },
   {
     id: 'euronews',
