@@ -2115,7 +2115,7 @@ function SettingsModal({ onClose, opacity, onOpacityChange, cardOpacity, onCardO
               <div style={{fontSize:12,color:"#e4e4f4"}}>Rotation speed</div>
               <div style={{fontSize:11,color:"#d0d0e0",fontFamily:"DM Mono,monospace"}}>{Math.round(newsCarouselIntervalMs / 1000)}s</div>
             </div>
-            <input type="range" min="2" max="20" step="1" value={Math.round(newsCarouselIntervalMs / 1000)}
+            <input type="range" min="20" max="60" step="1" value={Math.round(newsCarouselIntervalMs / 1000)}
               onChange={e=>onNewsCarouselIntervalMsChange(parseInt(e.target.value, 10) * 1000)}
               style={{width:"100%",accentColor:"var(--accent)",cursor:"pointer"}}/>
           </div>
@@ -2191,7 +2191,7 @@ export default function App() {
   const [cardOpacity,   setCardOpacity]   = useState(1);
   const [pinnedOpacity, setPinnedOpacity] = useState(0.25);
   const [newsCarouselEnabled, setNewsCarouselEnabled] = useState(false);
-  const [newsCarouselIntervalMs, setNewsCarouselIntervalMs] = useState(5000);
+  const [newsCarouselIntervalMs, setNewsCarouselIntervalMs] = useState(20000);
   const [location,      setLocation]      = useState(DEFAULT_LOC);
   const [tvSymbols,     setTvSymbols]     = useState(null);
   const [accentColor,    setAccentColor]    = useState('#202020');
@@ -2647,7 +2647,7 @@ export default function App() {
       setNewsCarouselEnabled(newsCarouselV === '1');
       if (newsCarouselMsV) {
         const parsed = parseInt(newsCarouselMsV, 10);
-        if (Number.isFinite(parsed)) setNewsCarouselIntervalMs(Math.max(1000, Math.min(60000, parsed)));
+        if (Number.isFinite(parsed)) setNewsCarouselIntervalMs(Math.max(20000, Math.min(60000, parsed)));
       }
       if (locv) { try { setLocation(JSON.parse(locv)); } catch {} }
       api.store.get(SK_TV_SYMBOLS).then(v => {

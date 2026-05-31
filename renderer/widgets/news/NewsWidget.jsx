@@ -12,6 +12,7 @@ const NEWS_LOAD_TIMEOUT_MS = 18000;
 const NEWS_CAROUSEL_HEIGHT_MIN = 150;
 const NEWS_CAROUSEL_HEIGHT_MAX = 420;
 const NEWS_CAROUSEL_HEIGHT_DEFAULT = 210;
+const NEWS_CAROUSEL_STAGGER_MS = 1000;
 const newsCache = new Map();
 
 function newsCacheKey(category) {
@@ -87,7 +88,7 @@ function clampNewsHeight(value) {
   return Math.max(NEWS_CAROUSEL_HEIGHT_MIN, Math.min(NEWS_CAROUSEL_HEIGHT_MAX, n));
 }
 
-export default function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl, carouselEnabled = false, carouselIntervalMs = 5000 }) {
+export default function NewsWidget({ category, colorIdx, onUnreadChange, onOpenUrl, carouselEnabled = false, carouselIntervalMs = 20000 }) {
   const color = getNewsCategoryColor(category.label, colorIdx);
   const cacheKey = newsCacheKey(category);
   const cached = newsCache.get(cacheKey);
@@ -129,13 +130,22 @@ export default function NewsWidget({ category, colorIdx, onUnreadChange, onOpenU
 
   useEffect(() => {
     if (!carouselEnabled || items.length < 2) return undefined;
-    const delay = Math.max(1000, Number(carouselIntervalMs) || 5000);
-    const timer = setInterval(() => {
+    const delay = Math.max(20000, Number(carouselIntervalMs) || 20000);
+    const stagger = Math.max(0, Number(colorIdx) || 0) * NEWS_CAROUSEL_STAGGER_MS;
+    let interval = 0;
+    const flipNext = () => {
       setFlipDirection(1);
       setCarouselIndex(index => (index + 1) % items.length);
-    }, delay);
-    return () => clearInterval(timer);
-  }, [carouselEnabled, carouselIntervalMs, items.length]);
+    };
+    const initial = setTimeout(() => {
+      flipNext();
+      interval = setInterval(flipNext, delay);
+    }, delay + stagger);
+    return () => {
+      clearTimeout(initial);
+      clearInterval(interval);
+    };
+  }, [carouselEnabled, carouselIntervalMs, colorIdx, items.length]);
 
   useEffect(() => {
     let alive = true;
