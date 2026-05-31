@@ -318,6 +318,7 @@ export default function NewsWidget({ category, colorIdx, onUnreadChange, onOpenU
         )}
         {hasItems && carouselEnabled && activeItem && (
           <div
+            className="wp-news-carousel-card"
             style={{
               ...NEWS_LIST_SURFACE,
               minHeight: NEWS_CAROUSEL_HEIGHT_MIN,
@@ -333,14 +334,23 @@ export default function NewsWidget({ category, colorIdx, onUnreadChange, onOpenU
                 to { opacity: 1; transform: rotateY(0deg) scale(1); filter: none; }
               }
               .wp-news-carousel-nav {
-                position:absolute;top:50%;z-index:3;width:28px;height:38px;
-                transform:translateY(-50%);border-radius:7px;border:1px solid rgba(255,255,255,.28);
-                background:rgba(2,7,16,.48);color:#fff;font-size:20px;line-height:1;
+                position:absolute;top:50%;z-index:3;width:32px;height:52px;
+                transform:translateY(-50%) scale(.98);border-radius:8px;border:0;
+                background:linear-gradient(180deg, rgba(2,7,16,.12), rgba(2,7,16,.28));
+                color:rgba(255,255,255,.78);font-size:25px;line-height:1;
                 display:flex;align-items:center;justify-content:center;cursor:pointer;
-                box-shadow:0 8px 20px rgba(0,0,0,.22), inset 0 0 0 1px rgba(255,255,255,.05);
-                backdrop-filter:blur(8px);transition:background .16s,border-color .16s,transform .16s;
+                opacity:0;pointer-events:none;text-shadow:0 1px 10px rgba(0,0,0,.72);
+                box-shadow:none;backdrop-filter:blur(6px);
+                transition:opacity .18s ease,background .16s ease,color .16s ease,transform .16s ease;
               }
-              .wp-news-carousel-nav:hover { background:rgba(31,111,255,.34);border-color:rgba(171,211,255,.54); }
+              .wp-news-carousel-card:hover .wp-news-carousel-nav,
+              .wp-news-carousel-card:focus-within .wp-news-carousel-nav {
+                opacity:.72;pointer-events:auto;transform:translateY(-50%) scale(1);
+              }
+              .wp-news-carousel-nav:hover,
+              .wp-news-carousel-nav:focus-visible {
+                opacity:1;color:#fff;background:rgba(31,111,255,.18);outline:none;
+              }
             `}</style>
             <div
               key={`${activeItem.id}-${carouselIndex}`}
