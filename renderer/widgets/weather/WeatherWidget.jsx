@@ -83,9 +83,11 @@ export default function WeatherWidget({ location = DEFAULT_LOC }) {
   const [cond, icon] = cur ? wmo(cur.weather_code) : ['', '\u26c5'];
 
   useEffect(() => {
-    if (!cur) return;
+    if (!cur || !lastUpdated) return;
     const [condition] = wmo(cur.weather_code);
     publishStarvisContext('weather', {
+      force: true,
+      updatedAt: lastUpdated,
       title: 'Weather',
       summary: `${location.name}: ${Math.round(cur.temperature_2m)} C, ${condition}, feels ${Math.round(cur.apparent_temperature)} C, wind ${Math.round(cur.wind_speed_10m)} km/h.`,
       data: {
@@ -110,7 +112,7 @@ export default function WeatherWidget({ location = DEFAULT_LOC }) {
         }),
       },
     });
-  }, [cur, daily, location.name]);
+  }, [cur, daily, lastUpdated, location.name]);
 
   const onDailyResizeMouseDown = (event) => {
     event.preventDefault();

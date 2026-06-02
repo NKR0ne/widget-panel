@@ -3,7 +3,8 @@ const path   = require('path')
 const fs     = require('fs')
 const net    = require('net')
 const https  = require('https')
-const { exec, spawn } = require('child_process')
+const crypto = require('crypto')
+const { exec, execFile, spawn } = require('child_process')
 const { getStore, setStore, deleteStore } = require('./store')
 
 function loadEnvFile() {
@@ -37,20 +38,37 @@ const PANEL_SLIDE_MS = 390
 const SK_STARVIS_OPENAI_KEY = 'wp-starvis-openai-key'
 const SK_STARVIS_BASE_URL = 'wp-starvis-base-url'
 const SK_STARVIS_CONFIG = 'wp-starvis-config'
+const SK_STARVIS_ACTIONS = 'wp-starvis-actions'
 const STARVIS_DEFAULT_MODEL = 'gpt-5.5'
+const STARVIS_TTS_MODELS = new Set(['gpt-4o-mini-tts', 'gpt-4o-mini-tts-2025-12-15', 'tts-1-hd', 'tts-1'])
+const STARVIS_TTS_VOICES = new Set(['alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'onyx', 'nova', 'sage', 'shimmer', 'verse', 'marin', 'cedar'])
 const STARVIS_SYSTEM_PROMPT = [
-  'You are Starvis, a concise, capable AI command center assistant inspired by a polished cinematic operating system.',
-  'Be useful first and brief by default. The user is busy and often listening, so avoid long explanations unless explicitly requested.',
-  'For dashboard/report requests, use one short sentence per card or data source. Do not list every metric or headline.',
-  'For news, synthesize into themes and implications; group related headlines, mention only the most important examples, and avoid reading a feed item by item.',
-  'Use a maximum of 5 bullets for normal reports. If there are more cards, combine lower-priority cards into a final summary sentence.',
-  'Personality: calm, dry wit, technically sharp, composed, and quietly confident. Do not roleplay as Jarvis or mention Iron Man.',
-  'Use the supplied local widget-panel context for reports. Treat it as a bounded local API snapshot, not full filesystem or renderer access.',
-  'If web search is enabled for this request, cite web-derived claims. If web search is disabled, say you only used local widget context and model knowledge.',
+  'You are Starvis, an embedded assistant inside the Widget Panel desktop app.',
+  'Default behavior is ChatGPT-like: answer naturally, reason clearly, and adapt to the user. Avoid theatrical command-center roleplay unless the user asks for that style.',
+  'Be concise by default, but give complete technical answers when the task requires detail.',
+  'Use supplied local widget-panel context when relevant. Treat it as a bounded local snapshot, not full filesystem or renderer access.',
+  'For dashboard/report requests, synthesize. Do not dump every metric or headline unless asked.',
+  'For news, group related headlines into themes and implications; mention only the most important examples.',
+  'If web search is enabled for this request, cite web-derived claims. If web search is disabled, say you only used local widget context and model knowledge when that distinction matters.',
   'If the user asks for current, live, scheduled, price, weather, sports, news, or other time-sensitive data that is not present in local context and web search is disabled, reply exactly: INTERNET_PERMISSION_REQUEST: I need web access to check that live data. May I fetch it?',
+  'Agent mode is explicit. Outside agent mode, do not imply you can edit files, run commands, commit, push, or automate the system. In agent mode, plan and reason like a coding agent, but only use capabilities explicitly listed in the provided Starvis capability report.',
 ].join('\n')
 const STARVIS_CONTEXT_MAX_ITEMS = 24
 const STARVIS_CONTEXT_MAX_CHARS = 16000
+const STARVIS_CONTEXT_FRESH_MS = {
+  weather: 45 * 60 * 1000,
+  stocks: 10 * 60 * 1000,
+  news: 35 * 60 * 1000,
+}
+const STARVIS_AGENT_TOOL_MAX_LOOPS = 3
+const STARVIS_WORKSPACE_IGNORES = new Set(['.git', 'node_modules', 'dist', 'dist-electron', 'build', 'coverage', '.vs'])
+const STARVIS_ACTION_QUEUE_MAX = 50
+const STARVIS_ACTION_PERSIST_MAX = 50
+const STARVIS_ACTION_RETENTION_MS = 7 * 24 * 60 * 60 * 1000
+const STARVIS_ALLOWED_COMMANDS = new Set(['npm', 'npm.cmd', 'node', 'node.exe', 'git', 'git.exe'])
+const STARVIS_ALLOWED_GIT_COMMANDS = new Set(['status', 'diff', 'log', 'show', 'rev-parse', 'branch'])
+const STARVIS_PROTECTED_FILENAMES = new Set(['.env', '.env.local', '.env.production', '.env.development'])
+const STARVIS_BLOCKED_FILE_EXTENSIONS = new Set(['.exe', '.dll', '.node', '.msi', '.bat', '.cmd', '.ps1', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.ico', '.zip', '.7z', '.pdf'])
 
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
@@ -584,9 +602,14 @@ function getStarvisConfig() {
     provider: 'openai',
     model: STARVIS_DEFAULT_MODEL,
     temperature: 0.8,
-    maxTokens: 900,
+    maxTokens: 1800,
     baseUrl: getStore(SK_STARVIS_BASE_URL) || 'https://api.openai.com/v1',
     voiceOn: true,
+    voiceEngine: 'openai',
+    ttsModel: 'gpt-4o-mini-tts',
+    ttsVoice: 'cedar',
+    ttsSpeed: 0.96,
+    ttsInstructions: 'Speak with a composed, warm, low-key technical assistant voice. Natural pacing, clear consonants, no theatrical performance.',
   }
   const raw = getStore(SK_STARVIS_CONFIG)
   if (!raw) return defaults
@@ -608,6 +631,11 @@ function saveStarvisConfig(config = {}) {
     maxTokens: Number.isFinite(Number(config.maxTokens)) ? Math.round(Number(config.maxTokens)) : current.maxTokens,
     baseUrl: String(config.baseUrl || current.baseUrl || 'https://api.openai.com/v1').trim().replace(/\/+$/, ''),
     voiceOn: typeof config.voiceOn === 'boolean' ? config.voiceOn : current.voiceOn,
+    voiceEngine: ['openai', 'system'].includes(config.voiceEngine) ? config.voiceEngine : current.voiceEngine,
+    ttsModel: STARVIS_TTS_MODELS.has(config.ttsModel) ? config.ttsModel : current.ttsModel,
+    ttsVoice: STARVIS_TTS_VOICES.has(config.ttsVoice) ? config.ttsVoice : current.ttsVoice,
+    ttsSpeed: Number.isFinite(Number(config.ttsSpeed)) ? Math.max(0.25, Math.min(4, Number(config.ttsSpeed))) : current.ttsSpeed,
+    ttsInstructions: String(config.ttsInstructions || current.ttsInstructions || '').slice(0, 900),
   }
   setStore(SK_STARVIS_CONFIG, JSON.stringify(next))
   if (next.baseUrl) setStore(SK_STARVIS_BASE_URL, next.baseUrl)
@@ -621,8 +649,835 @@ function compactJson(value, maxChars = 2800) {
   return text.length > maxChars ? `${text.slice(0, maxChars)}...` : text
 }
 
-function getStarvisContextSnapshot() {
+const starvisActionQueue = new Map()
+
+loadStarvisActions()
+
+function execFileText(file, args = [], options = {}) {
+  return new Promise(resolve => {
+    execFile(file, args, { timeout: options.timeout || 2200, cwd: options.cwd || __dirname, windowsHide: true }, (error, stdout, stderr) => {
+      const text = `${stdout || ''}${stderr ? `\n${stderr}` : ''}`.trim()
+      resolve({
+        ok: !error,
+        text: text.slice(0, options.maxChars || 2400),
+        error: error?.message || '',
+      })
+    })
+  })
+}
+
+function clampInt(value, min, max, fallback) {
+  const number = Math.round(Number(value))
+  if (!Number.isFinite(number)) return fallback
+  return Math.max(min, Math.min(max, number))
+}
+
+function resolveWorkspacePath(relativePath = '.') {
+  const root = path.resolve(__dirname)
+  const target = path.resolve(root, String(relativePath || '.'))
+  const rootLower = root.toLowerCase()
+  const targetLower = target.toLowerCase()
+  if (targetLower !== rootLower && !targetLower.startsWith(`${rootLower}${path.sep}`)) {
+    throw new Error('Path is outside the widget-panel workspace.')
+  }
+  return target
+}
+
+function relativeWorkspacePath(absolutePath) {
+  return path.relative(__dirname, absolutePath).replace(/\\/g, '/') || '.'
+}
+
+function isIgnoredWorkspacePath(relativePath = '') {
+  const parts = String(relativePath || '').split(/[\\/]+/).filter(Boolean)
+  return parts.some(part => STARVIS_WORKSPACE_IGNORES.has(part))
+}
+
+function listWorkspaceFiles(directory = '.', maxFiles = 120) {
+  const start = resolveWorkspacePath(directory)
+  const files = []
+  const limit = clampInt(maxFiles, 10, 240, 120)
+
+  function visit(current, depth = 0) {
+    if (files.length >= limit || depth > 6) return
+    let entries = []
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true })
+    } catch (error) {
+      if (!files.length) throw error
+      return
+    }
+    entries
+      .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
+      .forEach(entry => {
+        if (files.length >= limit) return
+        const full = path.join(current, entry.name)
+        const rel = relativeWorkspacePath(full)
+        if (isIgnoredWorkspacePath(rel)) return
+        if (entry.isDirectory()) {
+          files.push(`${rel}/`)
+          visit(full, depth + 1)
+        } else if (entry.isFile()) {
+          files.push(rel)
+        }
+      })
+  }
+
+  visit(start)
+  return {
+    ok: true,
+    workspace: __dirname,
+    directory: relativeWorkspacePath(start),
+    count: files.length,
+    truncated: files.length >= limit,
+    files,
+  }
+}
+
+function readWorkspaceFile(args = {}) {
+  const target = resolveWorkspacePath(args.path || '')
+  const rel = relativeWorkspacePath(target)
+  if (isIgnoredWorkspacePath(rel)) throw new Error('Path is ignored by Starvis workspace tools.')
+  const stat = fs.statSync(target)
+  if (!stat.isFile()) throw new Error('Path is not a file.')
+  if (stat.size > 2_000_000) throw new Error('File is too large for this read-only tool. Request a narrower source file.')
+  const startLine = clampInt(args.startLine, 1, 1_000_000, 1)
+  const maxLines = clampInt(args.maxLines, 20, 500, 220)
+  const maxChars = clampInt(args.maxChars, 1000, 24000, 16000)
+  const lines = fs.readFileSync(target, 'utf8').split(/\r?\n/)
+  const selected = lines.slice(startLine - 1, startLine - 1 + maxLines)
+  const text = selected.join('\n')
+  return {
+    ok: true,
+    path: rel,
+    startLine,
+    endLine: startLine + selected.length - 1,
+    totalLines: lines.length,
+    truncated: text.length > maxChars || startLine - 1 + maxLines < lines.length,
+    text: text.slice(0, maxChars),
+  }
+}
+
+async function searchWorkspace(args = {}) {
+  const query = String(args.query || '').trim()
+  if (!query) throw new Error('Search query is required.')
+  const directory = relativeWorkspacePath(resolveWorkspacePath(args.directory || '.'))
+  if (isIgnoredWorkspacePath(directory)) throw new Error('Search directory is ignored by Starvis workspace tools.')
+  const maxResults = clampInt(args.maxResults, 5, 80, 40)
+  const rgArgs = [
+    '-n',
+    '--hidden',
+    '--no-heading',
+    '--color',
+    'never',
+    '--glob', '!.git/**',
+    '--glob', '!node_modules/**',
+    '--glob', '!dist/**',
+    '--glob', '!dist-electron/**',
+    '--glob', '!renderer/dist/**',
+    '--glob', '!build/**',
+    '--glob', '!coverage/**',
+    '--glob', '!.vs/**',
+  ]
+  if (!args.regex) rgArgs.push('-F')
+  rgArgs.push(query, directory)
+  const result = await execFileText('rg', rgArgs, { cwd: __dirname, timeout: 3200, maxChars: 18000 })
+  const lines = result.text ? result.text.split(/\r?\n/).filter(Boolean).slice(0, maxResults) : []
+  const noMatches = !result.ok && !result.text && !/ENOENT|timed out/i.test(result.error)
+  return {
+    ok: result.ok || noMatches,
+    query,
+    directory,
+    regex: !!args.regex,
+    count: lines.length,
+    truncated: Boolean(result.text && result.text.split(/\r?\n/).filter(Boolean).length > maxResults),
+    results: lines,
+    error: result.ok ? '' : result.error,
+  }
+}
+
+async function getWorkspaceGitStatus() {
+  const [branch, status, recent] = await Promise.all([
+    execFileText('git', ['branch', '--show-current'], { cwd: __dirname, maxChars: 200 }),
+    execFileText('git', ['status', '--short'], { cwd: __dirname, maxChars: 4000 }),
+    execFileText('git', ['log', '-1', '--oneline'], { cwd: __dirname, maxChars: 300 }),
+  ])
+  return {
+    ok: branch.ok || status.ok,
+    branch: branch.text || '',
+    status: status.text || 'clean',
+    recentCommit: recent.text || '',
+  }
+}
+
+async function getWorkspaceGitDiff(args = {}) {
+  const diffArgs = ['diff', '--']
+  if (args.path) {
+    const rel = relativeWorkspacePath(resolveWorkspacePath(args.path))
+    if (isIgnoredWorkspacePath(rel)) throw new Error('Path is ignored by Starvis workspace tools.')
+    diffArgs.push(rel)
+  }
+  const result = await execFileText('git', diffArgs, { cwd: __dirname, timeout: 3200, maxChars: clampInt(args.maxChars, 2000, 24000, 12000) })
+  return {
+    ok: result.ok,
+    path: args.path ? relativeWorkspacePath(resolveWorkspacePath(args.path)) : '',
+    diff: result.text || '',
+    truncated: Boolean(result.text && result.text.length >= clampInt(args.maxChars, 2000, 24000, 12000)),
+    error: result.ok ? '' : result.error,
+  }
+}
+
+function parseJsonArray(text = '') {
+  try {
+    const parsed = JSON.parse(String(text || '[]'))
+    return Array.isArray(parsed) ? parsed.map(item => String(item)) : []
+  } catch {
+    return []
+  }
+}
+
+function commandBase(command = '') {
+  return path.basename(String(command || '').trim()).toLowerCase()
+}
+
+function hasUnsafeCommandToken(value = '') {
+  return /[;&|`<>]/.test(String(value || '')) || /\$\(|\${/.test(String(value || ''))
+}
+
+function isProtectedWorkspaceFile(relativePath = '') {
+  const normalized = String(relativePath || '').replace(/\\/g, '/')
+  const name = path.basename(normalized).toLowerCase()
+  const ext = path.extname(normalized).toLowerCase()
+  return STARVIS_PROTECTED_FILENAMES.has(name) || STARVIS_BLOCKED_FILE_EXTENSIONS.has(ext)
+}
+
+function safeActionDetail(action = {}) {
+  if (action.actionType === 'command') return `${action.command} ${(action.args || []).join(' ')}`.trim()
+  if (action.actionType === 'file_edit') return `${action.path || ''} (${action.content?.length || 0} chars)`
+  if (action.actionType === 'git_commit') return `${action.message || ''} | ${(action.args || []).join(', ')}`
+  if (action.actionType === 'git_push') return `${action.args?.[0] || 'origin'} ${action.args?.[1] || ''}`.trim()
+  if (action.actionType === 'open_url' || action.actionType === 'browser_task') return action.url || ''
+  return ''
+}
+
+function evaluateStarvisActionPolicy(action = {}) {
+  const blocked = reason => ({ allowed: false, reason, severity: 'blocked' })
+  const allowed = (reason = 'Allowed after explicit user approval.') => ({ allowed: true, reason, severity: 'review' })
+
+  if (action.actionType === 'command') {
+    const base = commandBase(action.command)
+    if (!STARVIS_ALLOWED_COMMANDS.has(base)) return blocked(`Command "${base || action.command}" is not on the Starvis allowlist.`)
+    if ([action.command, ...(action.args || [])].some(hasUnsafeCommandToken)) return blocked('Command or arguments contain shell metacharacters.')
+    if (base.startsWith('npm')) {
+      const verb = action.args?.[0] || ''
+      if (verb === 'run' && action.args?.[1]) return allowed('Allowed npm script command. Review the script name before approving.')
+      if (verb === 'test') return allowed('Allowed npm test command.')
+      return blocked('Only "npm run <script>" and "npm test" are allowed from Starvis command actions.')
+    }
+    if (base.startsWith('node')) {
+      const first = action.args?.[0] || ''
+      if (!first || first.startsWith('-')) return blocked('Node command actions must run a workspace script file, not inline code or flags.')
+      const rel = relativeWorkspacePath(resolveWorkspacePath(first))
+      const ext = path.extname(rel).toLowerCase()
+      if (!['.js', '.mjs', '.cjs'].includes(ext)) return blocked('Node command actions can only run workspace JavaScript files.')
+      if (isIgnoredWorkspacePath(rel)) return blocked('Node command path is ignored by Starvis workspace tools.')
+      return allowed('Allowed node workspace script command.')
+    }
+    if (base.startsWith('git')) {
+      const sub = action.args?.[0] || ''
+      if (!STARVIS_ALLOWED_GIT_COMMANDS.has(sub)) return blocked('Mutating git commands must use dedicated git_commit or git_push action types.')
+      return allowed('Allowed read-only git command.')
+    }
+  }
+
+  if (action.actionType === 'file_edit') {
+    if (!action.path) return blocked('File edit is missing a workspace path.')
+    const rel = relativeWorkspacePath(resolveWorkspacePath(action.path))
+    if (isIgnoredWorkspacePath(rel)) return blocked('File edit path is ignored by Starvis workspace tools.')
+    if (isProtectedWorkspaceFile(rel)) return blocked('File edit targets a protected or binary file type.')
+    if (!action.content) return blocked('File edit is missing replacement content.')
+    if (action.content.length > 200_000) return blocked('File edit content is too large for gated Starvis execution.')
+    if (/\u0000/.test(action.content)) return blocked('File edit content appears to be binary.')
+    return allowed('Allowed text file write after explicit approval.')
+  }
+
+  if (action.actionType === 'git_commit') {
+    if (!action.message) return blocked('Git commit is missing a message.')
+    if (!(action.args || []).length) return blocked('Git commit needs explicit workspace paths.')
+    for (const item of action.args || []) {
+      const rel = relativeWorkspacePath(resolveWorkspacePath(item))
+      if (isIgnoredWorkspacePath(rel) || isProtectedWorkspaceFile(rel)) return blocked(`Git commit path is not allowed: ${rel}`)
+    }
+    return allowed('Allowed git commit after explicit approval.')
+  }
+
+  if (action.actionType === 'git_push') {
+    if ([...(action.args || [])].some(hasUnsafeCommandToken)) return blocked('Git push target contains unsafe characters.')
+    return { allowed: true, reason: 'Git push requires two approvals.', severity: 'high', requiresSecondApproval: true }
+  }
+
+  if (action.actionType === 'open_url') {
+    if (!/^https?:\/\//i.test(action.url || '')) return blocked('Only http and https URLs are allowed.')
+    return allowed('Allowed URL open after explicit approval.')
+  }
+
+  if (action.actionType === 'browser_task') {
+    return { allowed: true, reason: 'Browser automation is audited only; no direct execution backend is enabled.', severity: 'audit-only' }
+  }
+
+  return blocked('Unsupported action type.')
+}
+
+function getStoredStarvisActions() {
+  return Array.from(starvisActionQueue.values())
+    .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))
+}
+
+function redactStarvisActionForPersistence(action = {}) {
+  const now = Date.now()
+  const status = String(action.status || 'pending')
+  const retainContent = ['pending', 'running'].includes(status) && action.actionType === 'file_edit'
+  const result = action.result ? {
+    ok: action.result.ok !== false,
+    skipped: !!action.result.skipped,
+    output: String(action.result.output || '').slice(0, 4000),
+    error: String(action.result.error || '').slice(0, 1000),
+  } : null
+  return {
+    id: String(action.id || ''),
+    actionType: String(action.actionType || ''),
+    title: String(action.title || '').slice(0, 90),
+    summary: String(action.summary || '').slice(0, 900),
+    risk: String(action.risk || '').slice(0, 500),
+    command: String(action.command || '').slice(0, 180),
+    args: Array.isArray(action.args) ? action.args.map(item => String(item).slice(0, 500)).slice(0, 40) : [],
+    path: String(action.path || '').slice(0, 300),
+    content: retainContent ? String(action.content || '').slice(0, 200_000) : '',
+    contentChars: Number(action.content?.length || action.contentChars || 0),
+    contentPreview: String(action.contentPreview || action.content || '').slice(0, 220),
+    message: String(action.message || '').slice(0, 240),
+    url: String(action.url || '').slice(0, 1200),
+    detail: String(action.detail || safeActionDetail(action)).slice(0, 1200),
+    policy: action.policy || evaluateStarvisActionPolicy(action),
+    requiresSecondApproval: !!action.requiresSecondApproval,
+    confirmationArmed: !!action.confirmationArmed && status === 'pending',
+    status,
+    createdAt: Number(action.createdAt || now),
+    updatedAt: Number(action.updatedAt || now),
+    result,
+  }
+}
+
+function hydrateStarvisAction(raw = {}) {
+  const action = {
+    id: String(raw.id || ''),
+    actionType: String(raw.actionType || ''),
+    title: String(raw.title || '').slice(0, 90),
+    summary: String(raw.summary || '').slice(0, 900),
+    risk: String(raw.risk || 'Review before approving.').slice(0, 500),
+    command: String(raw.command || '').slice(0, 180),
+    args: Array.isArray(raw.args) ? raw.args.map(item => String(item)).slice(0, 40) : [],
+    path: String(raw.path || '').slice(0, 300),
+    content: String(raw.content || '').slice(0, 200_000),
+    message: String(raw.message || '').slice(0, 240),
+    url: String(raw.url || '').slice(0, 1200),
+    status: String(raw.status || 'pending'),
+    createdAt: Number(raw.createdAt || Date.now()),
+    updatedAt: Number(raw.updatedAt || Date.now()),
+    result: raw.result || null,
+  }
+  action.detail = String(raw.detail || safeActionDetail(action)).slice(0, 1200)
+  action.policy = evaluateStarvisActionPolicy(action)
+  action.requiresSecondApproval = !!action.policy.requiresSecondApproval
+  action.confirmationArmed = !!raw.confirmationArmed && action.status === 'pending'
+  if (!action.id || !action.actionType) return null
+  if (!action.policy.allowed && action.status === 'pending') {
+    action.status = 'blocked'
+    action.result = { ok: false, error: action.policy.reason }
+  }
+  if (action.actionType === 'file_edit' && action.status === 'pending' && !action.content) {
+    action.status = 'blocked'
+    action.result = { ok: false, error: 'Pending file edit content was not persisted.' }
+  }
+  return action
+}
+
+function persistStarvisActions() {
+  const cutoff = Date.now() - STARVIS_ACTION_RETENTION_MS
+  const actions = getStoredStarvisActions()
+    .filter(action => action.status === 'pending' || Number(action.updatedAt || action.createdAt || 0) >= cutoff)
+    .slice(0, STARVIS_ACTION_PERSIST_MAX)
+    .map(redactStarvisActionForPersistence)
+  try { setStore(SK_STARVIS_ACTIONS, JSON.stringify(actions)) } catch {}
+}
+
+function loadStarvisActions() {
+  let raw = getStore(SK_STARVIS_ACTIONS)
+  if (!raw) return
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+    if (!Array.isArray(parsed)) return
+    parsed.map(hydrateStarvisAction).filter(Boolean).forEach(action => {
+      starvisActionQueue.set(action.id, action)
+    })
+    trimStarvisActionQueue({ persist: false })
+    persistStarvisActions()
+  } catch {
+    try { deleteStore(SK_STARVIS_ACTIONS) } catch {}
+  }
+}
+
+function serializeStarvisAction(action = {}) {
+  const { content, ...safe } = action
+  return {
+    ...safe,
+    contentChars: content ? content.length : 0,
+    contentPreview: content ? content.slice(0, 220) : '',
+  }
+}
+
+function getStarvisActions() {
+  return getStoredStarvisActions().map(serializeStarvisAction)
+}
+
+function trimStarvisActionQueue(options = {}) {
+  const items = getStoredStarvisActions()
+  items.slice(STARVIS_ACTION_QUEUE_MAX).forEach(item => starvisActionQueue.delete(item.id))
+  if (options.persist !== false) persistStarvisActions()
+}
+
+function queueStarvisApproval(args = {}) {
+  const actionType = String(args.actionType || '').trim()
+  const allowed = new Set(['command', 'file_edit', 'git_commit', 'git_push', 'open_url', 'browser_task'])
+  if (!allowed.has(actionType)) throw new Error('Unsupported Starvis action type.')
+  const action = {
+    id: crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    actionType,
+    title: String(args.title || actionType).slice(0, 90),
+    summary: String(args.summary || '').slice(0, 900),
+    risk: String(args.risk || 'Review before approving.').slice(0, 500),
+    command: String(args.command || '').slice(0, 180),
+    args: parseJsonArray(args.argsJson).slice(0, 40),
+    path: String(args.path || '').slice(0, 300),
+    content: String(args.content || '').slice(0, 200_000),
+    message: String(args.message || '').slice(0, 240),
+    url: String(args.url || '').slice(0, 1200),
+    status: 'pending',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    result: null,
+  }
+  action.detail = safeActionDetail(action).slice(0, 1200)
+  action.policy = evaluateStarvisActionPolicy(action)
+  action.requiresSecondApproval = !!action.policy.requiresSecondApproval
+  action.confirmationArmed = false
+  if (!action.policy.allowed) {
+    action.status = 'blocked'
+    action.result = { ok: false, error: action.policy.reason }
+  }
+  starvisActionQueue.set(action.id, action)
+  trimStarvisActionQueue()
+  return {
+    ok: action.status !== 'blocked',
+    approvalRequired: action.status === 'pending',
+    action: serializeStarvisAction(action),
+  }
+}
+
+function assertStarvisActionPending(id) {
+  const action = starvisActionQueue.get(String(id || ''))
+  if (!action) throw new Error('Action request was not found.')
+  if (action.status !== 'pending') throw new Error(`Action request is already ${action.status}.`)
+  return action
+}
+
+async function executeStarvisAction(action) {
+  const policy = evaluateStarvisActionPolicy(action)
+  if (!policy.allowed) throw new Error(policy.reason)
+
+  if (action.actionType === 'command') {
+    if (!action.command) throw new Error('Command action is missing an executable.')
+    const result = await execFileText(action.command, action.args || [], {
+      cwd: __dirname,
+      timeout: 60_000,
+      maxChars: 16000,
+    })
+    return { ok: result.ok, output: result.text, error: result.error }
+  }
+
+  if (action.actionType === 'file_edit') {
+    if (!action.path) throw new Error('File edit action is missing a path.')
+    const target = resolveWorkspacePath(action.path)
+    const rel = relativeWorkspacePath(target)
+    if (isIgnoredWorkspacePath(rel)) throw new Error('File edit path is ignored by Starvis workspace tools.')
+    if (isProtectedWorkspaceFile(rel)) throw new Error('File edit targets a protected or binary file type.')
+    if (!action.content) throw new Error('File edit action is missing content.')
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    fs.writeFileSync(target, action.content, 'utf8')
+    return { ok: true, output: `Wrote ${rel}.` }
+  }
+
+  if (action.actionType === 'git_commit') {
+    const paths = (action.args || []).filter(Boolean)
+    if (!paths.length) throw new Error('Git commit action needs at least one path in argsJson.')
+    if (!action.message) throw new Error('Git commit action needs a commit message.')
+    const safePaths = paths.map(item => relativeWorkspacePath(resolveWorkspacePath(item)))
+    const add = await execFileText('git', ['add', '--', ...safePaths], { cwd: __dirname, timeout: 30_000, maxChars: 6000 })
+    if (!add.ok) return { ok: false, output: add.text, error: add.error }
+    const commit = await execFileText('git', ['commit', '-m', action.message], { cwd: __dirname, timeout: 60_000, maxChars: 12000 })
+    return { ok: commit.ok, output: commit.text, error: commit.error }
+  }
+
+  if (action.actionType === 'git_push') {
+    const remote = action.args?.[0] || 'origin'
+    const branch = action.args?.[1] || ''
+    const pushArgs = branch ? ['push', remote, branch] : ['push', remote]
+    const result = await execFileText('git', pushArgs, { cwd: __dirname, timeout: 120_000, maxChars: 12000 })
+    return { ok: result.ok, output: result.text, error: result.error }
+  }
+
+  if (action.actionType === 'open_url') {
+    if (!/^https?:\/\//i.test(action.url || '')) throw new Error('Only http and https URLs can be opened.')
+    await shell.openExternal(action.url)
+    return { ok: true, output: `Opened ${action.url}.` }
+  }
+
+  if (action.actionType === 'browser_task') {
+    return {
+      ok: false,
+      skipped: true,
+      output: 'Browser automation approval was recorded, but direct browser automation is not wired into Starvis yet.',
+    }
+  }
+
+  throw new Error('Unsupported action type.')
+}
+
+async function approveStarvisAction(id) {
+  const action = assertStarvisActionPending(id)
+  if (action.requiresSecondApproval && !action.confirmationArmed) {
+    action.confirmationArmed = true
+    action.updatedAt = Date.now()
+    action.result = { ok: true, output: 'Second approval required before this high-impact action runs.' }
+    persistStarvisActions()
+    return { ok: true, confirmationRequired: true, action: serializeStarvisAction(action) }
+  }
+  action.status = 'running'
+  action.updatedAt = Date.now()
+  try {
+    const result = await executeStarvisAction(action)
+    action.status = result.ok ? 'completed' : result.skipped ? 'approved' : 'failed'
+    action.result = result
+    if (action.status !== 'pending') action.content = ''
+    action.updatedAt = Date.now()
+    persistStarvisActions()
+    return { ok: result.ok !== false, action: serializeStarvisAction(action) }
+  } catch (error) {
+    action.status = 'failed'
+    action.result = { ok: false, error: error?.message || String(error) }
+    action.content = ''
+    action.updatedAt = Date.now()
+    persistStarvisActions()
+    return { ok: false, action: serializeStarvisAction(action), error: action.result.error }
+  }
+}
+
+function rejectStarvisAction(id) {
+  const action = assertStarvisActionPending(id)
+  action.status = 'rejected'
+  action.updatedAt = Date.now()
+  action.result = { ok: true, output: 'Rejected by user.' }
+  action.content = ''
+  persistStarvisActions()
+  return { ok: true, action: serializeStarvisAction(action) }
+}
+
+const STARVIS_AGENT_TOOLS = [
+  {
+    type: 'function',
+    name: 'starvis_list_files',
+    description: 'List files and folders inside the widget-panel workspace. Read-only.',
+    strict: true,
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        directory: { type: 'string', description: "Workspace-relative directory to list. Use '.' for the repository root." },
+        maxFiles: { type: 'integer', description: 'Maximum entries to return, 10 to 240.' },
+      },
+      required: ['directory', 'maxFiles'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'starvis_search_repo',
+    description: 'Search the widget-panel workspace with ripgrep. Read-only.',
+    strict: true,
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        query: { type: 'string', description: 'Search query.' },
+        directory: { type: 'string', description: "Workspace-relative directory to search. Use '.' for the repository root." },
+        regex: { type: 'boolean', description: 'Use regex search instead of fixed string search.' },
+        maxResults: { type: 'integer', description: 'Maximum result lines to return, 5 to 80.' },
+      },
+      required: ['query', 'directory', 'regex', 'maxResults'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'starvis_read_file',
+    description: 'Read a slice of a workspace file. Read-only.',
+    strict: true,
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        path: { type: 'string', description: 'Workspace-relative file path.' },
+        startLine: { type: 'integer', description: 'One-based line number to start reading.' },
+        maxLines: { type: 'integer', description: 'Maximum lines to return, 20 to 500.' },
+        maxChars: { type: 'integer', description: 'Maximum characters to return, 1000 to 24000.' },
+      },
+      required: ['path', 'startLine', 'maxLines', 'maxChars'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'starvis_git_status',
+    description: 'Return current branch, short git status, and latest commit. Read-only.',
+    strict: true,
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    type: 'function',
+    name: 'starvis_git_diff',
+    description: 'Return the current unstaged git diff, optionally scoped to one workspace path. Read-only.',
+    strict: true,
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        path: { type: 'string', description: 'Workspace-relative path, or an empty string for the whole repository diff.' },
+        maxChars: { type: 'integer', description: 'Maximum characters to return, 2000 to 24000.' },
+      },
+      required: ['path', 'maxChars'],
+    },
+  },
+  {
+    type: 'function',
+    name: 'starvis_request_approval',
+    description: 'Queue a user approval request for a mutating or external action. The action will not run until the user approves it in the Starvis UI, and unsafe requests may be blocked by local policy.',
+    strict: true,
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        actionType: {
+          type: 'string',
+          enum: ['command', 'file_edit', 'git_commit', 'git_push', 'open_url', 'browser_task'],
+          description: 'The kind of gated action being requested.',
+        },
+        title: { type: 'string', description: 'Short action title.' },
+        summary: { type: 'string', description: 'Plain-English explanation of what this will do.' },
+        risk: { type: 'string', description: 'Main risk or tradeoff for the user to review.' },
+        command: { type: 'string', description: 'Executable for command actions. Allowed command executables are limited by local policy. Otherwise empty.' },
+        argsJson: { type: 'string', description: 'JSON array of command arguments, JSON array of git commit paths, or [remote, branch] for git_push. Otherwise empty string.' },
+        path: { type: 'string', description: 'Workspace-relative file path for file_edit actions, otherwise empty.' },
+        content: { type: 'string', description: 'Full target file content for file_edit actions, otherwise empty.' },
+        message: { type: 'string', description: 'Commit message for git_commit actions, otherwise empty.' },
+        url: { type: 'string', description: 'URL for open_url or browser_task actions, otherwise empty.' },
+      },
+      required: ['actionType', 'title', 'summary', 'risk', 'command', 'argsJson', 'path', 'content', 'message', 'url'],
+    },
+  },
+]
+
+async function runStarvisAgentTool(name, args = {}) {
+  try {
+    if (name === 'starvis_list_files') return listWorkspaceFiles(args.directory || '.', args.maxFiles)
+    if (name === 'starvis_search_repo') return await searchWorkspace(args)
+    if (name === 'starvis_read_file') return readWorkspaceFile(args)
+    if (name === 'starvis_git_status') return await getWorkspaceGitStatus()
+    if (name === 'starvis_git_diff') return await getWorkspaceGitDiff(args)
+    if (name === 'starvis_request_approval') return queueStarvisApproval(args)
+    return { ok: false, error: `Unknown Starvis agent tool: ${name}` }
+  } catch (error) {
+    return { ok: false, error: error?.message || String(error) }
+  }
+}
+
+async function postStarvisResponse(endpoint, apiKey, body) {
+  const response = await session.defaultSession.fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  })
+  const data = await response.json().catch(() => null)
+  if (!response.ok) {
+    const error = new Error(data?.error?.message || `OpenAI request failed (${response.status})`)
+    error.status = response.status
+    error.data = data
+    throw error
+  }
+  return data
+}
+
+function extractResponseFunctionCalls(payload) {
+  return (payload?.output || []).filter(item => item?.type === 'function_call' && item.name && item.call_id)
+}
+
+function parseToolArguments(raw = '') {
+  try { return raw ? JSON.parse(raw) : {} }
+  catch { return {} }
+}
+
+function renderStarvisActionSummary(actions = []) {
+  if (!actions.length) return ''
+  const lines = actions.slice(0, 3).map(action => {
+    if (action.status === 'blocked') {
+      return `Action blocked: ${action.title || action.actionType}. ${action.policy?.reason || action.result?.error || 'Local safety policy blocked it.'}`
+    }
+    if (action.requiresSecondApproval) {
+      return `Action queued: ${action.title || action.actionType}. It requires two approvals before execution.`
+    }
+    return `Action queued: ${action.title || action.actionType}. Review the approval card before it runs.`
+  })
+  if (actions.length > 3) lines.push(`${actions.length - 3} additional action request${actions.length - 3 === 1 ? '' : 's'} updated.`)
+  return lines.join('\n')
+}
+
+async function runStarvisAgentResponse(endpoint, apiKey, body) {
+  const input = [{ role: 'user', content: body.input }]
+  const toolCalls = []
+  const actionRequests = []
+  let lastData = null
+
+  for (let index = 0; index <= STARVIS_AGENT_TOOL_MAX_LOOPS; index += 1) {
+    lastData = await postStarvisResponse(endpoint, apiKey, { ...body, input })
+    const functionCalls = extractResponseFunctionCalls(lastData)
+    if (!functionCalls.length) {
+      return { data: lastData, toolCalls, actionRequests }
+    }
+    input.push(...(lastData.output || []))
+    for (const call of functionCalls) {
+      const args = parseToolArguments(call.arguments)
+      const result = await runStarvisAgentTool(call.name, args)
+      if (call.name === 'starvis_request_approval' && result?.action) actionRequests.push(result.action)
+      toolCalls.push({
+        name: call.name,
+        ok: result?.ok !== false,
+      })
+      input.push({
+        type: 'function_call_output',
+        call_id: call.call_id,
+        output: compactJson(result, 18000),
+      })
+    }
+  }
+
+  return {
+    data: lastData,
+    toolCalls,
+    actionRequests,
+    stopped: true,
+  }
+}
+
+async function getStarvisAgentSnapshot() {
+  const cwd = __dirname
+  const [branch, status] = await Promise.all([
+    execFileText('git', ['branch', '--show-current'], { cwd, maxChars: 200 }),
+    execFileText('git', ['status', '--short'], { cwd, maxChars: 1800 }),
+  ])
+  return {
+    workspace: cwd,
+    branch: branch.ok ? branch.text : '',
+    gitStatus: status.ok ? (status.text || 'clean') : 'unavailable',
+    packageScripts: (() => {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'))
+        return Object.keys(pkg.scripts || {})
+      } catch {
+        return []
+      }
+    })(),
+    capabilities: {
+      readWidgetContext: true,
+      readWorkspaceSnapshot: true,
+      listFiles: true,
+      searchRepo: true,
+      readFiles: true,
+      readGitStatus: true,
+      readGitDiff: true,
+      queueApprovalRequests: true,
+      runCommands: 'requires user approval',
+      editFiles: 'requires user approval',
+      browserAutomation: 'approval recorded; execution backend unavailable',
+      commitAndPush: 'requires user approval',
+    },
+  }
+}
+
+function getStarvisCapabilityReport() {
+  const config = getStarvisConfig()
+  return {
+    model: config.model || STARVIS_DEFAULT_MODEL,
+    provider: config.provider || 'openai',
+    reasoning: 'medium',
+    configured: !!getStarvisApiKey(),
+    contextItems: starvisContext.size,
+    normalMode: [
+      'ChatGPT-style conversation',
+      'Widget context summaries',
+      'Optional OpenAI web search with permission',
+      'Voice output',
+    ],
+    briefingMode: [
+      'Launch systems report',
+      'Weather, market, news, and workstation summaries when published',
+      'Freshness/staleness indicators',
+    ],
+    agentMode: [
+      'Agent-style planning and technical reasoning',
+      'Read-only workspace snapshot',
+      'Read-only workspace tools: list files, search repository, read file slices, git status, git diff',
+      'Policy-gated action requests for approved commands, text file edits, git commit/push, and URLs',
+      'Git push requires two approvals',
+    ],
+    agentTools: STARVIS_AGENT_TOOLS.map(tool => tool.name),
+    pendingActions: getStarvisActions().filter(action => action.status === 'pending').length,
+    recentActions: getStarvisActions().slice(0, 8),
+    unavailable: ['Ungated autonomous mutation', 'Direct browser automation execution from Starvis'],
+  }
+}
+
+function starvisContextKind(id = '') {
+  if (id === 'weather') return 'weather'
+  if (id === 'stocks') return 'stocks'
+  if (String(id).startsWith('news:')) return 'news'
+  return String(id || '')
+}
+
+function isStarvisContextFreshForBrief(item = {}) {
+  const kind = starvisContextKind(item.id)
+  const maxAge = STARVIS_CONTEXT_FRESH_MS[kind]
+  if (!maxAge) return true
+  const updatedAt = Number(item.updatedAt || 0)
+  const age = Date.now() - updatedAt
+  return updatedAt > 0 && Number.isFinite(age) && age >= 0 && age <= maxAge
+}
+
+function getStarvisContextSnapshot(options = {}) {
   return Array.from(starvisContext.values())
+    .filter(item => !options.freshForBrief || isStarvisContextFreshForBrief(item))
     .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
     .slice(0, STARVIS_CONTEXT_MAX_ITEMS)
     .map(item => ({
@@ -708,9 +1563,27 @@ function summarizeStarvisContextItem(item = {}) {
     };
   }
   if (item.id === 'stocks') {
+    const quotes = (data.quotes || [])
+      .filter(row => row && Number.isFinite(Number(row.price)))
+      .slice(0, 8)
+      .map(row => ({
+        ticker: row.ticker,
+        name: row.name,
+        price: row.price,
+        change: row.change,
+        pct: row.pct,
+        rsi: row.rsi,
+      }));
     return {
       activeList: data.activeList,
-      movers: (data.quotes || [])
+      quoteCoverage: data.quoteCoverage || {
+        status: quotes.length ? 'ready' : 'unknown',
+        priced: quotes.length,
+        total: (data.tracked || data.quotes || []).length,
+      },
+      quotes,
+      tracked: (data.tracked || []).slice(0, 8),
+      movers: quotes
         .filter(row => row.pct != null)
         .sort((a, b) => Math.abs(b.pct || 0) - Math.abs(a.pct || 0))
         .slice(0, 5),
@@ -743,25 +1616,143 @@ function parseStarvisInternetPermission(text = '') {
   }
 }
 
+async function synthesizeStarvisSpeech(request = {}) {
+  const started = Date.now()
+  const apiKey = getStarvisApiKey()
+  if (!apiKey) {
+    return { ok: false, error: 'OpenAI API key is not configured for neural voice output.', fallback: true }
+  }
+  const savedConfig = getStarvisConfig()
+  const input = String(request.input || '').trim().slice(0, 4096)
+  if (!input) return { ok: false, error: 'Speech input is empty.', fallback: true }
+  const model = STARVIS_TTS_MODELS.has(request.model) ? request.model : savedConfig.ttsModel
+  const voice = STARVIS_TTS_VOICES.has(request.voice) ? request.voice : savedConfig.ttsVoice
+  const speed = Number.isFinite(Number(request.speed))
+    ? Math.max(0.25, Math.min(4, Number(request.speed)))
+    : savedConfig.ttsSpeed
+  const instructions = String(request.instructions || savedConfig.ttsInstructions || '').slice(0, 900)
+  const baseUrl = (String(request.baseUrl || '').trim() || savedConfig.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
+  const body = {
+    model,
+    voice,
+    input,
+    response_format: 'mp3',
+    speed,
+  }
+  if (!/^tts-1(?:-hd)?$/i.test(model) && instructions) body.instructions = instructions
+  try {
+    const response = await session.defaultSession.fetch(`${baseUrl}/audio/speech`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+    if (!response.ok) {
+      const text = await response.text().catch(() => '')
+      let message = `OpenAI speech request failed (${response.status})`
+      try { message = JSON.parse(text)?.error?.message || message } catch {}
+      return { ok: false, error: message, fallback: true, latencyMs: Date.now() - started }
+    }
+    const audio = Buffer.from(await response.arrayBuffer())
+    return {
+      ok: true,
+      mimeType: 'audio/mpeg',
+      dataUrl: `data:audio/mpeg;base64,${audio.toString('base64')}`,
+      bytes: audio.length,
+      model,
+      voice,
+      latencyMs: Date.now() - started,
+    }
+  } catch (error) {
+    return { ok: false, error: error?.message || String(error), fallback: true, latencyMs: Date.now() - started }
+  }
+}
+
 function normalizeStarvisMessages(messages = [], latest = '') {
   const items = Array.isArray(messages) ? messages.slice(-10) : []
   const transcript = items
     .filter(item => item?.text)
     .map(item => `${item.role === 'assistant' ? 'Starvis' : 'User'}: ${String(item.text).slice(0, 4000)}`)
     .join('\n')
-  return [transcript, `User: ${latest}`].filter(Boolean).join('\n\n')
+  const lastUser = [...items].reverse().find(item => item?.role === 'user' && item?.text)
+  const latestAlreadyIncluded = lastUser && String(lastUser.text || '').trim() === String(latest || '').trim()
+  return [transcript, latest && !latestAlreadyIncluded ? `User: ${latest}` : ''].filter(Boolean).join('\n\n')
 }
 
 function buildStarvisInput(request = {}) {
-  const context = getStarvisContextSnapshot()
+  const context = getStarvisContextSnapshot({ freshForBrief: request.mode === 'briefing' })
   const contextText = compactJson(context, STARVIS_CONTEXT_MAX_CHARS)
+  const capabilities = getStarvisCapabilityReport()
+  const mode = ['chat', 'briefing', 'agent'].includes(request.mode) ? request.mode : 'chat'
+  const modeInstruction = mode === 'briefing'
+    ? 'Mode: briefing. Produce a short systems report from local widget context. If market quoteCoverage.status is ready or quotes are present, summarize the supplied quotes and do not say market data is unavailable. Mention unavailable/stale data briefly. Do not ask follow-up questions unless a serious issue needs user input.'
+    : mode === 'agent'
+      ? 'Mode: agent. Behave like a coding-capable assistant for planning and diagnosis. For questions about this app, repository, files, code, implementation, git status, or diffs, call at least one relevant read-only workspace tool before answering. For mutating actions, use starvis_request_approval to queue a concrete approval request; do not claim the action ran until the user approves it. If the user is testing unsafe or protected actions, still call starvis_request_approval with the requested target and empty placeholders so local policy can block it explicitly.'
+      : 'Mode: chat. Behave like ChatGPT: conversational, useful, and direct. Use widget context only when relevant.'
   return [
+    modeInstruction,
+    `Starvis capability report:\n${compactJson(capabilities, 3200)}`,
+    request.agentSnapshot ? `Read-only workspace snapshot:\n${compactJson(request.agentSnapshot, 4200)}` : '',
     context.length ? `Local widget context snapshot:\n${contextText}` : 'Local widget context snapshot: none published yet.',
     request.allowInternet
       ? 'Internet permission: enabled for this request. Use web search only if needed and include citations for web-derived facts.'
       : 'Internet permission: disabled for this request. Do not use web search.',
     normalizeStarvisMessages(request.messages, request.message || ''),
   ].filter(Boolean).join('\n\n')
+}
+
+function freshnessLabel(updatedAt = 0) {
+  const ageMs = Date.now() - Number(updatedAt || 0)
+  if (!updatedAt || !Number.isFinite(ageMs)) return 'not published'
+  if (ageMs < 90_000) return 'fresh'
+  if (ageMs < 20 * 60_000) return `${Math.round(ageMs / 60_000)}m old`
+  return 'stale'
+}
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function hasBriefingContextReady() {
+  const context = getStarvisContextSnapshot({ freshForBrief: true })
+  const ids = new Set(context.map(item => item.id))
+  return ids.has('weather') && ids.has('stocks')
+}
+
+async function waitForFreshBriefingContext(timeoutMs = 0) {
+  const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 0)
+  while (Date.now() < deadline) {
+    if (hasBriefingContextReady()) return true
+    await delay(250)
+  }
+  return hasBriefingContextReady()
+}
+
+function renderDeterministicStarvisBriefing(context = getStarvisContextSnapshot({ freshForBrief: true })) {
+  const byId = new Map(context.map(item => [item.id, item]))
+  const lines = []
+  lines.push('Systems report: local context is online.')
+
+  const workstation = byId.get('workstation')
+  if (workstation?.summary) lines.push(`Workstation: ${workstation.summary} (${freshnessLabel(workstation.updatedAt)}).`)
+
+  const weather = byId.get('weather')
+  if (weather?.summary) lines.push(`Weather: ${weather.summary} (${freshnessLabel(weather.updatedAt)}).`)
+
+  const stocks = byId.get('stocks')
+  if (stocks?.summary) lines.push(`Markets: ${stocks.summary.replace(/^Markets:\s*/i, '')} (${freshnessLabel(stocks.updatedAt)}).`)
+
+  const news = context.filter(item => String(item.id || '').startsWith('news:'))
+  if (news.length) {
+    const themes = news.flatMap(item => item.data?.topThemes || []).slice(0, 4).join(', ')
+    lines.push(`News: ${news.length} categories published${themes ? `; main themes are ${themes}` : ''}.`)
+  }
+
+  if (context.length < 2) lines.push('Limited context is available so far; more cards will report in as they refresh.')
+  lines.push('Normal chat is ready. Agent mode is available for planning and read-only workspace inspection; mutating tools are still gated.')
+  return lines.slice(0, 6).join('\n')
 }
 
 function starvisSupportsTemperature(model = '') {
@@ -775,11 +1766,22 @@ ipcMain.handle('starvis-status', () => {
     reasoning: 'medium',
     keySource: getStore(SK_STARVIS_OPENAI_KEY) ? 'stored' : (process.env.OPENAI_API_KEY ? 'env' : ''),
     contextCount: starvisContext.size,
+    capabilities: getStarvisCapabilityReport(),
     ...config,
   }
 })
 
 ipcMain.handle('starvis-context', () => getStarvisContextSnapshot())
+
+ipcMain.handle('starvis-capabilities', () => getStarvisCapabilityReport())
+
+ipcMain.handle('starvis-speech', async (_e, request = {}) => synthesizeStarvisSpeech(request))
+
+ipcMain.handle('starvis-actions', () => getStarvisActions())
+
+ipcMain.handle('starvis-action-approve', async (_e, id) => approveStarvisAction(id))
+
+ipcMain.handle('starvis-action-reject', (_e, id) => rejectStarvisAction(id))
 
 ipcMain.on('starvis-context-update', (_e, payload = {}) => {
   const id = String(payload.id || '').trim()
@@ -805,6 +1807,73 @@ ipcMain.handle('starvis-configure', (_e, config = {}) => {
   }
 })
 
+ipcMain.handle('starvis-briefing', async (_e, request = {}) => {
+  const started = Date.now()
+  await refreshStarvisWorkstationContext()
+  await waitForFreshBriefingContext(request.waitForFreshMs)
+  const context = getStarvisContextSnapshot({ freshForBrief: true })
+  const fallback = renderDeterministicStarvisBriefing(context)
+  const apiKey = getStarvisApiKey()
+  if (!apiKey) {
+    return {
+      ok: true,
+      response: fallback,
+      model: STARVIS_DEFAULT_MODEL,
+      usage: null,
+      latencyMs: Date.now() - started,
+      fallback: true,
+    }
+  }
+
+  const savedConfig = getStarvisConfig()
+  const model = String(request.model || savedConfig.model || STARVIS_DEFAULT_MODEL).trim() || STARVIS_DEFAULT_MODEL
+  const baseUrl = (String(request.baseUrl || '').trim() || savedConfig.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
+  const endpoint = `${baseUrl}/responses`
+  try {
+    const body = {
+      model,
+      instructions: STARVIS_SYSTEM_PROMPT,
+      input: buildStarvisInput({
+        mode: 'briefing',
+        message: 'Prepare the launch systems report now.',
+        messages: [],
+        allowInternet: false,
+      }),
+      max_output_tokens: Math.max(512, Math.min(1800, Math.round(Number(savedConfig.maxTokens) || 1200))),
+      reasoning: { effort: 'medium' },
+    }
+    const response = await session.defaultSession.fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    })
+    const data = await response.json().catch(() => null)
+    if (!response.ok) throw new Error(data?.error?.message || `OpenAI request failed (${response.status})`)
+    const text = extractResponseText(data)
+    return {
+      ok: true,
+      response: text || fallback,
+      model: data?.model || model,
+      usage: data?.usage || null,
+      latencyMs: Date.now() - started,
+      fallback: !text,
+    }
+  } catch (error) {
+    return {
+      ok: true,
+      response: fallback,
+      model,
+      usage: null,
+      latencyMs: Date.now() - started,
+      fallback: true,
+      warning: error?.message || String(error),
+    }
+  }
+})
+
 ipcMain.handle('starvis-chat', async (_e, request = {}) => {
   const started = Date.now()
   await refreshStarvisWorkstationContext()
@@ -823,47 +1892,52 @@ ipcMain.handle('starvis-chat', async (_e, request = {}) => {
   const temperature = Number.isFinite(Number(request.temperature)) ? Number(request.temperature) : savedConfig.temperature
   const maxOutputTokens = Number.isFinite(Number(request.maxTokens))
     ? Math.max(128, Math.min(8192, Math.round(Number(request.maxTokens))))
-    : Math.max(128, Math.min(8192, Math.round(Number(savedConfig.maxTokens) || 900)))
+    : Math.max(128, Math.min(8192, Math.round(Number(savedConfig.maxTokens) || 1800)))
   const baseUrl = (String(request.baseUrl || '').trim() || savedConfig.baseUrl || 'https://api.openai.com/v1').replace(/\/+$/, '')
   const endpoint = `${baseUrl}/responses`
+  const agentSnapshot = request.mode === 'agent' ? await getStarvisAgentSnapshot() : null
 
   try {
     const body = {
       model,
       instructions: STARVIS_SYSTEM_PROMPT,
-      input: buildStarvisInput(request),
+      input: buildStarvisInput({ ...request, agentSnapshot }),
       max_output_tokens: maxOutputTokens,
       reasoning: { effort: 'medium' },
     }
     if (starvisSupportsTemperature(model)) body.temperature = temperature
-    if (request.allowInternet) body.tools = [{ type: 'web_search_preview' }]
+    const tools = []
+    if (request.allowInternet) tools.push({ type: 'web_search_preview' })
+    if (request.mode === 'agent') tools.push(...STARVIS_AGENT_TOOLS)
+    if (tools.length) body.tools = tools
 
-    const response = await session.defaultSession.fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    })
-    const data = await response.json().catch(() => null)
-    if (!response.ok) {
+    const agentResult = request.mode === 'agent'
+      ? await runStarvisAgentResponse(endpoint, apiKey, body)
+      : { data: await postStarvisResponse(endpoint, apiKey, body), toolCalls: [], actionRequests: [] }
+    const data = agentResult.data
+    if (agentResult.stopped && !extractResponseText(data) && !(agentResult.actionRequests || []).length) {
       return {
         ok: false,
-        error: data?.error?.message || `OpenAI request failed (${response.status})`,
+        error: 'Agent tool loop stopped before a final answer. Try a narrower request.',
         model,
+        toolCalls: agentResult.toolCalls,
         latencyMs: Date.now() - started,
       }
     }
     const text = extractResponseText(data)
-    const permissionRequest = !request.allowInternet ? parseStarvisInternetPermission(text) : null
+    const actionSummary = renderStarvisActionSummary(agentResult.actionRequests || [])
+    const finalText = actionSummary || text
+    const permissionRequest = !request.allowInternet ? parseStarvisInternetPermission(finalText) : null
     return {
       ok: true,
-      response: permissionRequest?.response || text || 'Command acknowledged.',
+      response: permissionRequest?.response || finalText || 'Command acknowledged.',
       internetPermissionRequired: !!permissionRequest,
       internetPermissionReason: permissionRequest?.reason || '',
       model: data?.model || model,
       usage: data?.usage || null,
+      toolCalls: agentResult.toolCalls,
+      pendingActions: getStarvisActions().filter(action => action.status === 'pending'),
+      recentActions: getStarvisActions().slice(0, 8),
       latencyMs: Date.now() - started,
     }
   } catch (error) {

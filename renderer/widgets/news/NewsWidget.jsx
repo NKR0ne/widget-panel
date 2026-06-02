@@ -243,15 +243,18 @@ export default function NewsWidget({ category, colorIdx, onUnreadChange, onOpenU
   }
 
   useEffect(() => {
-    if (!hasItems) return;
+    if (!hasItems || !lastUpdated) return;
     const themes = summarizeThemes(items);
     publishStarvisContext(`news:${category.label}`, {
+      force: status === 'ok',
+      updatedAt: lastUpdated,
       title: `News: ${category.label}`,
       summary: `${category.label}: ${unread} unread. Themes: ${themes.join(', ') || 'General'}.`,
       data: {
         category: category.label,
         unread,
         demo,
+        refreshedAt: lastUpdated,
         themes,
         topItems: items.slice(0, 8).map(item => ({
           title: item.title,
@@ -261,7 +264,7 @@ export default function NewsWidget({ category, colorIdx, onUnreadChange, onOpenU
         })),
       },
     });
-  }, [category.label, demo, hasItems, items, unread]);
+  }, [category.label, demo, hasItems, items, lastUpdated, status, unread]);
 
   return {
     color,

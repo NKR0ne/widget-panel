@@ -61,6 +61,40 @@ function toTradingViewSymbol(item) {
   return '';
 }
 
+function calculateRsi(values = [], period = 14) {
+  const closes = values.map(Number).filter(Number.isFinite);
+  if (closes.length <= period) return null;
+
+  let gain = 0;
+  let loss = 0;
+  for (let i = 1; i <= period; i += 1) {
+    const delta = closes[i] - closes[i - 1];
+    if (delta >= 0) gain += delta;
+    else loss -= delta;
+  }
+
+  let avgGain = gain / period;
+  let avgLoss = loss / period;
+  for (let i = period + 1; i < closes.length; i += 1) {
+    const delta = closes[i] - closes[i - 1];
+    const nextGain = delta > 0 ? delta : 0;
+    const nextLoss = delta < 0 ? -delta : 0;
+    avgGain = ((avgGain * (period - 1)) + nextGain) / period;
+    avgLoss = ((avgLoss * (period - 1)) + nextLoss) / period;
+  }
+
+  if (avgLoss === 0 && avgGain === 0) return 50;
+  if (avgLoss === 0) return 100;
+  return 100 - (100 / (1 + (avgGain / avgLoss)));
+}
+
+function getRsiTone(value) {
+  if (value == null) return 'rgba(255,255,255,0.38)';
+  if (value >= 70) return '#ef5350';
+  if (value <= 30) return '#4caf73';
+  return 'rgba(255,255,255,0.62)';
+}
+
 function HeaderKeyButton({ onClick, title = 'Se d\u00e9connecter' }) {
   return (
     <button
@@ -837,22 +871,48 @@ export default function StocksWidget({ onOpenWebContent } = {}) {
     const rows = symbols.slice(0, 12).map(({ s, d, y }) => {
       const ticker = y || (s.includes(':') ? s.split(':')[1] : s);
       const q = quotes[ticker];
+      const rsi = calculateRsi(q?.closes || []);
       return {
         ticker,
         name: q?.name || d || ticker,
         price: q?.price,
         change: q?.change,
         pct: q?.pct,
+        rsi: rsi == null ? null : Number(rsi.toFixed(1)),
       };
     });
+    const pricedRows = rows.filter(row => Number.isFinite(Number(row.price)));
+    const hasMarketCalendar = !!(marketEvents?.earnings?.length || marketEvents?.ipos?.length);
+    if (symbols.length && !pricedRows.length && !lastFetch && !hasMarketCalendar) return;
+    const quoteStatus = pricedRows.length ? 'ready' : lastFetch ? 'unavailable' : 'loading';
+    const quoteSummary = pricedRows.slice(0, 5).map(row => {
+      const price = Number(row.price).toLocaleString('en-US', { maximumFractionDigits: 2 });
+      const pctText = row.pct != null ? ` ${row.pct.toFixed(2)}%` : '';
+      const rsiText = row.rsi != null ? ` RSI ${row.rsi.toFixed(1)}` : '';
+      return `${row.ticker} ${price}${pctText}${rsiText}`;
+    }).join(' | ');
+    const contextUpdatedAt = pricedRows.length ? lastFetch : (marketEvents?.updatedAt || lastFetch || Date.now());
     publishStarvisContext('stocks', {
+      force: pricedRows.length > 0,
+      updatedAt: contextUpdatedAt,
       title: 'Markets',
-      summary: rows.length
-        ? `Markets: ${rows.slice(0, 5).map(row => `${row.ticker} ${row.price ?? '--'} ${row.pct != null ? `${row.pct.toFixed(2)}%` : ''}`).join(' | ')}`
-        : 'Markets calendar available.',
+      summary: quoteSummary
+        ? `Markets: ${quoteSummary}`
+        : quoteStatus === 'loading'
+          ? 'Markets quotes are loading.'
+          : hasMarketCalendar
+            ? 'Markets calendar available; quotes are not available in the local snapshot.'
+            : 'Markets quotes are not available in the local snapshot.',
       data: {
         activeList: activeTab?.name || '',
-        quotes: rows,
+        quotes: pricedRows,
+        quoteCoverage: {
+          status: quoteStatus,
+          priced: pricedRows.length,
+          total: rows.length,
+          updatedAt: lastFetch,
+        },
+        tracked: rows.map(row => ({ ticker: row.ticker, name: row.name })),
         earnings: (marketEvents?.earnings || []).slice(0, 6),
         ipos: (marketEvents?.ipos || []).slice(0, 6),
         updatedAt: lastFetch,
@@ -991,6 +1051,7 @@ export default function StocksWidget({ onOpenWebContent } = {}) {
             // for crypto. Include the previous close in the y-axis range so
             // the reference line stays inside the viewBox.
             const points = q?.closes || [];
+            const rsi = calculateRsi(points);
             const prevClose = q?.prev ?? null;
             const allY = prevClose != null ? [...points, prevClose] : points;
             const minPrice = allY.length ? Math.min(...allY) : q?.price ?? 0;
@@ -1008,15 +1069,15 @@ export default function StocksWidget({ onOpenWebContent } = {}) {
               : null;
 
             return (
-              <div key={s} style={{display:'flex',alignItems:'center',gap:8,
-                padding:'3px 0',cursor:'pointer',fontVariantNumeric:'tabular-nums'}}
+              <div key={s} style={{display:'grid',gridTemplateColumns:'minmax(0,106px) 32px minmax(0,1fr) 88px minmax(0,1fr) minmax(60px,auto)',
+                columnGap:6,alignItems:'center',padding:'3px 0',cursor:'pointer',fontVariantNumeric:'tabular-nums'}}
                 onClick={(event)=>openChartWebContent(s, event)}>
 
                 {/* Left: name only on the Marchés overview tab (the indices
                     have descriptive names — the ^GSPC-style ticker codes are
                     noise). On user watchlists, keep the ticker + company name
                     two-line layout. */}
-                <div style={{flex:1,minWidth:0}}>
+                <div style={{minWidth:0}}>
                   {listIdx === 0 ? (
                     <div style={{fontSize:11,fontWeight:700,color:'#fff',lineHeight:1.1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
                       {d || q?.name || ticker}
@@ -1033,9 +1094,14 @@ export default function StocksWidget({ onOpenWebContent } = {}) {
                   )}
                 </div>
 
+                {/* RSI: separate compact column to the left of the chart. */}
+                <div style={{width:32,textAlign:'right',fontSize:11,color:getRsiTone(rsi),whiteSpace:'nowrap',lineHeight:1.1}}>
+                  {rsi == null ? '--' : Math.round(rsi)}
+                </div>
+
                 {/* Center: Sparkline */}
                 {sparklinePoints ? (
-                  <svg width="64" height="20" viewBox="0 0 100 24" preserveAspectRatio="none" style={{flexShrink:0}}>
+                  <svg width="88" height="20" viewBox="0 0 100 24" preserveAspectRatio="none" style={{display:'block',gridColumn:4}}>
                     <defs>
                       <linearGradient id={`grad-${ticker}`} x1="0%" y1="0%" x2="0%" y2="100%">
                         <stop offset="0%" stopColor={sparklineColor} stopOpacity="0.14"/>
@@ -1051,11 +1117,11 @@ export default function StocksWidget({ onOpenWebContent } = {}) {
                     <polyline points={sparklinePoints} fill="none" stroke={sparklineColor} strokeOpacity="1" strokeWidth="0.75" vectorEffect="non-scaling-stroke"/>
                   </svg>
                 ) : (
-                  <div style={{width:64,height:20,flexShrink:0}}/>
+                  <div style={{width:88,height:20,gridColumn:4}}/>
                 )}
 
                 {/* Right: Price + delta (text color encodes direction) */}
-                <div style={{display:'flex',flexDirection:'column',alignItems:'flex-end',gap:1,minWidth:60,flexShrink:0}}>
+                <div style={{gridColumn:6,display:'flex',flexDirection:'column',alignItems:'flex-end',gap:1,minWidth:60}}>
                   <div style={{fontSize:11,color:'#fff',whiteSpace:'nowrap',lineHeight:1.1}}>
                     {fmtP(q?.price)}
                   </div>
