@@ -363,9 +363,11 @@ const PRESSREADER_PROBE_JS = `
     const controls = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')].filter(visible);
     const startReading = controls.find(el => /start reading now|commencer( la lecture)?|lire maintenant/i.test((el.innerText || el.value || el.getAttribute('aria-label') || '').trim()));
     const lastUserClick = Number(window.__wpPressReaderLastUserClick || 0);
+    const unavailable = /publication n(?:['\\u2019])?est pas disponible|publication is not available|not available|d(?:e|\\u00e9)sol(?:e|\\u00e9)s, mais cette publication/i.test(body);
     return {
       hasLogin,
       hasStartReading: !!startReading,
+      unavailable,
       user: user?.value || '',
       passwordPresent: !!password,
       lastUserClick,
@@ -472,6 +474,145 @@ const PRESSREADER_INTERACTION_TRACKER_JS = `
       try { console.log('[wp-pressreader-user-click]'); } catch {}
     }, true);
     return { ok:true, active:true };
+  })();
+`;
+
+const PRESSREADER_PUBLICATION_PREFETCH_JS = `
+  (() => {
+    const state = window.__wpPressReaderPublicationPrefetch || {
+      href: '',
+      urls: new Set(),
+      inflight: new Set(),
+      done: new Set(),
+      timer: 0,
+      scans: 0,
+    };
+    window.__wpPressReaderPublicationPrefetch = state;
+
+    const href = location.href || '';
+    if (state.href !== href) {
+      state.href = href;
+      state.urls = new Set();
+      state.inflight = new Set();
+      state.done = new Set();
+      state.scans = 0;
+      if (state.timer) clearInterval(state.timer);
+      state.timer = 0;
+    }
+
+    const absoluteUrl = value => {
+      const raw = String(value || '').trim();
+      if (!raw || raw.startsWith('data:') || raw.startsWith('blob:')) return '';
+      try { return new URL(raw, location.href).href; } catch { return ''; }
+    };
+    const add = value => {
+      const url = absoluteUrl(value);
+      if (!url) return;
+      if (!/^https?:/i.test(url)) return;
+      if (!/(pressreader|newspaperdirect|ndcdn|page|pages|issue|image|img|thumbnail|jpg|jpeg|png|webp|avif|pdf)/i.test(url)) return;
+      state.urls.add(url);
+    };
+    const addSrcset = value => {
+      String(value || '').split(',').forEach(part => add(part.trim().split(/\\s+/)[0]));
+    };
+    const harvestUrlsFromText = text => {
+      const body = String(text || '').slice(0, 300000);
+      for (const match of body.matchAll(/https?:\\\\?\\/\\\\?\\/[^"'\\s<>]+/gi)) {
+        add(match[0].replace(/\\\\\\//g, '/').replace(/\\\\u0026/g, '&'));
+      }
+      for (const match of body.matchAll(/["']((?:\\/|\\.\\/|\\.\\.\\/)[^"']*(?:page|issue|image|img|jpg|jpeg|png|webp|avif|pdf)[^"']*)["']/gi)) {
+        add(match[1]);
+      }
+    };
+    const harvestPerformance = () => {
+      try {
+        for (const entry of performance.getEntriesByType('resource') || []) add(entry.name);
+      } catch {}
+    };
+
+    const attrs = [
+      'src', 'href', 'poster',
+      'data-src', 'data-original', 'data-lazy-src', 'data-url', 'data-href',
+      'data-image', 'data-image-url', 'data-full', 'data-full-url',
+      'data-page', 'data-page-url', 'data-thumb', 'data-thumbnail',
+      'content',
+    ];
+    const srcsetAttrs = ['srcset', 'data-srcset', 'data-lazy-srcset'];
+
+    const scanRoot = root => {
+      const doc = root?.ownerDocument || document;
+      const nodes = [...doc.querySelectorAll('img,source,link,a,[style],[data-src],[data-url],[data-page],[data-image],[data-full],[data-thumb]')];
+      for (const el of nodes) {
+        for (const attr of attrs) add(el.getAttribute?.(attr));
+        for (const attr of srcsetAttrs) addSrcset(el.getAttribute?.(attr));
+        const style = el.getAttribute?.('style') || '';
+        const bgMatches = style.matchAll(/url\\((['"]?)(.*?)\\1\\)/gi);
+        for (const match of bgMatches) add(match[2]);
+        if (el.tagName === 'IMG') {
+          try {
+            add(el.currentSrc || el.src);
+          } catch {}
+        }
+      }
+      for (const script of [...doc.scripts || []]) {
+        const text = script.src || script.textContent || '';
+        harvestUrlsFromText(text);
+      }
+      for (const sheet of [...doc.styleSheets || []]) {
+        let rules = [];
+        try { rules = [...(sheet.cssRules || [])]; } catch {}
+        for (const rule of rules) {
+          const matches = String(rule.cssText || '').matchAll(/url\\((['"]?)(.*?)\\1\\)/gi);
+          for (const match of matches) add(match[2]);
+        }
+      }
+    };
+
+    const startOne = url => {
+      if (state.done.has(url) || state.inflight.has(url)) return;
+      state.inflight.add(url);
+      try {
+        const preload = document.createElement('link');
+        preload.rel = 'preload';
+        preload.as = 'image';
+        preload.href = url;
+        preload.crossOrigin = 'anonymous';
+        document.head?.appendChild(preload);
+      } catch {}
+      try {
+        const image = new Image();
+        image.decoding = 'async';
+        image.loading = 'eager';
+        image.onload = image.onerror = () => {
+          state.inflight.delete(url);
+          state.done.add(url);
+        };
+        image.src = url;
+      } catch {
+        state.inflight.delete(url);
+        state.done.add(url);
+      }
+    };
+
+    const pump = () => {
+      state.scans += 1;
+      scanRoot(document);
+      harvestPerformance();
+      const queue = [...state.urls].filter(url => !state.done.has(url) && !state.inflight.has(url));
+      queue.slice(0, Math.max(3, 10 - state.inflight.size)).forEach(startOne);
+      return {
+        ok: true,
+        href,
+        discovered: state.urls.size,
+        inflight: state.inflight.size,
+        done: state.done.size,
+        scans: state.scans,
+      };
+    };
+
+    const result = pump();
+    try { console.log('[wp-pressreader-prefetch]', JSON.stringify(result)); } catch {}
+    return result;
   })();
 `;
 
@@ -969,6 +1110,7 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
   const pressRevealTimerRef = useRef(null);
   const pressGateRef = useRef(isPressReader ? 'preparing' : '');
   const pressGateSinceRef = useRef(Date.now());
+  const pressStartReadingMaskUntilRef = useRef(0);
   const pressAutomationTimerRef = useRef(null);
   const webDiagSeqRef = useRef(0);
   const webDiagDomReadyRef = useRef(false);
@@ -994,6 +1136,22 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
   function queuePressAutomation(delay = 0) {
     if (pressAutomationTimerRef.current) clearTimeout(pressAutomationTimerRef.current);
     pressAutomationTimerRef.current = setTimeout(() => runPressReaderAutomation(), delay);
+  }
+
+  function prefetchPressReaderPublication({ force = false } = {}) {
+    if (!isPressReader) return;
+    if (!force && isPressReaderSettled()) return;
+    const wv = webviewRef.current;
+    if (!wv) return;
+    try {
+      wv.executeJavaScript(PRESSREADER_PUBLICATION_PREFETCH_JS, true)
+        .then(result => {
+          if (result?.ok) api.log?.('[pressreader] publication-prefetch', `discovered=${result.discovered}`, `done=${result.done}`, `inflight=${result.inflight}`, `scans=${result.scans}`);
+        })
+        .catch(error => api.log?.('[pressreader] publication-prefetch-error', error?.message || String(error)));
+    } catch (error) {
+      api.log?.('[pressreader] publication-prefetch-error', error?.message || String(error));
+    }
   }
 
   function safeWebviewCall(fn, fallback = null) {
@@ -1343,6 +1501,18 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
       return true;
     }
 
+    if (probe.unavailable) {
+      pressSubmittingRef.current = false;
+      pressSubmitTimeRef.current = 0;
+      pressStartReadingMaskUntilRef.current = 0;
+      setLoading(false);
+      setProgress(100);
+      updatePressGate('ready', '');
+      api.log?.('[pressreader] publication-unavailable', probe.href || '', probe.title || '');
+      pressRevealTimerRef.current = setTimeout(() => updatePressGate('', ''), 180);
+      return false;
+    }
+
     if (probe.hasLogin) {
       const saved = pressAuthRef.current;
       if (saved?.u && saved?.p) {
@@ -1398,6 +1568,7 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
       const nextGate = probe.recentUserClick || pressGateRef.current === 'opening-publication'
         ? 'opening-publication'
         : 'opening';
+      pressStartReadingMaskUntilRef.current = Math.max(pressStartReadingMaskUntilRef.current, Date.now() + 4500);
       setLoading(true);
       setProgress(value => Math.max(value, 70));
       updatePressGate(nextGate, nextGate === 'opening-publication' ? 'Opening PressReader publication' : 'Opening PressReader catalog');
@@ -1415,9 +1586,18 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
 
     pressSubmittingRef.current = false;
     pressSubmitTimeRef.current = 0;
+    const maskRemainingMs = probe.readyState === 'complete' ? 0 : pressStartReadingMaskUntilRef.current - Date.now();
+    if (maskRemainingMs > 0) {
+      setLoading(true);
+      setProgress(value => Math.max(value, 86));
+      updatePressGate(pressGateRef.current && pressGateRef.current !== 'ready' ? pressGateRef.current : 'opening', 'Opening PressReader catalog');
+      queuePressAutomation(maskRemainingMs + 80);
+      return true;
+    }
+    pressStartReadingMaskUntilRef.current = 0;
     const gateAge = Date.now() - pressGateSinceRef.current;
     const activeGate = pressGateRef.current;
-    const minimumMaskMs = activeGate === 'opening-publication' ? 1800 : activeGate === 'opening' ? 1000 : 0;
+    const minimumMaskMs = activeGate === 'opening-publication' ? 2800 : activeGate === 'opening' ? 2200 : 0;
     if (minimumMaskMs && gateAge < minimumMaskMs) {
       setLoading(true);
       queuePressAutomation(minimumMaskMs - gateAge + 80);
@@ -1426,6 +1606,7 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
     setLoading(false);
     setProgress(100);
     updatePressGate('ready', '');
+    prefetchPressReaderPublication({ force: true });
     pressRevealTimerRef.current = setTimeout(() => updatePressGate('', ''), 520);
     return false;
   }, [isPressReader]);
@@ -1681,6 +1862,7 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
       if (isPressReader) {
         try { wv.executeJavaScript(pressReaderDarkJS, true); } catch {}
         try { wv.executeJavaScript(PRESSREADER_INTERACTION_TRACKER_JS, true); } catch {}
+        if (!isPressReaderSettled()) setTimeout(prefetchPressReaderPublication, 650);
       }
     };
     const onDomReady = () => {
@@ -1727,6 +1909,10 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
       }
       if (isPressReader) {
         runPressReaderAutomation();
+        if (!isPressReaderSettled()) {
+          setTimeout(prefetchPressReaderPublication, 900);
+          setTimeout(prefetchPressReaderPublication, 2400);
+        }
       } else {
         setLoading(false);
       }
@@ -1737,6 +1923,7 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
       setCurrentUrl(url);
       updateWebAuthState(url);
       applyDark();
+      if (isPressReader && !isPressReaderSettled()) setTimeout(prefetchPressReaderPublication, 700);
       logWebIslandDiagnostics('did-navigate', { url });
     };
     const onConsole = (event) => {
@@ -1746,6 +1933,9 @@ function BrowserIslandCard({ reader, transition, onTransitionLanded, onClose, on
       if (!isPressReader || typeof event.message !== 'string') return;
       if (!event.message.startsWith('[wp-pressreader-user-click]')) return;
       if (isPressReaderSettled()) {
+        setLoading(true);
+        setProgress(24);
+        updatePressGate('opening-publication', 'Opening PressReader publication');
         queuePressAutomation(220);
         return;
       }
@@ -2927,9 +3117,7 @@ export default function App() {
   // this, WidgetCard returns null but renderCol still renders the wrapping
   // .wi div, taking up space in whichever column the phantom ID was placed.
   const visibleIds = activeIds.filter(id => isKnownWidgetId(id, categories));
-  const layoutVisibleIds = panelMode === 'news'
-    ? visibleIds.filter(id => id !== 'starvis')
-    : visibleIds;
+  const layoutVisibleIds = visibleIds;
   const newsIds  = layoutVisibleIds.filter(id => id.startsWith("cat:"));
   const stageActive = reader.open || !!readerTransition || panelMode === 'monitor' || panelMode === 'live';
   const webStageActive = (reader.open && reader.mode === 'web') || readerTransition?.nextReader?.mode === 'web';
@@ -2972,15 +3160,17 @@ export default function App() {
       const nextId = ids[i + 1] ?? null;
       const dropBefore = dragId && dropTarget?.col === colName && dropTarget?.beforeId === id;
       const dropAfter  = dragId && dropTarget?.col === colName && dropTarget?.beforeId === nextId;
+      const hideForNewsMode = panelMode === 'news' && id === 'starvis';
       return (
         <div
-          key={`${id}-${id.startsWith('cat:') ? 'stable' : refreshKey}`}
+          key={`${id}-${id.startsWith('cat:') || id === 'starvis' ? 'stable' : refreshKey}`}
           className="wi"
           data-widget-id={id}
           data-widget-col={colName}
           data-widget-expanded={getExpanded(id) ? 'true' : 'false'}
           data-widget-news={id.startsWith('cat:') ? 'true' : 'false'}
           style={{
+          display: hideForNewsMode ? 'none' : undefined,
           animationDelay: (i*25)+"ms",
           borderTop:    !workstationMode && dropBefore ? '2px solid var(--accent)' : '2px solid transparent',
           borderBottom: !workstationMode && dropAfter  ? '2px solid var(--accent)' : '2px solid transparent',

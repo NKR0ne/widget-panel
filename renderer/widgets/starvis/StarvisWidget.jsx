@@ -10,6 +10,24 @@ const PROVIDERS = {
 
 const STARVIS_BOOT_BRIEFING_KEY = 'starvis.bootBriefingAt';
 const STARVIS_BOOT_BRIEFING_COOLDOWN_MS = 30 * 60 * 1000;
+const STARVIS_RUNTIME = {
+  audio: null,
+  bootStarted: false,
+  speechToken: 0,
+};
+
+function stopStarvisRuntimeSpeech() {
+  STARVIS_RUNTIME.speechToken += 1;
+  if (STARVIS_RUNTIME.audio) {
+    try {
+      STARVIS_RUNTIME.audio.pause();
+      STARVIS_RUNTIME.audio.src = '';
+    } catch {}
+    STARVIS_RUNTIME.audio = null;
+  }
+  try { window?.speechSynthesis?.cancel?.(); } catch {}
+  return STARVIS_RUNTIME.speechToken;
+}
 
 function recentBootBriefingAt() {
   if (typeof window === 'undefined') return 0;
@@ -22,12 +40,13 @@ function hasRecentBootBriefing() {
 }
 
 function markBootBriefingStarted() {
+  STARVIS_RUNTIME.bootStarted = true;
   if (typeof window === 'undefined') return;
   try { window.sessionStorage?.setItem(STARVIS_BOOT_BRIEFING_KEY, String(Date.now())); } catch {}
 }
 
 function initialStarvisText() {
-  return hasRecentBootBriefing()
+  return STARVIS_RUNTIME.bootStarted || hasRecentBootBriefing()
     ? 'Starvis is running. Ask anything, or click Brief for a fresh systems report.'
     : 'Collecting widget context for the launch report.';
 }
@@ -73,6 +92,7 @@ export default function StarvisWidget() {
   const speechRunRef = useRef(0);
   const bootBriefingRef = useRef(false);
   const configLoadedRef = useRef(false);
+  const mountedRef = useRef(false);
   const voiceConfigRef = useRef(null);
   const particles = useMemo(() => Array.from({ length: 26 }, (_, index) => ({
     id: index,
@@ -83,6 +103,7 @@ export default function StarvisWidget() {
   })), []);
 
   useEffect(() => {
+    mountedRef.current = true;
     synthRef.current = typeof window !== 'undefined' ? window.speechSynthesis : null;
     const loadVoices = () => {
       const voices = synthRef.current?.getVoices?.() || [];
@@ -114,15 +135,15 @@ export default function StarvisWidget() {
     }).catch(() => {});
     refreshActions();
     const briefingTimer = window.setTimeout(() => {
-      if (!bootBriefingRef.current && !hasRecentBootBriefing()) {
+      if (!bootBriefingRef.current && !STARVIS_RUNTIME.bootStarted && !hasRecentBootBriefing()) {
         markBootBriefingStarted();
         runBriefing({ boot: true });
       }
     }, 3200);
     return () => {
+      mountedRef.current = false;
       window.clearTimeout(briefingTimer);
       window.clearInterval(typeTimerRef.current);
-      stopSpeech();
       if (synthRef.current) synthRef.current.onvoiceschanged = null;
     };
   }, []);
@@ -187,23 +208,19 @@ export default function StarvisWidget() {
   }
 
   function stopSpeech() {
-    speechRunRef.current += 1;
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.src = '';
-      audioRef.current = null;
-    }
-    synthRef.current?.cancel?.();
+    speechRunRef.current = stopStarvisRuntimeSpeech();
+    audioRef.current = null;
     setVoiceStatus('idle');
     setVoicePlayback(current => ({ ...current, engine: 'idle', error: '' }));
   }
 
   function handleVoiceButton() {
-    if (voiceStatus !== 'idle') {
+    if (voiceOn || voiceStatus !== 'idle') {
       stopSpeech();
-      return;
+      setVoiceOn(false);
+    } else {
+      setVoiceOn(true);
     }
-    setVoiceOn(value => !value);
   }
 
   async function speak(text) {
@@ -227,14 +244,9 @@ export default function StarvisWidget() {
       voice: voiceConfig.voice,
       error: '',
     });
-    const runId = speechRunRef.current + 1;
+    const runId = stopStarvisRuntimeSpeech();
     speechRunRef.current = runId;
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.src = '';
-      audioRef.current = null;
-    }
-    synthRef.current?.cancel?.();
+    audioRef.current = null;
 
     if (canUseNeuralVoice) {
       try {
@@ -246,57 +258,71 @@ export default function StarvisWidget() {
           instructions: voiceConfig.instructions,
           baseUrl: voiceConfig.baseUrl,
         });
-        if (speechRunRef.current !== runId) return;
+        if (speechRunRef.current !== runId || STARVIS_RUNTIME.speechToken !== runId) return;
         if (result?.ok && result.dataUrl) {
-          setVoicePlayback({
-            engine: 'openai',
-            model: result.model || voiceConfig.model,
-            voice: result.voice || voiceConfig.voice,
-            error: '',
-          });
+          if (mountedRef.current) {
+            setVoicePlayback({
+              engine: 'openai',
+              model: result.model || voiceConfig.model,
+              voice: result.voice || voiceConfig.voice,
+              error: '',
+            });
+          }
           const audio = new Audio(result.dataUrl);
           audioRef.current = audio;
+          STARVIS_RUNTIME.audio = audio;
           audio.onended = () => {
             if (audioRef.current === audio) audioRef.current = null;
-            setVoiceStatus('idle');
+            if (STARVIS_RUNTIME.audio === audio) STARVIS_RUNTIME.audio = null;
+            if (mountedRef.current) setVoiceStatus('idle');
           };
           audio.onerror = () => {
-            setVoiceStatus('fallback');
-            setVoicePlayback({
-              engine: 'fallback',
-              model: voiceConfig.model,
-              voice: voiceConfig.voice,
-              error: 'Audio playback failed.',
-            });
+            if (audioRef.current === audio) audioRef.current = null;
+            if (STARVIS_RUNTIME.audio === audio) STARVIS_RUNTIME.audio = null;
+            if (mountedRef.current) {
+              setVoiceStatus('fallback');
+              setVoicePlayback({
+                engine: 'fallback',
+                model: voiceConfig.model,
+                voice: voiceConfig.voice,
+                error: 'Audio playback failed.',
+              });
+            }
             speakWithSystemVoice(spoken, runId);
           };
           await audio.play();
           return;
         }
-        setVoicePlayback({
-          engine: 'fallback',
-          model: voiceConfig.model,
-          voice: voiceConfig.voice,
-          error: result?.error || 'OpenAI speech did not return audio.',
-        });
+        if (mountedRef.current) {
+          setVoicePlayback({
+            engine: 'fallback',
+            model: voiceConfig.model,
+            voice: voiceConfig.voice,
+            error: result?.error || 'OpenAI speech did not return audio.',
+          });
+        }
       } catch (error) {
-        setVoicePlayback({
-          engine: 'fallback',
-          model: voiceConfig.model,
-          voice: voiceConfig.voice,
-          error: error?.message || 'OpenAI speech request failed.',
-        });
+        if (mountedRef.current) {
+          setVoicePlayback({
+            engine: 'fallback',
+            model: voiceConfig.model,
+            voice: voiceConfig.voice,
+            error: error?.message || 'OpenAI speech request failed.',
+          });
+        }
       }
     }
 
-    setVoiceStatus(canUseNeuralVoice ? 'fallback' : 'system');
+    if (mountedRef.current) setVoiceStatus(canUseNeuralVoice ? 'fallback' : 'system');
     if (!canUseNeuralVoice) {
-      setVoicePlayback({
-        engine: 'system',
-        model: voiceConfig.model,
-        voice: voiceConfig.voice,
-        error: '',
-      });
+      if (mountedRef.current) {
+        setVoicePlayback({
+          engine: 'system',
+          model: voiceConfig.model,
+          voice: voiceConfig.voice,
+          error: '',
+        });
+      }
     }
     speakWithSystemVoice(spoken, runId);
   }
@@ -309,7 +335,7 @@ export default function StarvisWidget() {
     synthRef.current.cancel();
 
     const speakChunk = (index = 0) => {
-      if (speechRunRef.current !== runId || !chunks[index]) return;
+      if (speechRunRef.current !== runId || STARVIS_RUNTIME.speechToken !== runId || !chunks[index]) return;
       const utterance = new SpeechSynthesisUtterance(chunks[index]);
       if (voiceRef.current) utterance.voice = voiceRef.current;
       const question = /\?$/.test(chunks[index]);
@@ -323,7 +349,9 @@ export default function StarvisWidget() {
         const done = utterance.onend;
         utterance.onend = () => {
           done?.();
-          window.setTimeout(() => setVoiceStatus('idle'), 180);
+          window.setTimeout(() => {
+            if (mountedRef.current) setVoiceStatus('idle');
+          }, 180);
         };
       }
       synthRef.current.speak(utterance);
