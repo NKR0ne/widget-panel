@@ -50,6 +50,13 @@ function createBrowserPreviewApi() {
       fetchArchive: () => Promise.resolve(null),
       openExternal: url => window.open(url, '_blank', 'noopener,noreferrer'),
     },
+    pressReader: {
+      networkStart: () => Promise.resolve({ ok: true, active: false, total: 0, top: [] }),
+      networkSnapshot: () => Promise.resolve({ ok: true, active: false, total: 0, top: [] }),
+      networkClear: () => Promise.resolve({ ok: true, active: false, total: 0, top: [] }),
+      catalogFetch: () => Promise.resolve({ ok: false, error: 'Preview mode' }),
+      categoryCatalog: () => Promise.resolve({ ok: false, error: 'Preview mode' }),
+    },
     starvis: {
       status: () => Promise.resolve({
         configured: false,
@@ -162,6 +169,7 @@ function createBrowserPreviewApi() {
       logout: () => Promise.resolve(),
       chart: () => Promise.resolve(null),
       events: () => Promise.resolve([]),
+      onHeatmapPopup: () => () => {},
     },
   };
 }

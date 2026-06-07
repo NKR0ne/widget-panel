@@ -85,6 +85,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setZoomActive: (active) => ipcRenderer.send('reader-zoom-active', active),
   },
 
+  pressReader: {
+    networkStart:    (options) => ipcRenderer.invoke('pressreader-network-start', options),
+    networkSnapshot: ()        => ipcRenderer.invoke('pressreader-network-snapshot'),
+    networkClear:    ()        => ipcRenderer.invoke('pressreader-network-clear'),
+    catalogFetch:    (endpoint) => ipcRenderer.invoke('pressreader-catalog-fetch', endpoint),
+    categoryCatalog: (request)  => ipcRenderer.invoke('pressreader-category-catalog', request),
+  },
+
   live: {
     hls: (feed) => ipcRenderer.invoke('live-hls', feed),
     youtubeHls: (url) => ipcRenderer.invoke('live-youtube-hls', url),
@@ -100,6 +108,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     logout:       ()      => ipcRenderer.invoke('tv-logout'),
     chart:        (ticker)     => ipcRenderer.invoke('yahoo-chart', ticker),
     events:       (options)    => ipcRenderer.invoke('market-events', options),
+    onHeatmapPopup: (cb) => {
+      const handler = (_event, payload) => cb?.(payload)
+      ipcRenderer.on('tradingview-heatmap-popup', handler)
+      return () => ipcRenderer.removeListener('tradingview-heatmap-popup', handler)
+    },
   },
 
   workstation: {
