@@ -85,14 +85,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     setZoomActive: (active) => ipcRenderer.send('reader-zoom-active', active),
   },
 
-  pressReader: {
-    networkStart:    (options) => ipcRenderer.invoke('pressreader-network-start', options),
-    networkSnapshot: ()        => ipcRenderer.invoke('pressreader-network-snapshot'),
-    networkClear:    ()        => ipcRenderer.invoke('pressreader-network-clear'),
-    catalogFetch:    (endpoint) => ipcRenderer.invoke('pressreader-catalog-fetch', endpoint),
-    categoryCatalog: (request)  => ipcRenderer.invoke('pressreader-category-catalog', request),
-  },
-
   live: {
     hls: (feed) => ipcRenderer.invoke('live-hls', feed),
     youtubeHls: (url) => ipcRenderer.invoke('live-youtube-hls', url),

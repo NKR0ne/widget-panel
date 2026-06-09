@@ -130,12 +130,32 @@ function cleanItemText(value = '') {
     .trim();
 }
 
+function decodeLatin1BytesAsUtf8(value = '') {
+  const bytes = Uint8Array.from(Array.from(String(value), char => char.charCodeAt(0) & 0xff));
+  return new TextDecoder('utf-8').decode(bytes);
+}
+
+function textDecodeArtifactCount(value = '') {
+  return (String(value || '').match(/[\u00c2\u00c3\ufffd]|\u00e2[\u0080-\u009f]/g) || []).length;
+}
+
+function repairDecodedText(value = '') {
+  const text = String(value || '');
+  if (!textDecodeArtifactCount(text)) return text;
+  try {
+    const repaired = decodeLatin1BytesAsUtf8(text);
+    return textDecodeArtifactCount(repaired) < textDecodeArtifactCount(text) ? repaired : text;
+  } catch {
+    return text;
+  }
+}
+
 function getItemText(item, tag) {
   try {
     const direct = item.querySelector(tag)?.textContent?.trim();
-    if (direct) return direct;
+    if (direct) return repairDecodedText(direct);
   } catch {}
-  return item.getElementsByTagName(tag)?.[0]?.textContent?.trim() || '';
+  return repairDecodedText(item.getElementsByTagName(tag)?.[0]?.textContent?.trim() || '');
 }
 
 function pickFromSrcset(srcset = '') {

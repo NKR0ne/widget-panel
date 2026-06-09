@@ -4,9 +4,9 @@ const fs     = require('fs')
 const net    = require('net')
 const https  = require('https')
 const crypto = require('crypto')
+const { TextDecoder } = require('util')
 const { exec, execFile, spawn } = require('child_process')
 const { getStore, setStore, deleteStore } = require('./store')
-const { buildPressReaderCategoryCatalog } = require('./shared/pressreaderCatalog.cjs')
 
 function loadEnvFile() {
   const envPath = path.join(__dirname, '.env')
@@ -70,8 +70,6 @@ const STARVIS_ALLOWED_COMMANDS = new Set(['npm', 'npm.cmd', 'node', 'node.exe', 
 const STARVIS_ALLOWED_GIT_COMMANDS = new Set(['status', 'diff', 'log', 'show', 'rev-parse', 'branch'])
 const STARVIS_PROTECTED_FILENAMES = new Set(['.env', '.env.local', '.env.production', '.env.development'])
 const STARVIS_BLOCKED_FILE_EXTENSIONS = new Set(['.exe', '.dll', '.node', '.msi', '.bat', '.cmd', '.ps1', '.png', '.jpg', '.jpeg', '.webp', '.gif', '.ico', '.zip', '.7z', '.pdf'])
-const PRESSREADER_NETWORK_TRACE_MAX = 180
-
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 
 const isDev  = !!process.env.VITE_DEV
@@ -208,11 +206,6 @@ let _showStateTimeout   = null   // ID of the 350ms post-show notifyHelperState 
 let panelGeometryLockUntil = 0
 let _hideFallbackTimeout = null
 const starvisContext = new Map()
-let pressReaderNetworkActiveUntil = 0
-let pressReaderNetworkStartedAt = 0
-let pressReaderNetworkTrace = []
-const pressReaderNetworkRequests = new Map()
-let pressReaderIngressAuth = { value: '', at: 0 }
 
 // ── Single instance lock ──────────────────────────────────────────────────────
 const gotLock = app.requestSingleInstanceLock()
@@ -638,13 +631,6 @@ ipcMain.handle('store-get',    (_e, key)       => getStore(key))
 ipcMain.handle('store-set',    (_e, key, value) => { log('[store-set]', key, '=', storeLogValue(key, value)); setStore(key, value) })
 ipcMain.handle('store-delete', (_e, key)       => deleteStore(key))
 ipcMain.on('renderer-log',     (_e, ...args)   => log('[renderer]', ...args))
-ipcMain.handle('pressreader-network-start', (_e, options = {}) => startPressReaderNetworkTrace(options))
-ipcMain.handle('pressreader-network-snapshot', () => getPressReaderNetworkSnapshot())
-ipcMain.handle('pressreader-network-clear', () => clearPressReaderNetworkTrace())
-ipcMain.handle('pressreader-catalog-fetch', (_e, endpoint) => fetchPressReaderCatalogJson(endpoint))
-ipcMain.handle('pressreader-category-catalog', (_e, request = {}) => {
-  return buildPressReaderCategoryCatalog(request, endpoint => fetchPressReaderCatalogJson(endpoint))
-})
 
 function getStarvisApiKey() {
   return getStore(SK_STARVIS_OPENAI_KEY) || process.env.OPENAI_API_KEY || ''
@@ -2756,296 +2742,11 @@ function configureLiveFeedSessions() {
   }
 }
 
-function isPressReaderNetworkTraceActive() {
-  return pressReaderNetworkActiveUntil > Date.now()
-}
-
-function normalizeHeaderMap(headers = {}) {
-  const map = new Map()
-  for (const [key, value] of Object.entries(headers || {})) {
-    map.set(String(key || '').toLowerCase(), Array.isArray(value) ? value.join(', ') : String(value || ''))
-  }
-  return map
-}
-
-function sanitizePressReaderUrl(rawUrl = '') {
-  try {
-    const parsed = new URL(rawUrl)
-    parsed.hash = ''
-    for (const [key, value] of [...parsed.searchParams.entries()]) {
-      if (/token|secret|password|pass|key|auth|session|jwt|code|ticket|signature|sig/i.test(key)) {
-        parsed.searchParams.set(key, '[redacted]')
-      } else if (String(value || '').length > 90) {
-        parsed.searchParams.set(key, `${String(value).slice(0, 18)}...[trimmed]`)
-      }
-    }
-    return parsed.toString()
-  } catch {
-    return String(rawUrl || '').replace(/([?&][^=]*(?:token|secret|password|pass|key|auth|session|jwt|code|ticket|signature|sig)[^=]*=)[^&#]+/ig, '$1[redacted]').slice(0, 900)
-  }
-}
-
-function pressReaderRequestSignals(headers = {}) {
-  const map = normalizeHeaderMap(headers)
-  return {
-    authorizationHeader: map.has('authorization'),
-    cookieHeader: map.has('cookie'),
-    subscriptionKeyHeader: map.has('ocp-apim-subscription-key'),
-    xRequestedWith: map.has('x-requested-with'),
-    accept: (map.get('accept') || '').slice(0, 120),
-  }
-}
-
-function capturePressReaderIngressAuth(url = '', headers = {}) {
-  if (!/\/\/ingress\.pressreader\.com\/services\//i.test(String(url || ''))) return
-  const map = normalizeHeaderMap(headers)
-  const auth = map.get('authorization') || ''
-  if (!auth || auth.length > 4096) return
-  pressReaderIngressAuth = { value: auth, at: Date.now() }
-}
-
-function pressReaderResponseMeta(headers = {}) {
-  const map = normalizeHeaderMap(headers)
-  return {
-    contentType: (map.get('content-type') || '').slice(0, 120),
-    contentLength: (map.get('content-length') || '').slice(0, 40),
-    cacheControl: (map.get('cache-control') || '').slice(0, 120),
-  }
-}
-
-function pushPressReaderNetworkTrace(entry) {
-  pressReaderNetworkTrace.push(entry)
-  if (pressReaderNetworkTrace.length > PRESSREADER_NETWORK_TRACE_MAX) {
-    pressReaderNetworkTrace = pressReaderNetworkTrace.slice(-PRESSREADER_NETWORK_TRACE_MAX)
-  }
-}
-
-function startPressReaderNetworkTrace(options = {}) {
-  const durationMs = clampInt(options.durationMs, 5000, 180000, 60000)
-  if (options.clear !== false) {
-    pressReaderNetworkTrace = []
-    pressReaderNetworkRequests.clear()
-  }
-  pressReaderNetworkStartedAt = Date.now()
-  pressReaderNetworkActiveUntil = pressReaderNetworkStartedAt + durationMs
-  log('[pressreader-network] capture-start', `durationMs=${durationMs}`)
-  return getPressReaderNetworkSnapshot()
-}
-
-function clearPressReaderNetworkTrace() {
-  pressReaderNetworkActiveUntil = 0
-  pressReaderNetworkStartedAt = 0
-  pressReaderNetworkTrace = []
-  pressReaderNetworkRequests.clear()
-  return getPressReaderNetworkSnapshot()
-}
-
-function summarizePressReaderNetworkTrace() {
-  const groups = new Map()
-  for (const entry of pressReaderNetworkTrace) {
-    const key = `${entry.method || 'GET'} ${entry.url}`
-    const existing = groups.get(key) || {
-      method: entry.method || 'GET',
-      url: entry.url,
-      resourceType: entry.resourceType || '',
-      statuses: new Map(),
-      count: 0,
-      authorizationHeader: false,
-      cookieHeader: false,
-      subscriptionKeyHeader: false,
-      contentType: '',
-      lastAt: 0,
-    }
-    existing.count += 1
-    existing.lastAt = Math.max(existing.lastAt, entry.at || 0)
-    if (entry.statusCode) existing.statuses.set(entry.statusCode, (existing.statuses.get(entry.statusCode) || 0) + 1)
-    existing.authorizationHeader = existing.authorizationHeader || !!entry.authorizationHeader
-    existing.cookieHeader = existing.cookieHeader || !!entry.cookieHeader
-    existing.subscriptionKeyHeader = existing.subscriptionKeyHeader || !!entry.subscriptionKeyHeader
-    existing.contentType = entry.contentType || existing.contentType
-    groups.set(key, existing)
-  }
-  const endpointScore = item => {
-    let score = item.count
-    if (/xhr|fetch/i.test(item.resourceType)) score += 8
-    if (/api|catalog|publication|newspaper|magazine|cid|issue|countries|country/i.test(item.url)) score += 10
-    if (/json/i.test(item.contentType)) score += 6
-    if (item.subscriptionKeyHeader) score += 4
-    if (item.authorizationHeader) score += 3
-    return score
-  }
-  return [...groups.values()]
-    .map(item => ({
-      ...item,
-      statuses: [...item.statuses.entries()].map(([status, count]) => `${status}x${count}`).join(', '),
-    }))
-    .sort((a, b) => endpointScore(b) - endpointScore(a) || b.lastAt - a.lastAt)
-    .slice(0, 18)
-}
-
-function getPressReaderNetworkSnapshot() {
-  const top = summarizePressReaderNetworkTrace()
-  return {
-    ok: true,
-    active: isPressReaderNetworkTraceActive(),
-    startedAt: pressReaderNetworkStartedAt,
-    activeUntil: pressReaderNetworkActiveUntil,
-    total: pressReaderNetworkTrace.length,
-    hasAuthorizationHeader: pressReaderNetworkTrace.some(entry => entry.authorizationHeader),
-    hasCookieHeader: pressReaderNetworkTrace.some(entry => entry.cookieHeader),
-    hasSubscriptionKeyHeader: pressReaderNetworkTrace.some(entry => entry.subscriptionKeyHeader),
-    top,
-  }
-}
-
-function isPressReaderNetworkUrl(rawUrl = '') {
-  try {
-    const host = new URL(rawUrl).hostname.toLowerCase()
-    return host === 'pressreader.com'
-      || host.endsWith('.pressreader.com')
-      || host === 'newspaperdirect.com'
-      || host.endsWith('.newspaperdirect.com')
-      || host.includes('pressreader')
-      || host.includes('newspaperdirect')
-  } catch {
-    return /pressreader|newspaperdirect/i.test(String(rawUrl || ''))
-  }
-}
-
-function configurePressReaderNetworkInspector() {
-  const prSession = session.fromPartition('persist:pressreader')
-  const filter = {
-    urls: [
-      '*://*.pressreader.com/*',
-      '*://pressreader.com/*',
-      '*://*.newspaperdirect.com/*',
-      '*://newspaperdirect.com/*',
-      '*://*.bibliothequedequebec.qc.ca/*',
-    ],
-  }
-
-  prSession.webRequest.onBeforeSendHeaders(filter, (details, callback) => {
-    capturePressReaderIngressAuth(details.url, details.requestHeaders)
-    if (isPressReaderNetworkTraceActive() && isPressReaderNetworkUrl(details.url)) {
-      pressReaderNetworkRequests.set(details.id, {
-        at: Date.now(),
-        method: details.method,
-        resourceType: details.resourceType,
-        url: sanitizePressReaderUrl(details.url),
-        ...pressReaderRequestSignals(details.requestHeaders),
-      })
-    }
-    callback({ requestHeaders: details.requestHeaders })
-  })
-
-  prSession.webRequest.onCompleted(filter, details => {
-    if (!isPressReaderNetworkTraceActive() || !isPressReaderNetworkUrl(details.url)) return
-    const request = pressReaderNetworkRequests.get(details.id) || {}
-    pressReaderNetworkRequests.delete(details.id)
-    const response = pressReaderResponseMeta(details.responseHeaders)
-    pushPressReaderNetworkTrace({
-      at: Date.now(),
-      method: request.method || details.method || 'GET',
-      resourceType: request.resourceType || details.resourceType || '',
-      url: request.url || sanitizePressReaderUrl(details.url),
-      statusCode: details.statusCode || 0,
-      fromCache: !!details.fromCache,
-      ...pressReaderRequestSignals({}),
-      authorizationHeader: !!request.authorizationHeader,
-      cookieHeader: !!request.cookieHeader,
-      subscriptionKeyHeader: !!request.subscriptionKeyHeader,
-      xRequestedWith: !!request.xRequestedWith,
-      ...response,
-    })
-  })
-
-  prSession.webRequest.onErrorOccurred(filter, details => {
-    if (!isPressReaderNetworkTraceActive() || !isPressReaderNetworkUrl(details.url)) return
-    const request = pressReaderNetworkRequests.get(details.id) || {}
-    pressReaderNetworkRequests.delete(details.id)
-    pushPressReaderNetworkTrace({
-      at: Date.now(),
-      method: request.method || details.method || 'GET',
-      resourceType: request.resourceType || details.resourceType || '',
-      url: request.url || sanitizePressReaderUrl(details.url),
-      statusCode: 0,
-      error: details.error || 'request failed',
-      authorizationHeader: !!request.authorizationHeader,
-      cookieHeader: !!request.cookieHeader,
-      subscriptionKeyHeader: !!request.subscriptionKeyHeader,
-      xRequestedWith: !!request.xRequestedWith,
-      contentType: '',
-      contentLength: '',
-    })
-  })
-}
-
-function normalizePressReaderCatalogEndpoint(endpoint = '') {
-  const raw = String(endpoint || '').trim()
-  if (!raw) throw new Error('Missing PressReader catalog endpoint')
-  const url = raw.startsWith('http')
-    ? new URL(raw)
-    : new URL(raw.startsWith('/') ? raw : `/services/catalog/${raw}`, 'https://ingress.pressreader.com')
-  if (url.protocol !== 'https:' || url.hostname !== 'ingress.pressreader.com') {
-    throw new Error('PressReader catalog endpoint host is not allowed')
-  }
-  if (!/^\/services\/catalog\/v\d+\//i.test(url.pathname)) {
-    throw new Error('Only PressReader catalog endpoints are allowed')
-  }
-  return url
-}
-
-async function fetchPressReaderCatalogJson(endpoint = '') {
-  const authAgeMs = Date.now() - Number(pressReaderIngressAuth.at || 0)
-  if (!pressReaderIngressAuth.value || authAgeMs > 20 * 60 * 1000) {
-    return {
-      ok: false,
-      error: 'PressReader API auth was not observed yet. Open PressReader, sign in, then run Inspect API once.',
-      needsInspect: true,
-    }
-  }
-
-  let url
-  try { url = normalizePressReaderCatalogEndpoint(endpoint) }
-  catch (error) { return { ok: false, error: error?.message || String(error) } }
-
-  const prSession = session.fromPartition('persist:pressreader')
-  try {
-    const response = await prSession.fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        accept: 'application/json, text/plain, */*',
-        authorization: pressReaderIngressAuth.value,
-        origin: 'https://www.pressreader.com',
-        referer: 'https://www.pressreader.com/',
-      },
-    })
-    const contentType = response.headers.get('content-type') || ''
-    const text = await response.text()
-    let data = null
-    try { data = text ? JSON.parse(text) : null }
-    catch {
-      data = { raw: text.slice(0, 1200) }
-    }
-    return {
-      ok: response.ok,
-      status: response.status,
-      contentType,
-      url: sanitizePressReaderUrl(url.toString()),
-      data,
-      error: response.ok ? '' : `PressReader catalog fetch failed with HTTP ${response.status}`,
-    }
-  } catch (error) {
-    return { ok: false, error: error?.message || String(error), url: sanitizePressReaderUrl(url.toString()) }
-  }
-}
-
 app.whenReady().then(() => {
   configureCameraSession()
   configureResponseHeaderOverrides()
   configureDefaultYouTubeEmbedHeaders()
   configureLiveFeedSessions()
-  configurePressReaderNetworkInspector()
   disableNativeWidgets()
   writeLaunchPath()
   createPipeServer()   // taskbar-btn IPC on port 47321
@@ -3115,6 +2816,41 @@ ipcMain.handle('ms-graph-patch', async (_e, url, accessToken, patchBody) => {
   }, body)
 })
 
+function normalizeTextEncoding(value = '') {
+  const raw = String(value || '').trim().replace(/^["']|["']$/g, '').toLowerCase().replace(/_/g, '-')
+  if (!raw) return ''
+  if (/^(?:utf-?8|unicode-1-1-utf-8)$/i.test(raw)) return 'utf-8'
+  if (/^(?:latin1|latin-1|iso-?8859-1|windows-1252|cp-?1252)$/i.test(raw)) return 'windows-1252'
+  return raw
+}
+
+function decodeBufferText(buffer, encoding = 'utf-8') {
+  try { return new TextDecoder(encoding).decode(buffer) }
+  catch {
+    try { return new TextDecoder('utf-8').decode(buffer) }
+    catch { return buffer.toString('utf8') }
+  }
+}
+
+function textDecodeArtifactCount(text = '') {
+  return (String(text || '').match(/[\u00c2\u00c3\ufffd]|\u00e2[\u0080-\u009f]/g) || []).length
+}
+
+function decodeHttpText(buffer, headers = {}) {
+  const contentType = String(headers['content-type'] || '')
+  const headerEncoding = normalizeTextEncoding(contentType.match(/charset\s*=\s*([^;]+)/i)?.[1] || '')
+  const head = buffer.slice(0, 1024).toString('ascii')
+  const xmlEncoding = normalizeTextEncoding(head.match(/<\?xml[^>]*encoding\s*=\s*["']([^"']+)/i)?.[1] || '')
+  const encoding = headerEncoding || xmlEncoding || 'utf-8'
+  const decoded = decodeBufferText(buffer, encoding)
+
+  if (!headerEncoding && encoding === 'utf-8') {
+    const fallback = decodeBufferText(buffer, 'windows-1252')
+    if (textDecodeArtifactCount(fallback) < textDecodeArtifactCount(decoded)) return fallback
+  }
+  return decoded
+}
+
 function rssFetch(url, redirects = 0) {
   return new Promise((resolve, reject) => {
     if (redirects > 5) { reject(new Error('too many redirects')); return }
@@ -3130,9 +2866,10 @@ function rssFetch(url, redirects = 0) {
         resolve(rssFetch(new URL(res.headers.location, url).href, redirects + 1))
         return
       }
-      let data = ''
-      res.on('data', chunk => data += chunk)
+      const chunks = []
+      res.on('data', chunk => chunks.push(Buffer.from(chunk)))
       res.on('end', () => {
+        const data = decodeHttpText(Buffer.concat(chunks), res.headers)
         if (res.statusCode >= 200 && res.statusCode < 300) resolve({ ok: true, status: res.statusCode, text: data })
         else resolve({ ok: false, status: res.statusCode, error: `HTTP ${res.statusCode}` })
       })
