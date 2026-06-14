@@ -14,3 +14,4 @@ electron-builder output
 error.txt
 native/bin/*.log
 native/bin/panel.path
+native/qt-panel/build/

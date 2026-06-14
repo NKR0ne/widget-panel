@@ -1,0 +1,98 @@
+#pragma once
+
+#include <QImage>
+#include <QNetworkAccessManager>
+#include <QObject>
+#include <QQuickImageProvider>
+#include <QTimer>
+
+namespace qtpanel {
+
+class SecretVault;
+class SettingsStore;
+
+// Provides the latest decoded camera frame to QML via image://camera/frame.
+class CameraImageProvider : public QQuickImageProvider {
+public:
+    CameraImageProvider() : QQuickImageProvider(QQuickImageProvider::Image) {}
+    QImage requestImage(const QString& id, QSize* size, const QSize& requested) override;
+    void setFrame(const QImage& frame);
+
+private:
+    QImage m_frame;
+};
+
+// Milestone XProtect mobile client: Connect (DH) → LogIn (encrypted creds) →
+// RequestStream (Pull/Transcoded) → frame pull loop → JPEG frames. Port of the
+// Electron CameraWidget's XPMobileSDK usage, native and Chromium-free.
+class CameraClient : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QString status READ status NOTIFY statusChanged)
+    Q_PROPERTY(QString error READ error NOTIFY statusChanged)
+    Q_PROPERTY(bool configured READ configured NOTIFY statusChanged)
+    Q_PROPERTY(int frameId READ frameId NOTIFY frameChanged)
+
+public:
+    CameraClient(SettingsStore* settings, SecretVault* vault, CameraImageProvider* provider,
+                 QObject* parent = nullptr);
+
+    QString status() const { return m_status; }
+    QString error() const { return m_error; }
+    bool configured() const;
+    int frameId() const { return m_frameId; }
+
+    // loginType: "Windows" | "Basic" | "" (SDK default). Empty user/pass reuses
+    // the stored credentials.
+    Q_INVOKABLE void start(const QString& user = {}, const QString& pass = {},
+                           const QString& loginType = {});
+    Q_INVOKABLE void stop();
+
+signals:
+    void statusChanged();
+    void frameChanged();
+
+private:
+    void setStatus(const QString& status, const QString& error = {});
+    void connectStep();
+    void loginStep();
+    void requestStreamStep();
+    void pullFrame();
+    void scheduleNextFrame(int ms);
+    void sendLiveMessage();
+    void closeStream();
+
+    void postCommand(const QString& name, const QMap<QString, QString>& params,
+                     std::function<void(const QMap<QString, QString>&, const QString& error)> cb);
+    QNetworkRequest makeRequest(const QString& path) const;
+
+    SettingsStore* m_settings = nullptr;
+    SecretVault* m_vault = nullptr;
+    CameraImageProvider* m_provider = nullptr;
+    QNetworkAccessManager m_nam;
+
+    QString m_baseUrl;
+    QString m_cameraId;
+    QString m_user;
+    QString m_pass;
+    QString m_loginType;
+    QStringList m_loginAttempts;
+    int m_loginAttemptIndex = 0;
+
+    QString m_connectionId;
+    QString m_videoId;
+    int m_sequence = 0;
+    int m_serverTimeoutSec = 30;
+
+    QString m_status = QStringLiteral("idle");
+    QString m_error;
+    int m_frameId = 0;
+    bool m_streaming = false;
+
+    QTimer m_frameTimer;
+    QTimer m_liveMessageTimer;
+
+    // Diffie-Hellman state lives in the .cpp to keep the header light.
+    void* m_crypto = nullptr;
+};
+
+} // namespace qtpanel

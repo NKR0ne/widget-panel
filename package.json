@@ -6,6 +6,10 @@
   "scripts": {
     "dev": "concurrently \"vite --config vite.config.js\" \"wait-on http://localhost:5173 && cross-env VITE_DEV=1 electron .\"",
     "build": "vite build && electron-builder",
+    "qt:kill": "powershell -ExecutionPolicy Bypass -File native/qt-panel/kill-build-processes.ps1",
+    "qt:build": "powershell -ExecutionPolicy Bypass -File native/qt-panel/build.ps1",
+    "qt:build:nmake": "powershell -ExecutionPolicy Bypass -File native/qt-panel/build.ps1 -Generator NMake",
+    "qt:launch": "powershell -ExecutionPolicy Bypass -File native/qt-panel/launch.ps1",
     "test:reader": "node scripts/test-reader-cleanup.cjs",
     "debug:reader": "node scripts/debug-reader-url.cjs",
     "preview": "electron .",
