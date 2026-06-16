@@ -5,6 +5,9 @@
 #include <QObject>
 #include <QQuickImageProvider>
 #include <QTimer>
+#include <QVariantList>
+
+#include <functional>
 
 namespace qtpanel {
 
@@ -31,6 +34,8 @@ class CameraClient : public QObject {
     Q_PROPERTY(QString error READ error NOTIFY statusChanged)
     Q_PROPERTY(bool configured READ configured NOTIFY statusChanged)
     Q_PROPERTY(int frameId READ frameId NOTIFY frameChanged)
+    Q_PROPERTY(QVariantList cameras READ cameras NOTIFY camerasChanged)
+    Q_PROPERTY(QString discoveryStatus READ discoveryStatus NOTIFY camerasChanged)
 
 public:
     CameraClient(SettingsStore* settings, SecretVault* vault, CameraImageProvider* provider,
@@ -40,29 +45,37 @@ public:
     QString error() const { return m_error; }
     bool configured() const;
     int frameId() const { return m_frameId; }
+    QVariantList cameras() const { return m_cameras; }
+    QString discoveryStatus() const { return m_discoveryStatus; }
 
     // loginType: "Windows" | "Basic" | "" (SDK default). Empty user/pass reuses
     // the stored credentials.
     Q_INVOKABLE void start(const QString& user = {}, const QString& pass = {},
                            const QString& loginType = {});
     Q_INVOKABLE void stop();
+    Q_INVOKABLE void discoverCameras();
 
 signals:
     void statusChanged();
     void frameChanged();
+    void camerasChanged();
 
 private:
     void setStatus(const QString& status, const QString& error = {});
     void connectStep();
     void loginStep();
+    void discoverCamerasStep(std::function<void()> then);
     void requestStreamStep();
     void pullFrame();
     void scheduleNextFrame(int ms);
+    void checkStaleFrame();
     void sendLiveMessage();
     void closeStream();
 
     void postCommand(const QString& name, const QMap<QString, QString>& params,
                      std::function<void(const QMap<QString, QString>&, const QString& error)> cb);
+    void postCommandRaw(const QString& name, const QMap<QString, QString>& params,
+                        std::function<void(const QString&, const QString& error)> cb);
     QNetworkRequest makeRequest(const QString& path) const;
 
     SettingsStore* m_settings = nullptr;
@@ -85,11 +98,15 @@ private:
 
     QString m_status = QStringLiteral("idle");
     QString m_error;
+    QVariantList m_cameras;
+    QString m_discoveryStatus;
     int m_frameId = 0;
     bool m_streaming = false;
 
     QTimer m_frameTimer;
     QTimer m_liveMessageTimer;
+    QTimer m_staleFrameTimer;
+    qint64 m_lastFrameAtMs = 0;
 
     // Diffie-Hellman state lives in the .cpp to keep the header light.
     void* m_crypto = nullptr;

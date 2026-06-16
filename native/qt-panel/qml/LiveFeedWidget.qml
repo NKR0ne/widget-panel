@@ -13,16 +13,78 @@ GlassCard {
     implicitHeight: header.implicitHeight + videoFrame.height + 24 + 8
 
     property bool failed: false
+    property string hlsUrl: ""
     property string statusText: "Résolution du flux…"
+    readonly property bool youtube: Live.isYouTube(feedId)
+    readonly property string ytId: Live.videoId(feedId)
 
-    Component.onCompleted: Live.resolve(feedId)
+    function htmlEscape(text) {
+        return String(text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    }
+
+    function zoomUrl() {
+        if (card.youtube)
+            return Live.webUrl(card.feedId)
+        const web = Live.webUrl(card.feedId)
+        if (web.indexOf("youtube.com/") >= 0 || web.indexOf("youtu.be/") >= 0)
+            return web
+        const src = card.hlsUrl || web
+        if (!src)
+            return web
+        const html = "<!doctype html><html><head><meta charset='utf-8'>"
+            + "<style>html,body{margin:0;width:100%;height:100%;background:#05070a;color:#dbeafe;font-family:Segoe UI,Arial,sans-serif}"
+            + "#wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}"
+            + "#bar{height:36px;display:flex;align-items:center;gap:10px;padding:0 12px;background:#0b1020;border-bottom:1px solid rgba(255,255,255,.08);font-size:12px}"
+            + "video{width:100%;height:100%;background:#000;object-fit:contain}</style>"
+            + "<script src='https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js'></script></head>"
+            + "<body><div id='wrap'><div id='bar'><b>" + htmlEscape(card.title)
+            + "</b><span id='state'>Loading HLS</span></div><video id='v' controls autoplay></video></div>"
+            + "<script>var src=" + JSON.stringify(src) + ";var v=document.getElementById('v');var s=document.getElementById('state');"
+            + "function note(x){s.textContent=x}if(window.Hls&&Hls.isSupported()){var h=new Hls({lowLatencyMode:true});"
+            + "h.on(Hls.Events.ERROR,function(_,d){note(d&&d.details?d.details:'HLS error')});"
+            + "h.loadSource(src);h.attachMedia(v);h.on(Hls.Events.MANIFEST_PARSED,function(){note('Ready');v.play().catch(function(){note('Press play')})})}"
+            + "else{v.src=src;v.addEventListener('loadedmetadata',function(){note('Ready');v.play().catch(function(){note('Press play')})});"
+            + "v.addEventListener('error',function(){note('Playback error')})}</script></body></html>"
+        return "data:text/html;charset=utf-8," + encodeURIComponent(html)
+    }
+
+    function openZoom() {
+        Panel.openIsland(zoomUrl())
+    }
+
+    function openCompactEmbed() {
+        Panel.openIsland(Live.embedUrl(card.feedId))
+    }
+
+    function retryNow() {
+        if (card.youtube) {
+            card.openZoom()
+            return
+        }
+        failed = false
+        statusText = "Resolution du flux..."
+        retryTimer.stop()
+        Live.resolve(feedId, true)
+    }
+
+    Component.onCompleted: {
+        if (card.youtube) {
+            card.failed = false
+            card.statusText = "YouTube page"
+        } else {
+            Live.resolve(feedId)
+        }
+    }
 
     Connections {
         target: Live
         function onFeedResolved(id, hlsUrl) {
             if (id !== card.feedId)
                 return
+            if (card.youtube)
+                return
             card.failed = false
+            card.hlsUrl = hlsUrl
             card.statusText = "Connexion…"
             player.source = hlsUrl
             player.play()
@@ -30,8 +92,10 @@ GlassCard {
         function onFeedFailed(id, error) {
             if (id !== card.feedId)
                 return
+            if (card.youtube)
+                return
             card.failed = true
-            card.statusText = "Flux indisponible"
+            card.statusText = error || "Flux indisponible"
             retryTimer.start()
         }
     }
@@ -39,6 +103,7 @@ GlassCard {
     Timer {
         id: retryTimer
         interval: 45000
+        running: false
         onTriggered: Live.resolve(card.feedId, true)
     }
 
@@ -88,13 +153,18 @@ GlassCard {
             spacing: 6
 
             Text {
+                id: feedTitle
+                width: Math.max(48, parent.width - liveBadge.width - sourceBadge.width
+                                - zoomBtn.width - speaker.width - 36)
                 text: card.title
                 color: Theme.textSecondary
                 font.pixelSize: Theme.fontSizeCaption
                 font.capitalization: Font.AllUppercase
                 font.letterSpacing: 1.2
+                elide: Text.ElideRight
             }
             Row {
+                id: liveBadge
                 spacing: 4
                 visible: player.playbackState === MediaPlayer.PlayingState
                 anchors.verticalCenter: parent.verticalCenter
@@ -119,9 +189,49 @@ GlassCard {
                     font.letterSpacing: 1
                 }
             }
-            Item { width: parent.width - x - speaker.width; height: 1 }
+            Rectangle {
+                id: sourceBadge
+                width: sourceText.implicitWidth + 10
+                height: 18
+                radius: 5
+                anchors.verticalCenter: parent.verticalCenter
+                color: Qt.rgba(1, 1, 1, 0.05)
+                border.color: Theme.cardStroke
+                Text {
+                    id: sourceText
+                    anchors.centerIn: parent
+                    text: Live.sourceLabel(card.feedId)
+                    color: Theme.textSecondary
+                    font.pixelSize: 8
+                }
+            }
+            Item { width: Math.max(1, parent.width - x - zoomBtn.width - speaker.width - 8); height: 1 }
+            Rectangle {
+                id: zoomBtn
+                width: 22
+                height: 18
+                radius: 5
+                anchors.verticalCenter: parent.verticalCenter
+                color: zoomMouse.containsMouse ? Theme.activeFill : Qt.rgba(1, 1, 1, 0.04)
+                border.color: zoomMouse.containsMouse ? Theme.accent : Theme.cardStroke
+                Text {
+                    anchors.centerIn: parent
+                    text: ""
+                    font.family: "Segoe Fluent Icons"
+                    font.pixelSize: 10
+                    color: Theme.textSecondary
+                }
+                MouseArea {
+                    id: zoomMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: card.openZoom()
+                }
+            }
             Text {
                 id: speaker
+                visible: !card.youtube
                 text: Live.audioFeedId === card.feedId ? "" : ""  // Volume / Mute
                 font.family: "Segoe Fluent Icons"
                 font.pixelSize: 12
@@ -141,22 +251,170 @@ GlassCard {
             VideoOutput {
                 id: videoOut
                 anchors.fill: parent
+                visible: !card.youtube
                 fillMode: VideoOutput.PreserveAspectCrop
+            }
+
+            Image {
+                anchors.fill: parent
+                source: card.youtube && card.ytId !== "" ? "https://i.ytimg.com/vi/" + card.ytId + "/hqdefault.jpg" : ""
+                fillMode: Image.PreserveAspectCrop
+                asynchronous: true
+                visible: card.youtube && (card.ytId !== "")
+                opacity: 0.72
+            }
+
+            Rectangle {
+                anchors.fill: parent
+                visible: card.youtube
+                color: Qt.rgba(0, 0, 0, 0.42)
+            }
+
+            Column {
+                anchors.centerIn: parent
+                visible: card.youtube
+                z: 3
+                spacing: 8
+                Text {
+                    width: videoFrame.width - 28
+                    text: "YouTube Live"
+                    color: Theme.textPrimary
+                    font.pixelSize: Theme.fontSizeCaption
+                    font.weight: Font.DemiBold
+                    horizontalAlignment: Text.AlignHCenter
+                }
+                Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: 6
+                    Rectangle {
+                        width: openYoutubeLabel.implicitWidth + 24
+                        height: 28
+                        radius: 7
+                        color: openYoutubeMouse.containsMouse ? Qt.rgba(0.97, 0.18, 0.18, 0.35)
+                                                               : Qt.rgba(0.97, 0.18, 0.18, 0.22)
+                        border.color: Qt.rgba(1, 1, 1, 0.24)
+                        Text {
+                            id: openYoutubeLabel
+                            anchors.centerIn: parent
+                            text: "Watch"
+                            color: Theme.textPrimary
+                            font.pixelSize: Theme.fontSizeCaption
+                        }
+                        MouseArea {
+                            id: openYoutubeMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: card.openZoom()
+                        }
+                    }
+                    Rectangle {
+                        width: embedYoutubeLabel.implicitWidth + 18
+                        height: 28
+                        radius: 7
+                        color: embedYoutubeMouse.containsMouse ? Theme.hover : Qt.rgba(1, 1, 1, 0.08)
+                        border.color: Theme.cardStroke
+                        Text {
+                            id: embedYoutubeLabel
+                            anchors.centerIn: parent
+                            text: "Embed"
+                            color: Theme.textSecondary
+                            font.pixelSize: Theme.fontSizeCaption
+                        }
+                        MouseArea {
+                            id: embedYoutubeMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: card.openCompactEmbed()
+                        }
+                    }
+                }
             }
 
             Text {
                 anchors.centerIn: parent
-                visible: player.playbackState !== MediaPlayer.PlayingState
+                visible: !card.youtube && player.playbackState !== MediaPlayer.PlayingState && !card.failed
                 text: card.statusText
-                color: card.failed ? "#f87171" : Theme.textSecondary
+                color: Theme.textSecondary
                 font.pixelSize: Theme.fontSizeCaption
+            }
+
+            Column {
+                anchors.centerIn: parent
+                visible: card.failed
+                z: 2
+                spacing: 8
+                Text {
+                    width: videoFrame.width - 24
+                    text: card.statusText
+                    color: "#f87171"
+                    font.pixelSize: Theme.fontSizeCaption
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                }
+                Row {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    spacing: 6
+                    Rectangle {
+                        width: retryLabel.implicitWidth + 22
+                        height: 26
+                        radius: 6
+                        color: retryMouse.containsMouse ? Theme.hover : Qt.rgba(1, 1, 1, 0.06)
+                        border.color: Theme.cardStroke
+                        Text {
+                            id: retryLabel
+                            anchors.centerIn: parent
+                            text: "Retry"
+                            color: Theme.textSecondary
+                            font.pixelSize: Theme.fontSizeCaption
+                        }
+                        MouseArea {
+                            id: retryMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: card.retryNow()
+                        }
+                    }
+                    Rectangle {
+                        width: webLabel.implicitWidth + 22
+                        height: 26
+                        radius: 6
+                        color: webMouse.containsMouse ? Qt.rgba(0.31, 0.56, 0.97, 0.28)
+                                                       : Qt.rgba(0.31, 0.56, 0.97, 0.16)
+                        border.color: Qt.rgba(0.31, 0.56, 0.97, 0.45)
+                        Text {
+                            id: webLabel
+                            anchors.centerIn: parent
+                            text: "Web"
+                            color: Theme.textPrimary
+                            font.pixelSize: Theme.fontSizeCaption
+                        }
+                        MouseArea {
+                            id: webMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: card.openZoom()
+                        }
+                    }
+                }
             }
 
             MouseArea {
                 anchors.fill: parent
+                z: 1
                 cursorShape: Qt.PointingHandCursor
-                onClicked: Live.requestAudio(
-                    Live.audioFeedId === card.feedId ? "" : card.feedId)
+                onClicked: {
+                    if (card.youtube) {
+                        card.openZoom()
+                    } else if (card.failed) {
+                        card.openZoom()
+                    } else {
+                        Live.requestAudio(Live.audioFeedId === card.feedId ? "" : card.feedId)
+                    }
+                }
             }
         }
     }

@@ -5,10 +5,12 @@
 #include "core/SettingsStore.h"
 
 #include <QDebug>
+#include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QNetworkReply>
 #include <QRegularExpression>
+#include <QSet>
 #include <QSslConfiguration>
 
 namespace qtpanel {
@@ -51,6 +53,55 @@ QMap<QString, QString> parseOutputParams(const QString& xml) {
     }
     return out;
 }
+
+QString xmlAttr(const QString& xml, const QString& name)
+{
+    QRegularExpression re(QStringLiteral("\\b%1=\"([^\"]*)\"").arg(name),
+                          QRegularExpression::CaseInsensitiveOption);
+    return re.match(xml).captured(1);
+}
+
+QString xmlTag(const QString& xml, const QString& name)
+{
+    QRegularExpression re(QStringLiteral("<%1[^>]*>([^<]*)</%1>").arg(name),
+                          QRegularExpression::CaseInsensitiveOption);
+    return re.match(xml).captured(1).trimmed();
+}
+
+QVariantList parseCameraItems(const QString& xml)
+{
+    QVariantList out;
+    QSet<QString> seen;
+    const QRegularExpression itemRe(QStringLiteral("<Item\\b[^>]*(?:/>|>[\\s\\S]*?</Item>)"),
+                                    QRegularExpression::CaseInsensitiveOption);
+    auto it = itemRe.globalMatch(xml);
+    while (it.hasNext()) {
+        const QString item = it.next().captured(0);
+        QString type = xmlAttr(item, QStringLiteral("Type"));
+        if (type.isEmpty())
+            type = xmlTag(item, QStringLiteral("Type"));
+        if (type.compare(QStringLiteral("Camera"), Qt::CaseInsensitive) != 0)
+            continue;
+
+        QString id = xmlAttr(item, QStringLiteral("Id"));
+        if (id.isEmpty())
+            id = xmlAttr(item, QStringLiteral("ID"));
+        if (id.isEmpty())
+            id = xmlTag(item, QStringLiteral("Id"));
+        if (id.isEmpty() || seen.contains(id))
+            continue;
+        seen.insert(id);
+
+        QString name = xmlAttr(item, QStringLiteral("Name"));
+        if (name.isEmpty())
+            name = xmlTag(item, QStringLiteral("Name"));
+        out.append(QVariantMap{
+            {QStringLiteral("id"), id},
+            {QStringLiteral("name"), name.isEmpty() ? id : name},
+        });
+    }
+    return out;
+}
 } // namespace
 
 // ── Image provider ───────────────────────────────────────────────────────────
@@ -85,6 +136,9 @@ CameraClient::CameraClient(SettingsStore* settings, SecretVault* vault,
 
     m_liveMessageTimer.setInterval(5000);
     connect(&m_liveMessageTimer, &QTimer::timeout, this, &CameraClient::sendLiveMessage);
+
+    m_staleFrameTimer.setInterval(5000);
+    connect(&m_staleFrameTimer, &QTimer::timeout, this, &CameraClient::checkStaleFrame);
 }
 
 bool CameraClient::configured() const
@@ -164,7 +218,9 @@ void CameraClient::stop()
 {
     m_frameTimer.stop();
     m_liveMessageTimer.stop();
+    m_staleFrameTimer.stop();
     m_streaming = false;
+    m_lastFrameAtMs = 0;
     if (!m_videoId.isEmpty())
         closeStream();
     delete static_cast<XpCrypto*>(m_crypto);
@@ -173,8 +229,35 @@ void CameraClient::stop()
     m_videoId.clear();
 }
 
+void CameraClient::discoverCameras()
+{
+    if (m_connectionId.isEmpty()) {
+        start();
+        return;
+    }
+    discoverCamerasStep([] {});
+}
+
 void CameraClient::postCommand(const QString& name, const QMap<QString, QString>& params,
                                std::function<void(const QMap<QString, QString>&, const QString&)> cb)
+{
+    postCommandRaw(name, params, [cb](const QString& chosen, const QString& error) {
+        if (!error.isEmpty()) {
+            cb({}, error);
+            return;
+        }
+        if (chosen.contains(QStringLiteral("<Result>Error</Result>"))) {
+            const QString code = chosen.section(QStringLiteral("<ErrorCode>"), 1, 1)
+                                      .section(QStringLiteral("</ErrorCode>"), 0, 0);
+            cb({}, QStringLiteral("Command error (code %1)").arg(code));
+            return;
+        }
+        cb(parseOutputParams(chosen.section(QStringLiteral("<OutputParams"), 1)), QString());
+    });
+}
+
+void CameraClient::postCommandRaw(const QString& name, const QMap<QString, QString>& params,
+                                  std::function<void(const QString&, const QString&)> cb)
 {
     QString body = QStringLiteral("<?xml version=\"1.0\" encoding=\"utf-8\"?>"
         "<Communication xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
@@ -204,14 +287,7 @@ void CameraClient::postCommand(const QString& name, const QMap<QString, QString>
             if (!doc.contains(QStringLiteral("<Result>Processing</Result>")))
                 chosen = doc;
         }
-        const QString result = paramValue(chosen, QStringLiteral("Result"));
-        if (chosen.contains(QStringLiteral("<Result>Error</Result>"))) {
-            const QString code = chosen.section(QStringLiteral("<ErrorCode>"), 1, 1)
-                                       .section(QStringLiteral("</ErrorCode>"), 0, 0);
-            cb({}, QStringLiteral("%1 error (code %2)").arg(name, code));
-            return;
-        }
-        cb(parseOutputParams(chosen.section(QStringLiteral("<OutputParams"), 1)), QString());
+        cb(chosen, QString());
     });
 }
 
@@ -283,7 +359,72 @@ void CameraClient::loginStep()
         m_settings->set(QStringLiteral("wp-camera-auth"),
                         QString::fromUtf8(QJsonDocument(creds).toJson(QJsonDocument::Compact)));
         m_liveMessageTimer.start();
-        requestStreamStep();
+        discoverCamerasStep([this] { requestStreamStep(); });
+    });
+}
+
+void CameraClient::discoverCamerasStep(std::function<void()> then)
+{
+    m_discoveryStatus = QStringLiteral("Discovering cameras");
+    emit camerasChanged();
+    postCommandRaw(QStringLiteral("GetItems"), {}, [this, then](const QString& xml, const QString& error) {
+        if (!error.isEmpty() || xml.contains(QStringLiteral("<Result>Error</Result>"))) {
+            m_discoveryStatus = error.isEmpty()
+                ? QStringLiteral("Camera discovery unavailable")
+                : QStringLiteral("Camera discovery failed: %1").arg(error);
+            emit camerasChanged();
+            qWarning() << "[camera]" << m_discoveryStatus;
+            then();
+            return;
+        }
+
+        m_cameras = parseCameraItems(xml);
+        if (m_cameras.isEmpty()) {
+            m_discoveryStatus = QStringLiteral("No cameras discovered");
+            emit camerasChanged();
+            qWarning() << "[camera] no cameras found in GetItems response";
+            then();
+            return;
+        }
+
+        const QString savedId = m_settings->get(QStringLiteral("wp-camera-id"),
+                                                QLatin1String(kDefaultCameraId)).toString();
+        const QString hint = m_settings->get(QStringLiteral("wp-camera-name-hint"),
+                                             QStringLiteral("HikVision")).toString();
+        QVariantMap chosen;
+        for (const QVariant& value : m_cameras) {
+            const QVariantMap cam = value.toMap();
+            if (cam.value(QStringLiteral("id")).toString() == savedId) {
+                chosen = cam;
+                break;
+            }
+        }
+        if (chosen.isEmpty() && !hint.isEmpty()) {
+            for (const QVariant& value : m_cameras) {
+                const QVariantMap cam = value.toMap();
+                if (cam.value(QStringLiteral("name")).toString()
+                        .contains(hint, Qt::CaseInsensitive)) {
+                    chosen = cam;
+                    break;
+                }
+            }
+        }
+        if (chosen.isEmpty())
+            chosen = m_cameras.first().toMap();
+
+        const QString nextId = chosen.value(QStringLiteral("id")).toString();
+        const QString nextName = chosen.value(QStringLiteral("name")).toString();
+        if (!nextId.isEmpty()) {
+            m_cameraId = nextId;
+            m_settings->set(QStringLiteral("wp-camera-id"), nextId);
+            m_settings->set(QStringLiteral("wp-camera-name"), nextName);
+        }
+        m_discoveryStatus = QStringLiteral("%1 cameras; selected %2")
+            .arg(m_cameras.size())
+            .arg(nextName.isEmpty() ? nextId : nextName);
+        emit camerasChanged();
+        qInfo() << "[camera]" << m_discoveryStatus;
+        then();
     });
 }
 
@@ -311,6 +452,8 @@ void CameraClient::requestStreamStep()
             return;
         }
         m_streaming = true;
+        m_lastFrameAtMs = QDateTime::currentMSecsSinceEpoch();
+        m_staleFrameTimer.start();
         setStatus(QStringLiteral("streaming"));
         pullFrame();
     });
@@ -344,6 +487,7 @@ void CameraClient::pullFrame()
                 QImage img;
                 if (img.loadFromData(jpeg, "JPEG")) {
                     m_provider->setFrame(img);
+                    m_lastFrameAtMs = QDateTime::currentMSecsSinceEpoch();
                     ++m_frameId;
                     if (m_frameId == 1 || m_frameId % 50 == 0)
                         qInfo() << "[camera] frame" << m_frameId << img.width() << "x" << img.height();
@@ -361,6 +505,23 @@ void CameraClient::scheduleNextFrame(int ms)
 {
     if (m_streaming)
         m_frameTimer.start(ms);
+}
+
+void CameraClient::checkStaleFrame()
+{
+    if (!m_streaming || m_lastFrameAtMs <= 0)
+        return;
+    const qint64 age = QDateTime::currentMSecsSinceEpoch() - m_lastFrameAtMs;
+    if (age < kStaleReconnectMs)
+        return;
+
+    qWarning() << "[camera] no frames for" << age << "ms; reconnecting";
+    stop();
+    setStatus(QStringLiteral("connecting"));
+    QTimer::singleShot(5000, this, [this] {
+        if (m_status == QLatin1String("connecting"))
+            start();
+    });
 }
 
 void CameraClient::sendLiveMessage()

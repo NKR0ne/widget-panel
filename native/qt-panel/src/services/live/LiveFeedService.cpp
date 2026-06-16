@@ -111,6 +111,59 @@ QString LiveFeedService::title(const QString& feedId) const
     return feed ? feed->title : feedId;
 }
 
+QString LiveFeedService::sourceLabel(const QString& feedId) const
+{
+    const Feed* feed = feedById(feedId);
+    if (!feed)
+        return {};
+    return feed->youtube ? QStringLiteral("YouTube") : QStringLiteral("HLS");
+}
+
+QString LiveFeedService::videoId(const QString& feedId) const
+{
+    const Feed* feed = feedById(feedId);
+    return (feed && feed->youtube) ? feed->source : QString();
+}
+
+bool LiveFeedService::isYouTube(const QString& feedId) const
+{
+    const Feed* feed = feedById(feedId);
+    return feed ? feed->youtube : false;
+}
+
+QString LiveFeedService::embedUrl(const QString& feedId) const
+{
+    const QString id = videoId(feedId);
+    if (id.isEmpty())
+        return webUrl(feedId);
+    return QStringLiteral("https://www.youtube.com/embed/%1"
+                          "?autoplay=1&mute=1&controls=1&playsinline=1"
+                          "&rel=0&modestbranding=1&iv_load_policy=3"
+                          "&enablejsapi=1")
+        .arg(QString::fromUtf8(QUrl::toPercentEncoding(id)));
+}
+
+QStringList LiveFeedService::feedIds() const
+{
+    QStringList ids;
+    ids.reserve(m_feeds.size());
+    for (const Feed& feed : m_feeds)
+        ids.push_back(feed.id);
+    return ids;
+}
+
+QString LiveFeedService::webUrl(const QString& feedId) const
+{
+    const Feed* feed = feedById(feedId);
+    if (!feed)
+        return {};
+    if (feed->youtube) {
+        return QStringLiteral("https://www.youtube.com/watch?v=%1").arg(
+            QString::fromUtf8(QUrl::toPercentEncoding(feed->source)));
+    }
+    return feed->source;
+}
+
 void LiveFeedService::requestAudio(const QString& feedId)
 {
     if (m_audioFeedId == feedId)

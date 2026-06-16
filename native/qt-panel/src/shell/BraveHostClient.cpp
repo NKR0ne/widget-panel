@@ -25,7 +25,11 @@ void BraveHostClient::start()
     if (m_server.isListening())
         return;
     if (!m_server.listen(QHostAddress::LocalHost, kBravePort)) {
-        qWarning() << "[brave] port" << kBravePort << "busy:" << m_server.errorString();
+        const QString error = QStringLiteral("Port %1 busy: %2")
+                                  .arg(kBravePort)
+                                  .arg(m_server.errorString());
+        qWarning() << "[brave]" << error;
+        emit errorReceived(error);
         return;
     }
     qInfo() << "[brave] listening on 127.0.0.1:" << kBravePort;
@@ -51,6 +55,7 @@ void BraveHostClient::spawnHelper()
         return;
     const QString path = findHelperExecutable();
     if (path.isEmpty()) {
+        emit errorReceived(QStringLiteral("brave-host.exe not found"));
         qWarning() << "[brave] brave-host.exe not found — web islands unavailable";
         return;
     }
@@ -83,6 +88,11 @@ void BraveHostClient::onNewConnection()
             sendJson(m_pendingOpen);
             m_pendingOpen = {};
         }
+        if (!m_pendingEval.isEmpty()) {
+            sendJson({{QStringLiteral("type"), QStringLiteral("eval")},
+                      {QStringLiteral("script"), m_pendingEval}});
+            m_pendingEval.clear();
+        }
     }
 }
 
@@ -102,8 +112,14 @@ void BraveHostClient::onReadyRead()
         if (type == QLatin1String("ready")) {
             qInfo() << "[brave] ready";
             emit readyReceived();
+        } else if (type == QLatin1String("cookies")) {
+            emit cookiesReceived(msg.value(QLatin1String("payload")).toObject());
+        } else if (type == QLatin1String("state")) {
+            emit stateReceived(msg.value(QLatin1String("payload")).toObject());
         } else if (type == QLatin1String("error")) {
-            qWarning() << "[brave] error:" << msg.value(QLatin1String("msg")).toString();
+            const QString error = msg.value(QLatin1String("msg")).toString();
+            qWarning() << "[brave] error:" << error;
+            emit errorReceived(error);
         }
     }
 }
@@ -131,6 +147,7 @@ void BraveHostClient::open(const QString& url, int physX, int physY, int physW, 
         sendJson(message);
     } else {
         m_pendingOpen = message;
+        m_pendingEval.clear();
         spawnHelper();
     }
 }
@@ -141,9 +158,40 @@ void BraveHostClient::navigate(const QString& url)
               {QStringLiteral("url"), url}});
 }
 
+void BraveHostClient::reload()
+{
+    sendJson({{QStringLiteral("type"), QStringLiteral("reload")}});
+}
+
+void BraveHostClient::goBack()
+{
+    sendJson({{QStringLiteral("type"), QStringLiteral("back")}});
+}
+
+void BraveHostClient::goForward()
+{
+    sendJson({{QStringLiteral("type"), QStringLiteral("forward")}});
+}
+
+void BraveHostClient::evaluate(const QString& script)
+{
+    if (!m_socket || m_socket->state() != QAbstractSocket::ConnectedState) {
+        m_pendingEval = script;
+        return;
+    }
+    sendJson({{QStringLiteral("type"), QStringLiteral("eval")},
+              {QStringLiteral("script"), script}});
+}
+
+void BraveHostClient::requestState()
+{
+    sendJson({{QStringLiteral("type"), QStringLiteral("state")}});
+}
+
 void BraveHostClient::closeShell()
 {
     m_pendingOpen = {};
+    m_pendingEval.clear();
     sendJson({{QStringLiteral("type"), QStringLiteral("close")}});
 }
 
@@ -151,6 +199,11 @@ void BraveHostClient::roundCorners(qulonglong hwnd)
 {
     sendJson({{QStringLiteral("type"), QStringLiteral("round-corners")},
               {QStringLiteral("hwnd"), static_cast<double>(hwnd)}});
+}
+
+void BraveHostClient::requestCookies()
+{
+    sendJson({{QStringLiteral("type"), QStringLiteral("cookies")}});
 }
 
 } // namespace qtpanel

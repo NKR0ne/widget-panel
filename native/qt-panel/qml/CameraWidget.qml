@@ -56,7 +56,7 @@ GlassCard {
             spacing: 6
             visible: false
             Rectangle {
-                width: parent.width - camApply.width - 6; height: 26; radius: 6
+                width: parent.width - camDiscover.width - camApply.width - 12; height: 26; radius: 6
                 color: Qt.rgba(1,1,1,0.05)
                 border.color: camId.activeFocus ? Theme.accent : Theme.cardStroke
                 TextInput {
@@ -73,6 +73,18 @@ GlassCard {
                 }
             }
             Rectangle {
+                id: camDiscover
+                width: 58; height: 26; radius: 6
+                color: camDiscoverMouse.containsMouse ? Theme.hover : Theme.cardFill
+                border.color: Theme.cardStroke
+                Text { anchors.centerIn: parent; text: "Scan"; color: Theme.textSecondary; font.pixelSize: 9 }
+                MouseArea {
+                    id: camDiscoverMouse; anchors.fill: parent; hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: Camera.discoverCameras()
+                }
+            }
+            Rectangle {
                 id: camApply
                 width: 54; height: 26; radius: 6
                 color: camApplyMouse.containsMouse ? Qt.rgba(0.31,0.56,0.97,0.28) : Qt.rgba(0.31,0.56,0.97,0.15)
@@ -82,6 +94,46 @@ GlassCard {
                     id: camApplyMouse; anchors.fill: parent; hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: { Store.set("wp-camera-id", camId.text.trim()); camIdRow.visible = false; Camera.start() }
+                }
+            }
+        }
+
+        Column {
+            visible: camIdRow.visible && Camera.cameras.length > 0
+            width: parent.width
+            spacing: 4
+            Repeater {
+                model: Camera.cameras
+                delegate: Rectangle {
+                    required property var modelData
+                    width: body.width
+                    height: 24
+                    radius: 6
+                    color: cameraPickMouse.containsMouse ? Theme.hover : Qt.rgba(1, 1, 1, 0.035)
+                    border.color: Theme.cardStroke
+                    Text {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.margins: 8
+                        text: modelData.name || modelData.id
+                        color: Theme.textSecondary
+                        font.pixelSize: 9
+                        elide: Text.ElideRight
+                    }
+                    MouseArea {
+                        id: cameraPickMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            Store.set("wp-camera-id", modelData.id)
+                            Store.set("wp-camera-name", modelData.name || modelData.id)
+                            camId.text = modelData.id
+                            camIdRow.visible = false
+                            Camera.start()
+                        }
+                    }
                 }
             }
         }

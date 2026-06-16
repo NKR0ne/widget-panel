@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QObject>
+#include <QHash>
+#include <QSet>
 #include <QTcpServer>
 #include <QTimer>
 #include <QVariantList>
@@ -109,6 +111,8 @@ private:
     // Multi-calendar agenda accumulation.
     int m_agendaPending = 0;
     QVariantList m_agendaAccum;
+    QHash<QString, qint64> m_graphBackoffUntil;
+    QSet<QString> m_graphRetryScheduled;
 };
 
 } // namespace qtpanel

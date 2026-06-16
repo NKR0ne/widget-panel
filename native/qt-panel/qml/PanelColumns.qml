@@ -38,13 +38,14 @@ Item {
         { id: "clock", source: "ClockWidget.qml", column: "left", props: {} },
         { id: "weather", source: "WeatherWidget.qml", column: "left", props: {} },
         { id: "traffic", source: "TrafficWidget.qml", column: "left", props: {} },
-        { id: "stocks", source: "StocksWidget.qml", column: "left", props: {} },
+        { id: "stocks", source: "StocksWidget.qml", column: "left", props: {}, titleDrag: false },
         { id: "calendar", source: "CalendarWidget.qml", column: "mid", props: {} },
         { id: "agenda", source: "AgendaWidget.qml", column: "right", props: {}, resize: true },
         { id: "mail", source: "MailWidget.qml", column: "right", props: {}, resize: true },
         { id: "todo", source: "TodoWidget.qml", column: "right", props: {} },
         { id: "starvis", source: "StarvisWidget.qml", column: "right", props: {} },
         { id: "camera", source: "CameraWidget.qml", column: "left", props: {}, resize: true },
+        { id: "camera-direct", source: "DirectCameraWidget.qml", column: "left", props: {} },
         { id: "pressreader", source: "PressReaderWidget.qml", column: "mid", props: {} },
         { id: "news-3d", source: "NewsStage3D.qml", column: "feed", props: {}, resize: true },
         { id: "euronews", source: "LiveFeedWidget.qml", column: "feed", props: { feedId: "euronews" }, resize: true },
@@ -247,8 +248,8 @@ Item {
             return sortWidgets(result)
         }
         if (mode === "live") {
-            // Live stage: all feeds spread over the columns.
-            const feeds = registry.filter(e => e.source === "LiveFeedWidget.qml")
+            // Live stage: selected feeds spread over the columns.
+            const feeds = registry.filter(e => e.source === "LiveFeedWidget.qml" && isActive(e.id))
             const columnIndex = columnOrder.indexOf(name)
             for (let i = 0; i < feeds.length; i++) {
                 if (i % columnOrder.length === columnIndex)
@@ -350,6 +351,7 @@ Item {
                             widgetId: modelData.id
                             columns: root
                             dragEnabled: root.mode === "base"
+                            titleDragEnabled: modelData.titleDrag !== false
                             resizable: modelData.resize === true
                         }
                     }

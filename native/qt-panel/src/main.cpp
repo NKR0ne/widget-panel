@@ -18,6 +18,7 @@
 #include "core/SoundFx.h"
 #include "shell/SystemTheme.h"
 #include "services/camera/CameraClient.h"
+#include "services/diagnostics/DiagnosticsService.h"
 #include "services/live/LiveFeedService.h"
 #include "services/msgraph/MsGraphService.h"
 #include "services/news/NewsService.h"
@@ -94,6 +95,22 @@ int main(int argc, char* argv[])
         }
     }
     {
+        const QJsonObject pressCreds = QJsonDocument::fromJson(
+            settings.get(QStringLiteral("wp-pressreader-auth")).toString().toUtf8()).object();
+        const QString user = pressCreds.value(QLatin1String("u")).toString(
+            pressCreds.value(QLatin1String("user")).toString());
+        const QString pass = pressCreds.value(QLatin1String("p")).toString(
+            pressCreds.value(QLatin1String("pass")).toString());
+        if (!user.isEmpty() && !vault.has(QStringLiteral("pressreader-user")))
+            vault.set(QStringLiteral("pressreader-user"), user);
+        if (!pass.isEmpty() && !vault.has(QStringLiteral("pressreader-password")))
+            vault.set(QStringLiteral("pressreader-password"), pass);
+        if (!user.isEmpty() || !pass.isEmpty()) {
+            settings.remove(QStringLiteral("wp-pressreader-auth"));
+            qInfo() << "[vault] migrated PressReader credentials to Credential Manager";
+        }
+    }
+    {
         // Migrate API keys out of wp-config.apiKeys into the vault (once).
         const QJsonObject cfg = QJsonDocument::fromJson(
             settings.get(QStringLiteral("wp-config")).toString().toUtf8()).object();
@@ -114,7 +131,7 @@ int main(int argc, char* argv[])
     WeatherService weather(&settings, &http);
     WorkstationClient workstation;
     workstation.setActive(true);
-    StocksModel stocks(&settings, &http);
+    StocksModel stocks(&settings, &vault, &http);
     NewsService news(&settings, &http);
     MsGraphService msGraph(&settings, &http);
     LiveFeedService live(&http);
@@ -122,6 +139,8 @@ int main(int argc, char* argv[])
     StarvisService starvis(&settings, &vault, &http, &weather, &stocks, &news, &workstation);
     auto* cameraProvider = new CameraImageProvider(); // engine takes ownership
     CameraClient camera(&settings, &vault, cameraProvider);
+    DiagnosticsService diagnostics(&settings, &vault, &controller, &msGraph, &live,
+                                   &workstation, &camera, &starvis, &stocks);
 
     // Outlook unread count → AppBar pill badge (and any future overlay).
     QObject::connect(&msGraph, &MsGraphService::unreadCountChanged, &helper,
@@ -138,6 +157,7 @@ int main(int argc, char* argv[])
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Reader", &reader);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Starvis", &starvis);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Camera", &camera);
+    qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Diagnostics", &diagnostics);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Vault", &vault);
 
     SystemTheme systemTheme;

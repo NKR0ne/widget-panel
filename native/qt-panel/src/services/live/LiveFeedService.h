@@ -3,6 +3,7 @@
 #include <QHash>
 #include <QObject>
 #include <QSet>
+#include <QStringList>
 
 namespace qtpanel {
 
@@ -22,7 +23,13 @@ public:
     QString audioFeedId() const { return m_audioFeedId; }
 
     Q_INVOKABLE void resolve(const QString& feedId, bool force = false);
+    Q_INVOKABLE QStringList feedIds() const;
     Q_INVOKABLE QString title(const QString& feedId) const;
+    Q_INVOKABLE QString sourceLabel(const QString& feedId) const;
+    Q_INVOKABLE QString webUrl(const QString& feedId) const;
+    Q_INVOKABLE QString videoId(const QString& feedId) const;
+    Q_INVOKABLE QString embedUrl(const QString& feedId) const;
+    Q_INVOKABLE bool isYouTube(const QString& feedId) const;
     // Pass an empty id to mute everything.
     Q_INVOKABLE void requestAudio(const QString& feedId);
     // Player state breadcrumbs into the app log (diagnostics only).

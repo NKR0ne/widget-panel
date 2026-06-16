@@ -379,6 +379,33 @@ QVariantList NewsService::itemsFor(const QString& label) const
     return {};
 }
 
+QVariantList NewsService::feedLabelsFor(const QString& label) const
+{
+    QVariantList labels;
+    QSet<QString> seen;
+    for (const Category& category : m_categories) {
+        if (category.label != label)
+            continue;
+        for (const Feed& feed : category.feeds) {
+            QString name = TextFix::repairMojibake(feed.title.trimmed());
+            if (name.isEmpty())
+                name = hostname(feed.url);
+            if (name.isEmpty())
+                continue;
+            const QString key = name.toLower();
+            if (seen.contains(key))
+                continue;
+            seen.insert(key);
+            labels.append(QVariantMap{
+                {QStringLiteral("label"), name},
+                {QStringLiteral("url"), feed.url},
+            });
+        }
+        break;
+    }
+    return labels;
+}
+
 bool NewsService::isLoading(const QString& label) const
 {
     for (const Category& category : m_categories) {

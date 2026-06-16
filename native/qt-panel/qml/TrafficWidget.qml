@@ -38,6 +38,11 @@ GlassCard {
 
     // lon/lat → slippy tile x/y at the current zoom.
     readonly property int n: Math.pow(2, zoom)
+    readonly property real tileCenterX: (location.lon + 180) / 360 * n
+    readonly property real tileCenterY: {
+        const r = location.lat * Math.PI / 180
+        return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * n
+    }
     readonly property int tileX: Math.floor((location.lon + 180) / 360 * n)
     readonly property int tileY: {
         const r = location.lat * Math.PI / 180
@@ -45,6 +50,18 @@ GlassCard {
     }
 
     function setZoom(z) { Store.set("wp-traffic-zoom", Math.max(6, Math.min(15, z))) }
+    function lonFromTile(x) { return x / n * 360 - 180 }
+    function latFromTile(y) {
+        const v = Math.atan(Math.sinh(Math.PI * (1 - 2 * y / n)))
+        return Math.max(-85, Math.min(85, v * 180 / Math.PI))
+    }
+    function setCenter(lat, lon) {
+        Store.set("wp-location", JSON.stringify({
+            name: location.name || "Traffic",
+            lat: Math.max(-85, Math.min(85, lat)),
+            lon: Math.max(-180, Math.min(180, lon))
+        }))
+    }
 
     Column {
         id: body
@@ -92,31 +109,59 @@ GlassCard {
             clip: true
             visible: card.apiKey !== ""
 
-            Image {
-                id: baseTile
+            Item {
+                id: tileLayer
                 anchors.fill: parent
-                fillMode: Image.PreserveAspectCrop
-                asynchronous: true
-                cache: true
-                source: card.apiKey === "" ? "" :
-                    "https://api.tomtom.com/map/1/tile/basic/" + (card.night ? "night" : "main")
-                    + "/" + card.zoom + "/" + card.tileX + "/" + card.tileY
-                    + ".png?tileSize=512&key=" + card.apiKey
-            }
-            Image {
-                anchors.fill: parent
-                fillMode: Image.PreserveAspectCrop
-                asynchronous: true
-                cache: true
-                source: card.apiKey === "" ? "" :
-                    "https://api.tomtom.com/traffic/map/4/tile/flow/"
-                    + (card.night ? "relative0-dark" : "relative0")
-                    + "/" + card.zoom + "/" + card.tileX + "/" + card.tileY
-                    + ".png?tileSize=512&key=" + card.apiKey
+                readonly property real tileSize: Math.max(width, height)
+                readonly property int baseX: Math.floor(card.tileCenterX)
+                readonly property int baseY: Math.floor(card.tileCenterY)
+                readonly property real fracX: card.tileCenterX - baseX
+                readonly property real fracY: card.tileCenterY - baseY
+                readonly property var offsets: [
+                    { x: -1, y: -1 }, { x: 0, y: -1 }, { x: 1, y: -1 },
+                    { x: -1, y: 0 },  { x: 0, y: 0 },  { x: 1, y: 0 },
+                    { x: -1, y: 1 },  { x: 0, y: 1 },  { x: 1, y: 1 }
+                ]
+
+                Repeater {
+                    model: tileLayer.offsets
+                    delegate: Item {
+                        required property var modelData
+                        x: tileLayer.width / 2 + (modelData.x - tileLayer.fracX) * tileLayer.tileSize - tileLayer.tileSize / 2
+                        y: tileLayer.height / 2 + (modelData.y - tileLayer.fracY) * tileLayer.tileSize - tileLayer.tileSize / 2
+                        width: tileLayer.tileSize
+                        height: tileLayer.tileSize
+
+                        Image {
+                            anchors.fill: parent
+                            fillMode: Image.Stretch
+                            asynchronous: true
+                            cache: true
+                            source: card.apiKey === "" ? "" :
+                                "https://api.tomtom.com/map/1/tile/basic/" + (card.night ? "night" : "main")
+                                + "/" + card.zoom + "/" + ((tileLayer.baseX + modelData.x + card.n) % card.n)
+                                + "/" + Math.max(0, Math.min(card.n - 1, tileLayer.baseY + modelData.y))
+                                + ".png?tileSize=512&key=" + card.apiKey
+                        }
+                        Image {
+                            anchors.fill: parent
+                            fillMode: Image.Stretch
+                            asynchronous: true
+                            cache: true
+                            source: card.apiKey === "" ? "" :
+                                "https://api.tomtom.com/traffic/map/4/tile/flow/"
+                                + (card.night ? "relative0-dark" : "relative0")
+                                + "/" + card.zoom + "/" + ((tileLayer.baseX + modelData.x + card.n) % card.n)
+                                + "/" + Math.max(0, Math.min(card.n - 1, tileLayer.baseY + modelData.y))
+                                + ".png?tileSize=512&key=" + card.apiKey
+                        }
+                    }
+                }
             }
 
             // Zoom controls
             Column {
+                z: 2
                 anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.margins: 6
                 spacing: 4
                 Repeater {
@@ -135,10 +180,40 @@ GlassCard {
             }
 
             MouseArea {
+                id: panMouse
+                z: 1
                 anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: Panel.openIsland("https://www.google.com/maps/@"
-                    + card.location.lat + "," + card.location.lon + "," + card.zoom + "z/data=!5m1!1e1")
+                cursorShape: pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                property real startX: 0
+                property real startY: 0
+                property real startTileX: 0
+                property real startTileY: 0
+                property bool moved: false
+                onPressed: function(mouse) {
+                    startX = mouse.x
+                    startY = mouse.y
+                    startTileX = card.tileCenterX
+                    startTileY = card.tileCenterY
+                    moved = false
+                }
+                onPositionChanged: function(mouse) {
+                    if (!pressed)
+                        return
+                    const dx = mouse.x - startX
+                    const dy = mouse.y - startY
+                    if (Math.abs(dx) + Math.abs(dy) > 8)
+                        moved = true
+                    const tileSize = Math.max(width, height)
+                    const nextX = startTileX - dx / Math.max(1, tileSize)
+                    const nextY = startTileY - dy / Math.max(1, tileSize)
+                    card.setCenter(card.latFromTile(nextY), card.lonFromTile(nextX))
+                }
+                onReleased: function(mouse) {
+                    if (!moved) {
+                        Panel.openIsland("https://www.google.com/maps/@"
+                            + card.location.lat + "," + card.location.lon + "," + card.zoom + "z/data=!5m1!1e1")
+                    }
+                }
             }
         }
 

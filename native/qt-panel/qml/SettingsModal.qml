@@ -47,6 +47,47 @@ Item {
         }
         Store.set("wp-starvis-config", JSON.stringify(cfg))
     }
+    function cameraAuth() {
+        return parseJson(Store.get("wp-camera-auth", ""), {})
+    }
+    function cameraAuthValue(key, fallback) {
+        const auth = cameraAuth()
+        const value = auth[key]
+        return value === undefined || value === null || value === "" ? fallback : String(value)
+    }
+    function setCameraAuthValue(key, value) {
+        const auth = cameraAuth()
+        auth[key] = value
+        Store.set("wp-camera-auth", JSON.stringify(auth))
+    }
+    function clearCameraAuth() {
+        Store.set("wp-camera-auth", "")
+        Vault.remove("camera-password")
+    }
+    function clearTradingView() {
+        const keys = [
+            "wp-tv-session", "wp-tv-cookies", "wp-tv-csrf", "wp-tv-user",
+            "wp-tv-raw-lists", "wp-tv-watchlist-ids", "wp-tv-lists-cache",
+            "wp-tv-lists-cache-at", "wp-tv-capture-status"
+        ]
+        for (const key of keys)
+            Store.set(key, "")
+    }
+    function pressReaderUrl() {
+        return Store.get("wp-pressreader-url",
+                         "https://www.pressreader.com.ezproxy.bibliothequedequebec.qc.ca/fr/catalog/featured")
+    }
+    function diagColor(state) {
+        if (state === "ok")
+            return "#34d399"
+        if (state === "warn")
+            return "#fbbf24"
+        if (state === "error")
+            return "#f87171"
+        if (state === "setup")
+            return "#60a5fa"
+        return Theme.accent
+    }
 
     property int baseColumnsDraft: 6
     property bool autostartDraft: false
@@ -260,6 +301,7 @@ Item {
                 Rectangle {
                     property string vaultKey: ""
                     property string placeholder: ""
+                    property bool secret: true
                     width: sheet.width; height: 28; radius: 6
                     color: Qt.rgba(1,1,1,0.05)
                     border.color: kf.activeFocus ? Theme.accent : Theme.cardStroke
@@ -268,7 +310,7 @@ Item {
                         anchors.fill: parent; anchors.margins: 7
                         verticalAlignment: TextInput.AlignVCenter
                         color: Theme.textPrimary; font.pixelSize: 10; clip: true
-                        echoMode: activeFocus ? TextInput.Normal : TextInput.Password
+                        echoMode: parent.secret && !activeFocus ? TextInput.Password : TextInput.Normal
                         Component.onCompleted: text = Vault.get(parent.vaultKey)
                         onEditingFinished: Vault.set(parent.vaultKey, text)
                         Text {
@@ -283,6 +325,28 @@ Item {
             Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "finnhub-key"; item.placeholder = "Clé Finnhub (cotations)" } }
             Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "starvis-openai-key"; item.placeholder = "Cle OpenAI (Starvis)" } }
 
+            Component {
+                id: cameraUserField
+                Rectangle {
+                    width: sheet.width; height: 28; radius: 6
+                    color: Qt.rgba(1,1,1,0.05)
+                    border.color: cameraUserInput.activeFocus ? Theme.accent : Theme.cardStroke
+                    TextInput {
+                        id: cameraUserInput
+                        anchors.fill: parent; anchors.margins: 7
+                        verticalAlignment: TextInput.AlignVCenter
+                        color: Theme.textPrimary; font.pixelSize: 10; clip: true
+                        Component.onCompleted: text = modal.cameraAuthValue("u", "")
+                        onEditingFinished: modal.setCameraAuthValue("u", text.trim())
+                        Text {
+                            visible: cameraUserInput.text === "" && !cameraUserInput.activeFocus
+                            text: "Utilisateur XProtect"; color: Qt.rgba(1,1,1,0.25)
+                            font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                }
+            }
+
             Text {
                 text: "STARVIS"; color: Theme.textSecondary; font.pixelSize: 9
                 font.letterSpacing: 1; topPadding: 4
@@ -294,12 +358,274 @@ Item {
             Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "ttsVoice"; item.fallback = "alloy"; item.placeholder = "Voix TTS" } }
             Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-starvis-workspace"; item.fallback = ""; item.placeholder = "Racine workspace Starvis" } }
 
+            Row {
+                width: parent.width
+                spacing: 8
+                Text {
+                    text: "Execution des actions"
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSizeCaption
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                Item { width: parent.width - x - starvisExecToggle.width; height: 1 }
+                Rectangle {
+                    id: starvisExecToggle
+                    width: 34; height: 18; radius: 9
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: Starvis.executionEnabled ? Theme.accent : Qt.rgba(1,1,1,0.12)
+                    Rectangle {
+                        width: 14; height: 14; radius: 7; y: 2
+                        x: Starvis.executionEnabled ? parent.width - width - 2 : 2
+                        color: "#fff"
+                        Behavior on x { NumberAnimation { duration: Motion.fastMs } }
+                    }
+                    MouseArea {
+                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                        onClicked: Starvis.executionEnabled = !Starvis.executionEnabled
+                    }
+                }
+            }
+
             Text {
                 text: "CAMÉRA"; color: Theme.textSecondary; font.pixelSize: 9
                 font.letterSpacing: 1; topPadding: 4
             }
             Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-camera-url"; item.fallback = "https://securitycenter.local"; item.placeholder = "URL serveur XProtect" } }
+            Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-camera-direct-url"; item.fallback = "http://ipcam1.local/doc/page/preview.asp"; item.placeholder = "URL directe camera" } }
             Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-camera-id"; item.fallback = ""; item.placeholder = "GUID caméra par défaut" } }
+            Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-camera-name-hint"; item.fallback = "HikVision"; item.placeholder = "Indice nom caméra" } }
+            Text {
+                width: parent.width
+                text: Camera.discoveryStatus || Store.get("wp-camera-name", "")
+                visible: text !== ""
+                color: Theme.textSecondary
+                font.pixelSize: 10
+                elide: Text.ElideRight
+            }
+
+            Loader { sourceComponent: cameraUserField }
+            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "camera-password"; item.placeholder = "Mot de passe XProtect"; item.secret = true } }
+            Row {
+                id: cameraLoginTypeRow
+                width: parent.width
+                spacing: 4
+                property string selected: modal.cameraAuthValue("loginType", "auto")
+                function pick(value) {
+                    selected = value
+                    modal.setCameraAuthValue("loginType", value)
+                }
+                Repeater {
+                    model: [
+                        { label: "Auto", value: "auto" },
+                        { label: "Windows", value: "Windows" },
+                        { label: "Basic", value: "Basic" },
+                        { label: "SDK", value: "" }
+                    ]
+                    delegate: Rectangle {
+                        required property var modelData
+                        width: (cameraLoginTypeRow.width - 12) / 4
+                        height: 22
+                        radius: 5
+                        color: cameraLoginTypeRow.selected === modelData.value ? Theme.activeFill
+                             : loginTypeMouse.containsMouse ? Theme.hover : "transparent"
+                        border.color: cameraLoginTypeRow.selected === modelData.value ? Theme.accent : Theme.cardStroke
+                        Text {
+                            anchors.centerIn: parent
+                            text: modelData.label
+                            color: cameraLoginTypeRow.selected === modelData.value ? Theme.textPrimary : Theme.textSecondary
+                            font.pixelSize: 9
+                        }
+                        MouseArea {
+                            id: loginTypeMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: cameraLoginTypeRow.pick(modelData.value)
+                        }
+                    }
+                }
+            }
+            Row {
+                width: parent.width
+                spacing: 6
+                Rectangle {
+                    width: cameraDiscoverLabel.implicitWidth + 18; height: 24; radius: 6
+                    color: cameraDiscoverMouse.containsMouse ? Qt.rgba(0.31,0.56,0.97,0.28) : Qt.rgba(0.31,0.56,0.97,0.15)
+                    border.color: Qt.rgba(0.31,0.56,0.97,0.45)
+                    Text { id: cameraDiscoverLabel; anchors.centerIn: parent; text: "Découvrir"; color: Theme.textPrimary; font.pixelSize: 9 }
+                    MouseArea {
+                        id: cameraDiscoverMouse; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Camera.discoverCameras()
+                    }
+                }
+                Rectangle {
+                    width: cameraStartLabel.implicitWidth + 18; height: 24; radius: 6
+                    color: cameraStartMouse.containsMouse ? Qt.rgba(0.31,0.56,0.97,0.28) : Qt.rgba(0.31,0.56,0.97,0.15)
+                    border.color: Qt.rgba(0.31,0.56,0.97,0.45)
+                    Text { id: cameraStartLabel; anchors.centerIn: parent; text: "Reconnecter"; color: Theme.textPrimary; font.pixelSize: 9 }
+                    MouseArea {
+                        id: cameraStartMouse; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Camera.start()
+                    }
+                }
+                Rectangle {
+                    width: cameraForgetLabel.implicitWidth + 18; height: 24; radius: 6
+                    color: cameraForgetMouse.containsMouse ? Qt.rgba(0.97,0.45,0.45,0.22) : Qt.rgba(1,1,1,0.05)
+                    border.color: Qt.rgba(0.97,0.45,0.45,0.35)
+                    Text { id: cameraForgetLabel; anchors.centerIn: parent; text: "Oublier"; color: Theme.textSecondary; font.pixelSize: 9 }
+                    MouseArea {
+                        id: cameraForgetMouse; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: { modal.clearCameraAuth(); Camera.stop() }
+                    }
+                }
+                Rectangle {
+                    width: cameraDirectLabel.implicitWidth + 18; height: 24; radius: 6
+                    color: cameraDirectMouse.containsMouse ? Qt.rgba(0.31,0.56,0.97,0.28) : Qt.rgba(1,1,1,0.05)
+                    border.color: Theme.cardStroke
+                    Text { id: cameraDirectLabel; anchors.centerIn: parent; text: "Directe"; color: Theme.textSecondary; font.pixelSize: 9 }
+                    MouseArea {
+                        id: cameraDirectMouse; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Diagnostics.openDirectCamera()
+                    }
+                }
+            }
+
+            Text {
+                text: "PRESSREADER"; color: Theme.textSecondary; font.pixelSize: 9
+                font.letterSpacing: 1; topPadding: 4
+            }
+            Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-pressreader-url"; item.fallback = "https://www.pressreader.com.ezproxy.bibliothequedequebec.qc.ca/fr/catalog/featured"; item.placeholder = "URL catalogue PressReader" } }
+            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "pressreader-user"; item.placeholder = "Utilisateur PressReader"; item.secret = false } }
+            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "pressreader-password"; item.placeholder = "Mot de passe PressReader"; item.secret = true } }
+            Row {
+                width: parent.width
+                spacing: 6
+                Rectangle {
+                    width: pressOpenLabel.implicitWidth + 18; height: 24; radius: 6
+                    color: pressOpenMouse.containsMouse ? Qt.rgba(0.31,0.56,0.97,0.28) : Qt.rgba(0.31,0.56,0.97,0.15)
+                    border.color: Qt.rgba(0.31,0.56,0.97,0.45)
+                    Text { id: pressOpenLabel; anchors.centerIn: parent; text: "Ouvrir"; color: Theme.textPrimary; font.pixelSize: 9 }
+                    MouseArea {
+                        id: pressOpenMouse; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Panel.openIsland(modal.pressReaderUrl())
+                    }
+                }
+                Rectangle {
+                    width: pressForgetLabel.implicitWidth + 18; height: 24; radius: 6
+                    color: pressForgetMouse.containsMouse ? Qt.rgba(0.97,0.45,0.45,0.22) : Qt.rgba(1,1,1,0.05)
+                    border.color: Qt.rgba(0.97,0.45,0.45,0.35)
+                    Text { id: pressForgetLabel; anchors.centerIn: parent; text: "Oublier"; color: Theme.textSecondary; font.pixelSize: 9 }
+                    MouseArea {
+                        id: pressForgetMouse; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: { Vault.remove("pressreader-user"); Vault.remove("pressreader-password") }
+                    }
+                }
+            }
+
+            Text {
+                text: "TRADINGVIEW"; color: Theme.textSecondary; font.pixelSize: 9
+                font.letterSpacing: 1; topPadding: 4
+            }
+            Row {
+                id: marketProviderRow
+                width: parent.width
+                spacing: 4
+                property string selected: Store.get("wp-market-provider", "auto") || "auto"
+                function pick(value) {
+                    selected = value
+                    Store.set("wp-market-provider", value)
+                }
+                Repeater {
+                    model: [
+                        { label: "Auto", value: "auto" },
+                        { label: "Yahoo", value: "yahoo" },
+                        { label: "Finnhub", value: "finnhub" }
+                    ]
+                    delegate: Rectangle {
+                        required property var modelData
+                        width: (marketProviderRow.width - 8) / 3
+                        height: 22
+                        radius: 5
+                        color: marketProviderRow.selected === modelData.value ? Theme.activeFill
+                             : marketProviderMouse.containsMouse ? Theme.hover : "transparent"
+                        border.color: marketProviderRow.selected === modelData.value ? Theme.accent : Theme.cardStroke
+                        Text {
+                            anchors.centerIn: parent
+                            text: modelData.label
+                            color: marketProviderRow.selected === modelData.value ? Theme.textPrimary : Theme.textSecondary
+                            font.pixelSize: 9
+                        }
+                        MouseArea {
+                            id: marketProviderMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: marketProviderRow.pick(modelData.value)
+                        }
+                    }
+                }
+            }
+            Text {
+                width: parent.width
+                text: Store.get("wp-tv-capture-status", "") || (Store.get("wp-tv-user", "") !== "" ? ("Connecte: " + Store.get("wp-tv-user", "")) : "Session non connectee")
+                color: Theme.textSecondary
+                font.pixelSize: 10
+                elide: Text.ElideRight
+            }
+            Row {
+                width: parent.width
+                spacing: 6
+                Rectangle {
+                    width: tvSignInLabel.implicitWidth + 18; height: 24; radius: 6
+                    color: tvSignInMouse.containsMouse ? Qt.rgba(0.31,0.56,0.97,0.28) : Qt.rgba(0.31,0.56,0.97,0.15)
+                    border.color: Qt.rgba(0.31,0.56,0.97,0.45)
+                    Text { id: tvSignInLabel; anchors.centerIn: parent; text: "Connexion"; color: Theme.textPrimary; font.pixelSize: 9 }
+                    MouseArea {
+                        id: tvSignInMouse; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Panel.openIsland("https://www.tradingview.com/accounts/signin/")
+                    }
+                }
+                Rectangle {
+                    width: tvSyncLabel.implicitWidth + 18; height: 24; radius: 6
+                    color: tvSyncMouse.containsMouse ? Qt.rgba(0.31,0.56,0.97,0.28) : Qt.rgba(1,1,1,0.05)
+                    border.color: Theme.cardStroke
+                    Text { id: tvSyncLabel; anchors.centerIn: parent; text: "Sync"; color: Theme.textSecondary; font.pixelSize: 9 }
+                    MouseArea {
+                        id: tvSyncMouse; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Stocks.refreshWatchlists()
+                    }
+                }
+                Rectangle {
+                    width: tvCaptureLabel.implicitWidth + 18; height: 24; radius: 6
+                    color: tvCaptureMouse.containsMouse ? Qt.rgba(0.31,0.56,0.97,0.28) : Qt.rgba(1,1,1,0.05)
+                    border.color: Theme.cardStroke
+                    Text { id: tvCaptureLabel; anchors.centerIn: parent; text: "Capture"; color: Theme.textSecondary; font.pixelSize: 9 }
+                    MouseArea {
+                        id: tvCaptureMouse; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Panel.captureTradingViewSession()
+                    }
+                }
+                Rectangle {
+                    width: tvForgetLabel.implicitWidth + 18; height: 24; radius: 6
+                    color: tvForgetMouse.containsMouse ? Qt.rgba(0.97,0.45,0.45,0.22) : Qt.rgba(1,1,1,0.05)
+                    border.color: Qt.rgba(0.97,0.45,0.45,0.35)
+                    Text { id: tvForgetLabel; anchors.centerIn: parent; text: "Oublier"; color: Theme.textSecondary; font.pixelSize: 9 }
+                    MouseArea {
+                        id: tvForgetMouse; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: modal.clearTradingView()
+                    }
+                }
+            }
 
             Text {
                 text: "MICROSOFT"; color: Theme.textSecondary; font.pixelSize: 9
@@ -324,7 +650,91 @@ Item {
                 }
             }
 
-            // ── News carousel ─────────────────────────────────────────
+            // Runtime validation
+            Text {
+                text: "VALIDATION"; color: Theme.textSecondary; font.pixelSize: 9
+                font.letterSpacing: 1; topPadding: 4
+            }
+            Row {
+                width: parent.width
+                spacing: 6
+                Rectangle {
+                    width: diagRunLabel.implicitWidth + 18; height: 24; radius: 6
+                    color: diagRunMouse.containsMouse ? Qt.rgba(0.31,0.56,0.97,0.28) : Qt.rgba(0.31,0.56,0.97,0.15)
+                    border.color: Qt.rgba(0.31,0.56,0.97,0.45)
+                    Text { id: diagRunLabel; anchors.centerIn: parent; text: Diagnostics.running ? "..." : "Preflight"; color: Theme.textPrimary; font.pixelSize: 9 }
+                    MouseArea {
+                        id: diagRunMouse; anchors.fill: parent; hoverEnabled: true
+                        enabled: !Diagnostics.running
+                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: Diagnostics.runPreflight()
+                    }
+                }
+                Rectangle {
+                    width: diagShellLabel.implicitWidth + 18; height: 24; radius: 6
+                    color: diagShellMouse.containsMouse ? Qt.rgba(0.31,0.56,0.97,0.28) : Qt.rgba(1,1,1,0.05)
+                    border.color: Theme.cardStroke
+                    Text { id: diagShellLabel; anchors.centerIn: parent; text: "Island"; color: Theme.textSecondary; font.pixelSize: 9 }
+                    MouseArea {
+                        id: diagShellMouse; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Diagnostics.probeShellIsland()
+                    }
+                }
+                Rectangle {
+                    width: diagPressLabel.implicitWidth + 18; height: 24; radius: 6
+                    color: diagPressMouse.containsMouse ? Qt.rgba(0.31,0.56,0.97,0.28) : Qt.rgba(1,1,1,0.05)
+                    border.color: Theme.cardStroke
+                    Text { id: diagPressLabel; anchors.centerIn: parent; text: "PressReader"; color: Theme.textSecondary; font.pixelSize: 9 }
+                    MouseArea {
+                        id: diagPressMouse; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Diagnostics.openPressReader()
+                    }
+                }
+            }
+            Text {
+                width: parent.width
+                text: Diagnostics.status
+                color: Diagnostics.running ? Theme.accent : Theme.textSecondary
+                font.pixelSize: 10
+                elide: Text.ElideRight
+            }
+            Column {
+                width: parent.width
+                spacing: 4
+                Repeater {
+                    model: Diagnostics.rows
+                    delegate: Row {
+                        required property var modelData
+                        width: parent.width
+                        height: Math.max(24, diagDetail.implicitHeight)
+                        spacing: 6
+                        Rectangle {
+                            width: 7; height: 7; radius: 3.5
+                            color: modal.diagColor(modelData.state)
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        Text {
+                            width: 72
+                            text: modelData.label
+                            color: Theme.textPrimary
+                            font.pixelSize: 9
+                            elide: Text.ElideRight
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        Text {
+                            id: diagDetail
+                            width: Math.max(40, parent.width - 85)
+                            text: modelData.detail
+                            color: Theme.textSecondary
+                            font.pixelSize: 9
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                }
+            }
+
             Row {
                 width: parent.width
                 spacing: 8
@@ -336,7 +746,8 @@ Item {
                 Item { width: parent.width - x - carToggle.width; height: 1 }
                 Rectangle {
                     id: carToggle
-                    property bool on: Store.get("wp-news-carousel", "") === true
+                    property bool on: Store.get("wp-news-carousel", "") === ""
+                                      || Store.get("wp-news-carousel", "") === true
                                       || Store.get("wp-news-carousel", "") === "1"
                                       || Store.get("wp-news-carousel", "") === "true"
                     anchors.verticalCenter: parent.verticalCenter
@@ -358,9 +769,9 @@ Item {
             Row {
                 width: parent.width
                 spacing: 8
-                property int intervalDraft: Math.max(2500, Math.min(60000, Number(Store.get("wp-news-carousel-ms", 8000)) || 8000))
+                property int intervalDraft: Math.max(20000, Math.min(60000, Number(Store.get("wp-news-carousel-ms", 20000)) || 20000))
                 function saveInterval(value) {
-                    intervalDraft = Math.max(2500, Math.min(60000, value))
+                    intervalDraft = Math.max(20000, Math.min(60000, value))
                     Store.set("wp-news-carousel-ms", intervalDraft)
                 }
                 Text {

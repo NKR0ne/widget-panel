@@ -11,14 +11,28 @@ Item {
     // base | news | monitor | live — drives both window width (Panel.fitMode)
     // and the column arrangement (PanelColumns).
     property string panelMode: "base"
+    property string modeSwitchError: ""
 
-    function switchMode(mode) {
-        if (panelMode === mode)
-            return
-        panelMode = mode
+    function fitCurrentWindowMode(mode) {
         let widths = {}
         try { widths = JSON.parse(Store.get("wp-col-widths", "{}")) } catch (e) {}
-        Panel.fitMode(mode, Number(Store.get("wp-base-columns", 6)) || 6, widths)
+        return Panel.fitMode(mode, Number(Store.get("wp-base-columns", 6)) || 6, widths)
+    }
+
+    function switchMode(mode) {
+        const targetMode = (panelMode === mode && mode !== "base") ? "base" : mode
+        if (panelMode === targetMode)
+            return
+        const previousMode = panelMode
+        if (Panel.islandOpen)
+            Panel.closeIsland()
+        panelMode = targetMode
+        modeSwitchError = ""
+        if (!fitCurrentWindowMode(targetMode)) {
+            panelMode = previousMode
+            fitCurrentWindowMode(previousMode)
+            modeSwitchError = "Mode indisponible"
+        }
     }
 
     // Resting x must NOT be bound to surface.width: the binding would fire on
@@ -172,10 +186,18 @@ Item {
                     }
                 }
 
+                Text {
+                    visible: surface.modeSwitchError !== ""
+                    text: surface.modeSwitchError
+                    color: "#fca5a5"
+                    font.pixelSize: 9
+                    elide: Text.ElideRight
+                }
+
                 Item { Layout.fillWidth: true }
                 IconButton {
                     glyph: ""   // GridView: manage widgets
-                    onClicked: manageModal.show()
+                    onClicked: manageModal.show(surface.panelMode)
                 }
                 IconButton {
                     glyph: ""   // Settings gear
@@ -216,14 +238,24 @@ Item {
         anchors.fill: parent
     }
 
+    NewsMatrixOverlay {
+        anchors.fill: parent
+    }
+
     SettingsModal {
         id: settingsModal
+        anchors.fill: parent
+    }
+
+    ManageWidgetsModal {
+        id: manageModal
         anchors.fill: parent
     }
 
     // Web island toolbar: occupies the area beside the panel while the
     // brave-host shell (a native HWND above us) shows the page below it.
     Rectangle {
+        id: islandChrome
         visible: Panel.islandOpen
         x: Panel.islandX
         width: parent.width - Panel.islandX
@@ -233,17 +265,28 @@ Item {
 
         Row {
             x: 12
+            width: parent.width - 24
             height: 42
             spacing: 8
 
             IconButton {
                 anchors.verticalCenter: parent.verticalCenter
+                glyph: ""   // ChevronLeft / Back
+                onClicked: Panel.backIsland()
+            }
+            IconButton {
+                anchors.verticalCenter: parent.verticalCenter
+                glyph: ""   // ChevronRight / Forward
+                onClicked: Panel.forwardIsland()
+            }
+            IconButton {
+                anchors.verticalCenter: parent.verticalCenter
                 glyph: ""   // Refresh
-                onClicked: Panel.navigateIsland(Panel.islandUrl)
+                onClicked: Panel.reloadIsland()
             }
             Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
-                width: Math.max(80, (Panel.islandOpen ? surface.width - Panel.islandX : 0) - 150)
+                width: Math.max(80, (Panel.islandOpen ? surface.width - Panel.islandX : 0) - 370)
                 height: 26
                 radius: 6
                 color: Qt.rgba(1, 1, 1, 0.06)
@@ -260,6 +303,31 @@ Item {
                     onAccepted: Panel.navigateIsland(text)
                 }
             }
+            Row {
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 5
+                width: 132
+                height: 26
+                Rectangle {
+                    width: 7
+                    height: 7
+                    radius: 3.5
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: Panel.islandError !== "" ? "#f87171"
+                         : Panel.islandLoading ? "#fbbf24" : "#34d399"
+                }
+                Text {
+                    width: parent.width - 12
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: Panel.islandError !== "" ? Panel.islandError
+                          : Panel.islandLoading ? Panel.islandStatus
+                          : Panel.islandTitle !== "" ? Panel.islandTitle
+                          : Panel.islandStatus !== "" ? Panel.islandStatus : "Ready"
+                    color: Panel.islandError !== "" ? "#fca5a5" : Theme.textSecondary
+                    font.pixelSize: 9
+                    elide: Text.ElideRight
+                }
+            }
             IconButton {
                 anchors.verticalCenter: parent.verticalCenter
                 glyph: ""  // OpenInNewWindow
@@ -272,6 +340,31 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 glyph: ""  // ChromeClose
                 onClicked: Panel.closeIsland()
+            }
+        }
+
+        Rectangle {
+            visible: Panel.islandLoading
+            x: 0
+            y: 40
+            width: parent.width
+            height: 2
+            color: Qt.rgba(1, 1, 1, 0.06)
+            clip: true
+            Rectangle {
+                id: islandLoadPulse
+                width: Math.max(64, islandChrome.width * 0.26)
+                height: parent.height
+                radius: 1
+                color: Theme.accent
+                NumberAnimation on x {
+                    running: Panel.islandLoading
+                    loops: Animation.Infinite
+                    from: -islandLoadPulse.width
+                    to: islandChrome.width
+                    duration: 950
+                    easing.type: Easing.InOutQuad
+                }
             }
         }
     }

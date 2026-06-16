@@ -339,6 +339,22 @@ void MsGraphService::signOut()
 
 void MsGraphService::graphGet(const QString& path, std::function<void(const QJsonDocument&)> onOk)
 {
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    const qint64 backoffUntil = m_graphBackoffUntil.value(path, 0);
+    if (backoffUntil > now) {
+        if (!m_graphRetryScheduled.contains(path)) {
+            m_graphRetryScheduled.insert(path);
+            const int delayMs = static_cast<int>(
+                qBound<qint64>(1000LL, backoffUntil - now, 5LL * 60LL * 1000LL));
+            QTimer::singleShot(delayMs, this, [this, path, onOk = std::move(onOk)]() mutable {
+                m_graphRetryScheduled.remove(path);
+                graphGet(path, std::move(onOk));
+            });
+        }
+        qInfo() << "[msgraph] GET" << path << "deferred by throttle backoff";
+        return;
+    }
+
     ensureToken([this, path, onOk = std::move(onOk)](const QString& token) {
         m_http->requestJsonAuth("GET", QUrl(QLatin1String(kGraphBase) + path), token, {}, this,
                                 [this, path, onOk](const QJsonDocument& doc, int status,
@@ -359,8 +375,22 @@ void MsGraphService::graphGet(const QString& path, std::function<void(const QJso
             }
             if (status >= 200 && status < 300)
                 onOk(doc);
-            else
+            else if (status == 429 || status == 503 || status == 504) {
+                constexpr int kGraphBackoffMs = 60000;
+                m_graphBackoffUntil.insert(path,
+                    QDateTime::currentMSecsSinceEpoch() + kGraphBackoffMs);
+                if (!m_graphRetryScheduled.contains(path)) {
+                    m_graphRetryScheduled.insert(path);
+                    QTimer::singleShot(kGraphBackoffMs, this, [this, path, onOk] {
+                        m_graphRetryScheduled.remove(path);
+                        graphGet(path, onOk);
+                    });
+                }
+                qWarning() << "[msgraph] GET" << path << "throttled/unavailable:" << status
+                           << error << "- retrying after" << kGraphBackoffMs << "ms";
+            } else {
                 qWarning() << "[msgraph] GET" << path << "failed:" << status << error;
+            }
         });
     });
 }

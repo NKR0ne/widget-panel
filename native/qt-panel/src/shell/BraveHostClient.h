@@ -25,11 +25,20 @@ public:
 
     void open(const QString& url, int physX, int physY, int physW, int physH);
     void navigate(const QString& url);
+    void reload();
+    void goBack();
+    void goForward();
+    void evaluate(const QString& script);
+    void requestState();
     void closeShell();
     void roundCorners(qulonglong hwnd);
+    void requestCookies();
 
 signals:
     void readyReceived();
+    void errorReceived(const QString& message);
+    void cookiesReceived(const QJsonObject& payload);
+    void stateReceived(const QJsonObject& payload);
 
 private:
     void spawnHelper();
@@ -43,6 +52,7 @@ private:
     QByteArray m_buffer;
     QProcess* m_helperProcess = nullptr;
     QJsonObject m_pendingOpen; // queued until brave-host connects
+    QString m_pendingEval;
 };
 
 } // namespace qtpanel

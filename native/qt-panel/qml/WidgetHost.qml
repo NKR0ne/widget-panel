@@ -14,6 +14,7 @@ Item {
     property var columns: null      // the PanelColumns root (for drop hit-test)
     property string widgetId: ""
     property bool dragEnabled: false
+    property bool titleDragEnabled: true
     property bool resizable: false  // media widgets opt in to manual height
     readonly property bool dragging: dragHandler.active
 
@@ -87,8 +88,8 @@ Item {
         anchors.top: parent.top
         anchors.margins: 4
         z: 2
-        visible: host.dragEnabled
-        opacity: host.dragging ? 1.0 : (gripHover.hovered || hostHover.hovered ? 0.85 : 0.0)
+        visible: false
+        opacity: 0
         color: host.dragging ? Theme.accent : Qt.rgba(0, 0, 0, 0.4)
         border.color: Theme.cardStroke
         Behavior on opacity { NumberAnimation { duration: Motion.fastMs } }
@@ -113,9 +114,34 @@ Item {
         HoverHandler { id: gripHover }
 
         DragHandler {
-            id: dragHandler
-            enabled: host.dragEnabled
+            id: unusedGripDragHandler
+            enabled: false
             target: null               // we drive the transform manually
+            dragThreshold: 4
+            onActiveChanged: {
+                if (!active && host.columns)
+                    host.columns.dropWidget(host.widgetId,
+                                            dragHandler.centroid.scenePosition.x,
+                                            dragHandler.centroid.scenePosition.y)
+            }
+        }
+    }
+
+    Item {
+        id: titleDragZone
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.leftMargin: 10
+        anchors.topMargin: 6
+        width: Math.min(parent.width * 0.34, 96)
+        height: 20
+        visible: host.dragEnabled && host.titleDragEnabled
+        z: 2
+
+        DragHandler {
+            id: dragHandler
+            enabled: titleDragZone.visible
+            target: null
             dragThreshold: 4
             onActiveChanged: {
                 if (!active && host.columns)
@@ -131,19 +157,19 @@ Item {
     // Bottom resize handle (media widgets). Drag to set a fixed card height.
     Rectangle {
         visible: host.resizable && (hostHover.hovered || resizeArea.pressed)
-        height: 5
-        radius: 2.5
-        anchors.left: parent.left
-        anchors.right: parent.right
+        width: 54
+        height: 4
+        radius: 2
+        anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
-        anchors.margins: 6
+        anchors.bottomMargin: 5
         color: resizeArea.pressed ? Theme.accent : Qt.rgba(1, 1, 1, 0.25)
         z: 3
 
         MouseArea {
             id: resizeArea
             anchors.fill: parent
-            anchors.margins: -5
+            anchors.margins: -3
             cursorShape: Qt.SizeVerCursor
             property real startY: 0
             property real startH: 0

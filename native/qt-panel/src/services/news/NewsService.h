@@ -28,6 +28,7 @@ public:
     QVariantList allCategories() const { return m_allCategoryLabels; }
 
     Q_INVOKABLE QVariantList itemsFor(const QString& label) const;
+    Q_INVOKABLE QVariantList feedLabelsFor(const QString& label) const;
     Q_INVOKABLE bool isLoading(const QString& label) const;
     Q_INVOKABLE void refresh();
     // Re-read wp-config (categories + activeIds) and refetch. Called when the

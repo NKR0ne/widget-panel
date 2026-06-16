@@ -92,7 +92,8 @@ void HttpClient::requestJsonAuth(const QByteArray& verb, const QUrl& url,
 {
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, QLatin1String(kUserAgent));
-    request.setRawHeader("Authorization", "Bearer " + bearerToken.toUtf8());
+    if (!bearerToken.isEmpty())
+        request.setRawHeader("Authorization", "Bearer " + bearerToken.toUtf8());
     if (!jsonBody.isEmpty())
         request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     for (const auto& header : extraHeaders)

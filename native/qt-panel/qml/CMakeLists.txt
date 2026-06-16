@@ -26,8 +26,10 @@ qt_add_qml_module(qtpanel_ui
         WorkstationWidget.qml
         LiveFeedWidget.qml
         NewsWidget.qml
+        NewsMatrixOverlay.qml
         StarvisWidget.qml
         CameraWidget.qml
+        DirectCameraWidget.qml
         PressReaderWidget.qml
         NewsStage3D.qml
         ReaderOverlay.qml

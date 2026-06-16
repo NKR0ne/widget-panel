@@ -26,6 +26,7 @@ qt_add_executable(qt-panel WIN32
     src/core/TextFix.h src/core/TextFix.cpp
     src/services/camera/CameraClient.h src/services/camera/CameraClient.cpp
     src/services/camera/XpCrypto.h src/services/camera/XpCrypto.cpp
+    src/services/diagnostics/DiagnosticsService.h src/services/diagnostics/DiagnosticsService.cpp
     src/services/live/LiveFeedService.h src/services/live/LiveFeedService.cpp
     src/services/msgraph/MsGraphService.h src/services/msgraph/MsGraphService.cpp
     src/services/news/NewsService.h src/services/news/NewsService.cpp

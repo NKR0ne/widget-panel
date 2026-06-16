@@ -3,6 +3,7 @@
 #include "core/TextFix.h"
 #include "core/SettingsStore.h"
 #include "services/news/NewsService.h"
+#include "services/reader/ReaderService.h"
 #include "shell/FocusPolicy.h"
 
 #include <QTemporaryDir>
@@ -96,6 +97,72 @@ private slots:
         QCOMPARE(items.size(), 1);
         QCOMPARE(items.first().toMap().value(QStringLiteral("link")).toString(),
                  QStringLiteral("https://example.com/b"));
+    }
+
+    void readerExtractsScoredArticle()
+    {
+        const QString html = QStringLiteral(
+            "<html><head>"
+            "<meta property=\"og:title\" content=\"Native Reader Works\">"
+            "<meta property=\"og:image\" content=\"/hero.jpg\">"
+            "<meta name=\"author\" content=\"Reporter Name\">"
+            "</head><body>"
+            "<nav><p>Subscribe to our newsletter and login.</p></nav>"
+            "<section class=\"post-content\">"
+            "<h2>A useful heading.</h2>"
+            "<p>The first real paragraph contains enough detail to look like a"
+            " readable article sentence with context and facts.</p>"
+            "<p>The second real paragraph continues the story with more than"
+            " enough text to survive the parser filters.</p>"
+            "<img data-src=\"/photo.jpg\">"
+            "<h3>Related Articles</h3>"
+            "<p>This related paragraph should not be included in the reader.</p>"
+            "</section>"
+            "</body></html>");
+
+        const QVariantMap article = ReaderService::extractArticleHtml(
+            html, QStringLiteral("https://example.com/news/story"));
+        const QVariantList paragraphs = article.value(QStringLiteral("paragraphs")).toList();
+        const QVariantList images = article.value(QStringLiteral("images")).toList();
+
+        QCOMPARE(article.value(QStringLiteral("title")).toString(),
+                 QStringLiteral("Native Reader Works"));
+        QCOMPARE(article.value(QStringLiteral("byline")).toString(),
+                 QStringLiteral("Reporter Name"));
+        QCOMPARE(article.value(QStringLiteral("image")).toString(),
+                 QStringLiteral("https://example.com/hero.jpg"));
+        QVERIFY(paragraphs.size() >= 2);
+        QVERIFY(paragraphs.first().toString().contains(QStringLiteral("first real paragraph")));
+        for (const QVariant& paragraph : paragraphs)
+            QVERIFY(!paragraph.toString().contains(QStringLiteral("related paragraph")));
+        QCOMPARE(images.first().toString(), QStringLiteral("https://example.com/hero.jpg"));
+        QVERIFY(images.contains(QVariant(QStringLiteral("https://example.com/photo.jpg"))));
+        QCOMPARE(article.value(QStringLiteral("fallbackUsed")).toBool(), false);
+    }
+
+    void readerFallsBackToReadableLines()
+    {
+        const QString html = QStringLiteral(
+            "<html><body>"
+            "<h1>Fallback Story</h1>"
+            "<div>By Reporter Name</div>"
+            "<div>This first fallback paragraph has enough sentence structure"
+            " and length to be treated as useful article text.</div>"
+            "<div>This second fallback paragraph adds more context and also"
+            " ends like a normal sentence.</div>"
+            "<div class=\"paywall\">Subscribe to continue reading.</div>"
+            "</body></html>");
+
+        const QVariantMap article = ReaderService::extractArticleHtml(
+            html, QStringLiteral("https://example.com/fallback"));
+        const QVariantList paragraphs = article.value(QStringLiteral("paragraphs")).toList();
+
+        QCOMPARE(article.value(QStringLiteral("title")).toString(),
+                 QStringLiteral("Fallback Story"));
+        QVERIFY(article.value(QStringLiteral("fallbackUsed")).toBool());
+        QVERIFY(article.value(QStringLiteral("paywall")).toBool());
+        QCOMPARE(paragraphs.size(), 2);
+        QVERIFY(paragraphs.first().toString().startsWith(QStringLiteral("This first fallback")));
     }
 };
 

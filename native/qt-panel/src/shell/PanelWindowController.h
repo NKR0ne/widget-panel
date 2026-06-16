@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QPointer>
+#include <QJsonObject>
 #include <QString>
 #include <QTimer>
 #include <QVariantMap>
@@ -29,6 +30,10 @@ class PanelWindowController : public QObject {
     Q_PROPERTY(bool islandOpen READ islandOpen NOTIFY islandChanged)
     Q_PROPERTY(QString islandUrl READ islandUrl NOTIFY islandChanged)
     Q_PROPERTY(int islandX READ islandX NOTIFY islandChanged)
+    Q_PROPERTY(bool islandLoading READ islandLoading NOTIFY islandChanged)
+    Q_PROPERTY(QString islandStatus READ islandStatus NOTIFY islandChanged)
+    Q_PROPERTY(QString islandError READ islandError NOTIFY islandChanged)
+    Q_PROPERTY(QString islandTitle READ islandTitle NOTIFY islandChanged)
 
 public:
     PanelWindowController(SettingsStore* settings, HelperServer* helper,
@@ -52,11 +57,16 @@ public:
     Q_INVOKABLE void endResize();
     // Port of the panel-fit-mode IPC: 'base' sizes to the visible columns,
     // stage modes (news/monitor/live) expand to the full work area.
-    Q_INVOKABLE void fitMode(const QString& mode, int baseColumnCount, const QVariantMap& colWidths);
+    Q_INVOKABLE bool fitMode(const QString& mode, int baseColumnCount, const QVariantMap& colWidths);
     // Web island: widens the window and parks the brave-host shell beside the
     // panel (port of openBraveInPanel / closeBraveInPanel).
     Q_INVOKABLE void openIsland(const QString& url);
     Q_INVOKABLE void navigateIsland(const QString& url);
+    Q_INVOKABLE void reloadIsland();
+    Q_INVOKABLE void backIsland();
+    Q_INVOKABLE void forwardIsland();
+    Q_INVOKABLE void runIslandScript(const QString& script);
+    Q_INVOKABLE void captureTradingViewSession();
     Q_INVOKABLE void closeIsland();
     // Settings surface (persists to the wp-* keys, applies live).
     Q_INVOKABLE double windowOpacity() const;
@@ -70,6 +80,10 @@ public:
     bool islandOpen() const { return m_islandOpen; }
     QString islandUrl() const { return m_islandUrl; }
     int islandX() const { return m_islandPanelWidth; }
+    bool islandLoading() const { return m_islandLoading; }
+    QString islandStatus() const { return m_islandStatus; }
+    QString islandError() const { return m_islandError; }
+    QString islandTitle() const { return m_islandTitle; }
 
 signals:
     void pinnedChanged();
@@ -86,6 +100,11 @@ private:
     void onResizeTick();
     void applyWorkArea();
     void notifyHelperHwnds();
+    void handleTradingViewCookies(const QJsonObject& payload);
+    void handleIslandState(const QJsonObject& payload);
+    void startIslandLoad(const QString& status);
+    void finishIslandLoad(const QString& status = QStringLiteral("Ready"));
+    void failIslandLoad(const QString& error);
     void setPanelVisibleState(bool visible);
     void resolveGraphicsApiName();
     double pinnedOpacity() const;
@@ -111,14 +130,21 @@ private:
     bool m_showAnimating = false;
     bool m_hiding = false;
     bool m_islandOpen = false;
+    bool m_islandLoading = false;
     QString m_islandUrl;
+    QString m_islandStatus;
+    QString m_islandError;
+    QString m_islandTitle;
     int m_islandPanelWidth = 0;
+    int m_islandRestoreWidth = 0;
     qint64 m_geometryLockUntil = 0;
     QString m_graphicsApiName = QStringLiteral("starting");
 
     QTimer m_hideFallback;
     QTimer m_resizeTimer;
     QTimer m_helperStateDelay;
+    QTimer m_islandReadyTimeout;
+    QTimer m_islandStatePoll;
     int m_resizeStartX = 0;
     int m_resizeStartW = 0;
 };
