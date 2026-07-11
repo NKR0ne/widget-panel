@@ -9,7 +9,8 @@
 
 param(
     [switch]$Quiet,
-    [switch]$SkipCompilerTools
+    [switch]$SkipCompilerTools,
+    [switch]$IncludeRuntimeHelpers
 )
 
 Set-StrictMode -Version Latest
@@ -19,10 +20,17 @@ $names = @(
     'cmake',
     'ninja',
     'nmake',
-    'qt-panel',
-    'taskbar-btn',
-    'brave-host'
+    'qt-panel'
 )
+
+# The Electron app uses the same helper binaries. Do not terminate them during
+# a normal Qt build; opt in only for a standalone Qt runtime reset.
+if ($IncludeRuntimeHelpers) {
+    $names += @(
+        'taskbar-btn',
+        'brave-host'
+    )
+}
 
 if (-not $SkipCompilerTools) {
     $names += @(

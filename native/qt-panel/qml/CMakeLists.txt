@@ -24,8 +24,11 @@ qt_add_qml_module(qtpanel_ui
         TrafficWidget.qml
         StocksWidget.qml
         WorkstationWidget.qml
+        MonitorStage.qml
         LiveFeedWidget.qml
+        LiveStage.qml
         NewsWidget.qml
+        NewsStage.qml
         NewsMatrixOverlay.qml
         StarvisWidget.qml
         CameraWidget.qml

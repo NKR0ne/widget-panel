@@ -18,10 +18,8 @@ class StocksModel;
 class WeatherService;
 class WorkstationClient;
 
-// Starvis v1: chat + briefing against the OpenAI Responses API, with the
-// local widget context bus (weather/stocks/news/workstation snapshots)
-// injected the way the Electron main process did. Agent mode and the action
-// approval queue are a later increment.
+// Native Starvis chat, briefing, speech, context injection, and gated agent
+// actions against the OpenAI Responses API.
 class StarvisService : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool configured READ configured NOTIFY configuredChanged)
@@ -29,6 +27,7 @@ class StarvisService : public QObject {
     Q_PROPERTY(bool speaking READ speaking NOTIFY speakingChanged)
     Q_PROPERTY(QString model READ model NOTIFY configuredChanged)
     Q_PROPERTY(QVariantList pendingActions READ pendingActions NOTIFY actionsChanged)
+    Q_PROPERTY(QVariantList recentActions READ recentActions NOTIFY actionsChanged)
     Q_PROPERTY(bool executionEnabled READ executionEnabled WRITE setExecutionEnabled NOTIFY executionEnabledChanged)
 
 public:
@@ -53,6 +52,7 @@ public:
     Q_INVOKABLE void stopSpeaking();
 
     QVariantList pendingActions() const;
+    QVariantList recentActions() const;
     bool executionEnabled() const;
     void setExecutionEnabled(bool enabled);
     Q_INVOKABLE void approveAction(const QString& id);

@@ -9,6 +9,14 @@ GlassCard {
     implicitHeight: body.implicitHeight + 24
 
     Component.onCompleted: if (Camera.configured) Camera.start()
+    Component.onDestruction: Camera.stop()
+
+    function forgetCredentials() {
+        Camera.forgetCredentials()
+        userInput.text = ""
+        passInput.text = ""
+        SoundFx.tap()
+    }
 
     Column {
         id: body
@@ -170,9 +178,60 @@ GlassCard {
             wrapMode: Text.WordWrap
         }
 
-        // Inline login form when no stored credentials (or after an error)
+        Row {
+            visible: Camera.configured && Camera.status === "error"
+            spacing: 6
+
+            Rectangle {
+                width: retryLabel.implicitWidth + 18
+                height: 26
+                radius: 6
+                color: retryMouse.containsMouse ? Theme.activeFill
+                                                : Qt.rgba(0.31, 0.56, 0.97, 0.15)
+                border.color: Qt.rgba(0.31, 0.56, 0.97, 0.4)
+                Text {
+                    id: retryLabel
+                    anchors.centerIn: parent
+                    text: "R\u00e9essayer"
+                    color: Theme.textPrimary
+                    font.pixelSize: Theme.fontSizeCaption
+                }
+                MouseArea {
+                    id: retryMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: Camera.start()
+                }
+            }
+            Rectangle {
+                width: forgetLabel.implicitWidth + 18
+                height: 26
+                radius: 6
+                color: forgetMouse.containsMouse
+                    ? Qt.rgba(0.97, 0.45, 0.45, 0.20) : "transparent"
+                border.color: Qt.rgba(0.97, 0.45, 0.45, 0.32)
+                Text {
+                    id: forgetLabel
+                    anchors.centerIn: parent
+                    text: "Oublier"
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSizeCaption
+                }
+                MouseArea {
+                    id: forgetMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: card.forgetCredentials()
+                }
+            }
+        }
+
+        // The login form never auto-submits and only appears after credentials
+        // are explicitly forgotten, avoiding repeated invalid-login attempts.
         Column {
-            visible: !Camera.configured || Camera.status === "error"
+            visible: !Camera.configured
             width: parent.width
             spacing: 6
 

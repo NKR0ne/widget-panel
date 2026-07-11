@@ -57,11 +57,20 @@ GlassCard {
     }
     function openCatalog() {
         Panel.openIsland(catalogUrl)
-        if (canAutomate())
+        if (canAutomate()) {
+            automationTimer.interval = 1800
             automationTimer.restart()
+        }
+    }
+    function openManual() {
+        setGuardrail(30, "manual login session")
+        Panel.openIsland(catalogUrl)
     }
     function runAutomation() {
-        if (!canAutomate())
+        if (!canAutomate() || !Panel.islandOpen)
+            return
+        const current = String(Panel.islandUrl || "").toLowerCase()
+        if (current.indexOf("pressreader") < 0 && current.indexOf("ezproxy") < 0)
             return
         Panel.runIslandScript(automationScript())
     }
@@ -97,7 +106,13 @@ GlassCard {
             "    try { el.click(); return true; } catch { return false; }",
             "  };",
             "  const controls = () => [...document.querySelectorAll('button, input[type=\"submit\"], input[type=\"button\"], input[type=\"image\"], a, [role=\"button\"]')].filter(visible);",
+            "  if (!window.__qtPressReaderInteractionTracker) {",
+            "    window.__qtPressReaderInteractionTracker = true;",
+            "    document.addEventListener('pointerdown', event => { if (event.isTrusted) window.__qtPressReaderUserClick = Date.now(); }, true);",
+            "  }",
+            "  const userIsInteracting = () => Date.now() - Number(window.__qtPressReaderUserClick || 0) < 15000;",
             "  const clickStartReading = () => {",
+            "    if (userIsInteracting()) return false;",
             "    const target = controls().find(el => /start reading|read now|commencer|lire maintenant|ouvrir la publication/i.test(label(el)));",
             "    if (!target) return false;",
             "    const key = [location.href, label(target), Math.round(target.getBoundingClientRect().top)].join('|');",
@@ -107,6 +122,7 @@ GlassCard {
             "    return clickElement(target);",
             "  };",
             "  const attemptLogin = () => {",
+            "    if (userIsInteracting()) return false;",
             "    if (!username || !passwordValue) return false;",
             "    const inputs = [...document.querySelectorAll('input')].filter(visible);",
             "    const password = inputs.find(input => (input.type || '').toLowerCase() === 'password' || /pass|mot|pin|nip|secret|code/.test(attr(input)));",
@@ -116,9 +132,13 @@ GlassCard {
             "    const pageText = [location.href, document.title || '', document.body?.innerText || '', attr(userInput), attr(password)].join(' ').slice(0, 5000);",
             "    if (!/pressreader|ezproxy|connexion|login|biblioth|library|mot de passe|password|usager|card|barcode|identifiant/i.test(pageText)) return false;",
             "    if (password.value && userInput.value === username) return true;",
+            "    const signature = [location.href, attr(userInput), attr(password)].join('|');",
+            "    const loginState = window.__qtPressReaderLogin || { signature: '', submittedAt: 0 };",
+            "    if (loginState.signature === signature && loginState.submittedAt > 0) return true;",
             "    setValue(userInput, username);",
             "    setValue(password, passwordValue);",
             "    const submit = controls().find(el => /connexion|connecter|se connecter|login|log in|sign in|submit|soumettre|valider|continue|continuer|ok/i.test(label(el))) || password.form?.querySelector('button[type=\"submit\"], input[type=\"submit\"], input[type=\"image\"]');",
+            "    window.__qtPressReaderLogin = { signature, submittedAt: Date.now() };",
             "    setTimeout(() => {",
             "      if (submit) clickElement(submit);",
             "      else if (password.form?.requestSubmit) password.form.requestSubmit();",
@@ -149,6 +169,31 @@ GlassCard {
         interval: 1800
         repeat: false
         onTriggered: card.runAutomation()
+    }
+
+    Timer {
+        interval: 30000
+        repeat: true
+        running: card.guardrailBlocked()
+        onTriggered: {
+            if (card.guardrailBlocked())
+                card.stateRev += 1
+            else
+                card.clearGuardrail()
+        }
+    }
+
+    Connections {
+        target: Panel
+        function onIslandChanged() {
+            if (!Panel.islandOpen || Panel.islandLoading || !card.canAutomate())
+                return
+            const current = String(Panel.islandUrl || "").toLowerCase()
+            if (current.indexOf("pressreader") < 0 && current.indexOf("ezproxy") < 0)
+                return
+            automationTimer.interval = 650
+            automationTimer.restart()
+        }
     }
 
     Connections {
@@ -262,6 +307,28 @@ GlassCard {
                         else
                             card.setGuardrail(10, "manual pause")
                     }
+                }
+            }
+            Rectangle {
+                width: manualLabel.implicitWidth + 18
+                height: 30
+                radius: 7
+                visible: card.hasSavedLogin
+                color: manualMouse.containsMouse ? Theme.hover : Qt.rgba(1, 1, 1, 0.05)
+                border.color: Theme.cardStroke
+                Text {
+                    id: manualLabel
+                    anchors.centerIn: parent
+                    text: "Manuel"
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSizeCaption
+                }
+                MouseArea {
+                    id: manualMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: card.openManual()
                 }
             }
         }

@@ -38,7 +38,7 @@ Item {
         { id: "clock", source: "ClockWidget.qml", column: "left", props: {} },
         { id: "weather", source: "WeatherWidget.qml", column: "left", props: {} },
         { id: "traffic", source: "TrafficWidget.qml", column: "left", props: {} },
-        { id: "stocks", source: "StocksWidget.qml", column: "left", props: {}, titleDrag: false },
+        { id: "stocks", source: "StocksWidget.qml", column: "left", props: {} },
         { id: "calendar", source: "CalendarWidget.qml", column: "mid", props: {} },
         { id: "agenda", source: "AgendaWidget.qml", column: "right", props: {}, resize: true },
         { id: "mail", source: "MailWidget.qml", column: "right", props: {}, resize: true },
@@ -118,8 +118,8 @@ Item {
     readonly property var savedColWidths: { storeRev; return parseStored("wp-col-widths", {}) }
     readonly property int baseColumnCount: {
         storeRev
-        const stored = Number(Store.get("wp-base-columns", 6))
-        return Math.max(3, Math.min(columnOrder.length, stored || 6))
+        const stored = Number(Store.get("wp-base-columns", 3))
+        return Math.max(3, Math.min(columnOrder.length, stored || 3))
     }
     readonly property var visibleColumns: {
         if (mode === "news" || mode === "live")
@@ -274,13 +274,35 @@ Item {
         return sortWidgets(result)
     }
 
+    Loader {
+        anchors.fill: parent
+        active: root.mode === "monitor"
+        visible: active
+        source: "MonitorStage.qml"
+    }
+
+    Loader {
+        anchors.fill: parent
+        active: root.mode === "news"
+        visible: active
+        source: "NewsStage.qml"
+    }
+
+    Loader {
+        anchors.fill: parent
+        active: root.mode === "live"
+        visible: active
+        source: "LiveStage.qml"
+    }
+
     RowLayout {
         id: rowLayout
         anchors.fill: parent
         spacing: 6
+        visible: root.mode === "base"
 
         Repeater {
-            model: root.visibleColumns
+            model: root.mode === "base" ? root.visibleColumns : []
 
             delegate: Flickable {
                 id: columnFlick

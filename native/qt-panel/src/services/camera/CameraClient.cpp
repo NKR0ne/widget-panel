@@ -229,6 +229,17 @@ void CameraClient::stop()
     m_videoId.clear();
 }
 
+void CameraClient::forgetCredentials()
+{
+    stop();
+    m_settings->remove(QStringLiteral("wp-camera-auth"));
+    m_vault->remove(QStringLiteral("camera-password"));
+    m_user.clear();
+    m_pass.clear();
+    m_loginType.clear();
+    setStatus(QStringLiteral("idle"));
+}
+
 void CameraClient::discoverCameras()
 {
     if (m_connectionId.isEmpty()) {

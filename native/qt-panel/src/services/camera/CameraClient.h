@@ -53,6 +53,7 @@ public:
     Q_INVOKABLE void start(const QString& user = {}, const QString& pass = {},
                            const QString& loginType = {});
     Q_INVOKABLE void stop();
+    Q_INVOKABLE void forgetCredentials();
     Q_INVOKABLE void discoverCameras();
 
 signals:

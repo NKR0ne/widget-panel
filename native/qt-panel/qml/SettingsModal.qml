@@ -9,7 +9,7 @@ Item {
     property bool open: false
 
     function show() {
-        baseColumnsDraft = Number(Store.get("wp-base-columns", 6)) || 6
+        baseColumnsDraft = Number(Store.get("wp-base-columns", 3)) || 3
         autostartDraft = Panel.autostart()
         open = true
         Panel.setModalOpen(true)
@@ -89,7 +89,7 @@ Item {
         return Theme.accent
     }
 
-    property int baseColumnsDraft: 6
+    property int baseColumnsDraft: 3
     property bool autostartDraft: false
 
     Component {

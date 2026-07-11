@@ -3,6 +3,7 @@
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File build.ps1                # release
 #   powershell -ExecutionPolicy Bypass -File build.ps1 -Config debug
+#   powershell -ExecutionPolicy Bypass -File build.ps1 -Reconfigure   # force CMake
 #   powershell -ExecutionPolicy Bypass -File build.ps1 -Deploy -Run
 #   powershell -ExecutionPolicy Bypass -File kill-build-processes.ps1  # cleanup only
 
@@ -11,10 +12,20 @@ param(
     [string]$Config = 'release',
     [string]$QtDir = 'C:\Qt\6.10.3\msvc2022_64',
     [ValidateSet('Ninja', 'NMake')]
-    [string]$Generator = 'Ninja',
-    [int]$BuildTimeoutSeconds = 180,
+    [string]$Generator = 'NMake',
+    [int]$BuildTimeoutSeconds = 600,
     [switch]$Deploy,
     [switch]$Run,
+    [switch]$NoHelper,
+    [string]$Profile = '',
+    [int]$ExitAfterMs = 0,
+    [ValidateSet('auto', 'vulkan', 'd3d11')]
+    [string]$Renderer = 'auto',
+    [ValidateSet('base', 'news', 'monitor', 'live')]
+    [string]$StartMode = 'base',
+    [switch]$DiagFitMode,
+    [switch]$Tests,
+    [switch]$Reconfigure,
     [switch]$SkipKill
 )
 
@@ -98,6 +109,7 @@ if (-not [string]::IsNullOrEmpty($initialPath)) {
 
 $VS_ROOT   = 'C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools'
 $CMAKE     = "$VS_ROOT\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+$CTEST     = "$VS_ROOT\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe"
 $NINJA_DIR = "$VS_ROOT\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja"
 $VCVARS    = "$VS_ROOT\VC\Auxiliary\Build\vcvars64.bat"
 $NMAKE     = Get-ChildItem -Path "$VS_ROOT\VC\Tools\MSVC" -Directory -ErrorAction SilentlyContinue |
@@ -106,7 +118,7 @@ $NMAKE     = Get-ChildItem -Path "$VS_ROOT\VC\Tools\MSVC" -Directory -ErrorActio
     Where-Object { Test-Path $_ } |
     Select-Object -First 1
 
-foreach ($tool in @($CMAKE, $VCVARS)) {
+foreach ($tool in @($CMAKE, $CTEST, $VCVARS)) {
     if (-not (Test-Path $tool)) { Write-Error "Not found: $tool" }
 }
 if ($Generator -eq 'Ninja' -and -not (Test-Path "$NINJA_DIR\ninja.exe")) {
@@ -174,24 +186,74 @@ if (Test-Path $cacheFile) {
     }
 }
 
-Write-Host 'Configuring...' -ForegroundColor Cyan
 $generatorName = if ($Generator -eq 'NMake') { 'NMake Makefiles' } else { 'Ninja' }
-Invoke-NativeCommand -FilePath $CMAKE -Arguments @(
-    '-S', $root,
-    '-B', $build,
-    '-G', $generatorName,
-    "-DCMAKE_BUILD_TYPE=$buildType",
-    "-DCMAKE_PREFIX_PATH=$qtPrefix"
-) -WorkingDirectory $root -TimeoutSeconds 90
+$testsValue = if ($Tests) { 'ON' } else { 'OFF' }
+$rootPrefix = $root -replace '\\', '/'
+$requiredCacheValues = @{
+    'CMAKE_BUILD_TYPE' = $buildType
+    'CMAKE_GENERATOR' = $generatorName
+    'CMAKE_HOME_DIRECTORY' = $rootPrefix
+    'CMAKE_PREFIX_PATH' = $qtPrefix
+    'QTPANEL_BUILD_TESTS' = $testsValue
+}
+$needsConfigure = $Reconfigure -or -not (Test-Path $cacheFile)
+if (-not $needsConfigure) {
+    $cacheText = Get-Content -Raw $cacheFile
+    foreach ($entry in $requiredCacheValues.GetEnumerator()) {
+        $pattern = '(?m)^{0}:[^=]*={1}\r?$' -f [regex]::Escape($entry.Key), [regex]::Escape($entry.Value)
+        if ($cacheText -notmatch $pattern) {
+            $needsConfigure = $true
+            Write-Host "CMake option changed: $($entry.Key)" -ForegroundColor Yellow
+            break
+        }
+    }
+}
 
-Write-Host 'Building...' -ForegroundColor Cyan
-if ($Generator -eq 'NMake') {
-    Invoke-NativeCommand -FilePath $NMAKE -Arguments @('/nologo') -WorkingDirectory $build -TimeoutSeconds $BuildTimeoutSeconds
+if ($needsConfigure) {
+    Write-Host 'Configuring...' -ForegroundColor Cyan
+    $configureArgs = @(
+        '-S', $root,
+        '-B', $build,
+        '-G', $generatorName,
+        "-DCMAKE_BUILD_TYPE=$buildType",
+        "-DCMAKE_PREFIX_PATH=$qtPrefix",
+        "-DQTPANEL_BUILD_TESTS=$testsValue"
+    )
+    Invoke-NativeCommand -FilePath $CMAKE -Arguments $configureArgs -WorkingDirectory $root -TimeoutSeconds 90
 } else {
-    Invoke-NativeCommand -FilePath $CMAKE -Arguments @('--build', $build) -WorkingDirectory $root -TimeoutSeconds $BuildTimeoutSeconds
+    Write-Host 'CMake configuration unchanged; reusing the existing build tree.' -ForegroundColor DarkGray
 }
 
 $exe = Join-Path $build 'qt-panel.exe'
+$appInputPaths = @(
+    (Join-Path $root 'src'),
+    (Join-Path $root 'qml'),
+    (Join-Path $root 'CMakeLists.txt')
+)
+$latestAppInput = Get-ChildItem -Path $appInputPaths -Recurse -File |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+$appNeedsBuild = $needsConfigure -or -not (Test-Path $exe) -or
+    ($latestAppInput -and $latestAppInput.LastWriteTime -gt (Get-Item $exe).LastWriteTime)
+
+if ($appNeedsBuild) {
+    Write-Host 'Building application...' -ForegroundColor Cyan
+    if ($Generator -eq 'NMake') {
+        Invoke-NativeCommand -FilePath $NMAKE -Arguments @('/nologo') -WorkingDirectory $build -TimeoutSeconds $BuildTimeoutSeconds
+    } else {
+        Invoke-NativeCommand -FilePath $CMAKE -Arguments @('--build', $build) -WorkingDirectory $root -TimeoutSeconds $BuildTimeoutSeconds
+    }
+} elseif ($Tests) {
+    Write-Host 'Application inputs unchanged; building tests only.' -ForegroundColor DarkGray
+    if ($Generator -eq 'NMake') {
+        Invoke-NativeCommand -FilePath $NMAKE -Arguments @('/nologo', 'qt-panel-tests') -WorkingDirectory $build -TimeoutSeconds $BuildTimeoutSeconds
+    } else {
+        Invoke-NativeCommand -FilePath $CMAKE -Arguments @('--build', $build, '--target', 'qt-panel-tests') -WorkingDirectory $root -TimeoutSeconds $BuildTimeoutSeconds
+    }
+} else {
+    Write-Host 'Application inputs unchanged; build is up to date.' -ForegroundColor DarkGray
+}
+
 if (-not (Test-Path $exe)) { Write-Error "Build succeeded but exe not at: $exe" }
 
 if ($Deploy) {
@@ -199,7 +261,36 @@ if ($Deploy) {
     Invoke-NativeCommand -FilePath "$QtDir\bin\windeployqt.exe" -Arguments @('--qmldir', (Join-Path $root 'qml'), $exe) -WorkingDirectory $root -TimeoutSeconds 120
 }
 
+if ($Tests) {
+    Write-Host 'Testing...' -ForegroundColor Cyan
+    Invoke-NativeCommand -FilePath $CTEST -Arguments @(
+        '--test-dir', $build,
+        '--output-on-failure',
+        '-C', $buildType
+    ) -WorkingDirectory $root -TimeoutSeconds 180
+}
+
 Write-Host ''
 Write-Host "qt-panel.exe ready: $exe" -ForegroundColor Green
 
-if ($Run) { & $exe }
+if ($Run) {
+    $launchArgs = @(
+        '-ExecutionPolicy', 'Bypass',
+        '-File', (Join-Path $root 'launch.ps1'),
+        '-Config', $Config,
+        '-Generator', $Generator,
+        '-QtDir', $QtDir,
+        '-Renderer', $Renderer,
+        '-StartMode', $StartMode
+    )
+    if ($NoHelper) { $launchArgs += '-NoHelper' }
+    if (-not [string]::IsNullOrWhiteSpace($Profile)) {
+        $launchArgs += @('-Profile', $Profile)
+    }
+    if ($ExitAfterMs -gt 0) {
+        $launchArgs += @('-ExitAfterMs', $ExitAfterMs)
+    }
+    if ($DiagFitMode) { $launchArgs += '-DiagFitMode' }
+    & powershell.exe @launchArgs
+    if ($LASTEXITCODE -ne 0) { Write-Error 'qt-panel launch failed' }
+}

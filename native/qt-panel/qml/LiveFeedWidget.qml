@@ -23,12 +23,8 @@ GlassCard {
     }
 
     function zoomUrl() {
-        if (card.youtube)
-            return Live.webUrl(card.feedId)
         const web = Live.webUrl(card.feedId)
-        if (web.indexOf("youtube.com/") >= 0 || web.indexOf("youtu.be/") >= 0)
-            return web
-        const src = card.hlsUrl || web
+        const src = card.hlsUrl || (card.youtube ? "" : web)
         if (!src)
             return web
         const html = "<!doctype html><html><head><meta charset='utf-8'>"
@@ -57,31 +53,21 @@ GlassCard {
     }
 
     function retryNow() {
-        if (card.youtube) {
-            card.openZoom()
-            return
-        }
         failed = false
-        statusText = "Resolution du flux..."
+        statusText = card.youtube ? "Resolution YouTube..." : "Resolution du flux..."
         retryTimer.stop()
         Live.resolve(feedId, true)
     }
 
     Component.onCompleted: {
-        if (card.youtube) {
-            card.failed = false
-            card.statusText = "YouTube page"
-        } else {
-            Live.resolve(feedId)
-        }
+        card.statusText = card.youtube ? "Resolution YouTube..." : "Resolution du flux..."
+        Live.resolve(feedId)
     }
 
     Connections {
         target: Live
         function onFeedResolved(id, hlsUrl) {
             if (id !== card.feedId)
-                return
-            if (card.youtube)
                 return
             card.failed = false
             card.hlsUrl = hlsUrl
@@ -92,8 +78,12 @@ GlassCard {
         function onFeedFailed(id, error) {
             if (id !== card.feedId)
                 return
-            if (card.youtube)
+            if (card.youtube) {
+                card.failed = false
+                card.hlsUrl = ""
+                card.statusText = "Lecture via navigateur"
                 return
+            }
             card.failed = true
             card.statusText = error || "Flux indisponible"
             retryTimer.start()
@@ -231,7 +221,7 @@ GlassCard {
             }
             Text {
                 id: speaker
-                visible: !card.youtube
+                visible: card.hlsUrl !== ""
                 text: Live.audioFeedId === card.feedId ? "" : ""  // Volume / Mute
                 font.family: "Segoe Fluent Icons"
                 font.pixelSize: 12
@@ -251,7 +241,7 @@ GlassCard {
             VideoOutput {
                 id: videoOut
                 anchors.fill: parent
-                visible: !card.youtube
+                visible: card.hlsUrl !== ""
                 fillMode: VideoOutput.PreserveAspectCrop
             }
 
@@ -260,24 +250,24 @@ GlassCard {
                 source: card.youtube && card.ytId !== "" ? "https://i.ytimg.com/vi/" + card.ytId + "/hqdefault.jpg" : ""
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true
-                visible: card.youtube && (card.ytId !== "")
+                visible: card.youtube && card.hlsUrl === "" && (card.ytId !== "")
                 opacity: 0.72
             }
 
             Rectangle {
                 anchors.fill: parent
-                visible: card.youtube
+                visible: card.youtube && card.hlsUrl === "" && !card.failed
                 color: Qt.rgba(0, 0, 0, 0.42)
             }
 
             Column {
                 anchors.centerIn: parent
-                visible: card.youtube
+                visible: card.youtube && card.hlsUrl === "" && !card.failed
                 z: 3
                 spacing: 8
                 Text {
                     width: videoFrame.width - 28
-                    text: "YouTube Live"
+                    text: card.statusText
                     color: Theme.textPrimary
                     font.pixelSize: Theme.fontSizeCaption
                     font.weight: Font.DemiBold
@@ -334,7 +324,7 @@ GlassCard {
 
             Text {
                 anchors.centerIn: parent
-                visible: !card.youtube && player.playbackState !== MediaPlayer.PlayingState && !card.failed
+                visible: card.hlsUrl === "" && !card.youtube && !card.failed
                 text: card.statusText
                 color: Theme.textSecondary
                 font.pixelSize: Theme.fontSizeCaption
@@ -407,9 +397,7 @@ GlassCard {
                 z: 1
                 cursorShape: Qt.PointingHandCursor
                 onClicked: {
-                    if (card.youtube) {
-                        card.openZoom()
-                    } else if (card.failed) {
+                    if (card.failed || card.hlsUrl === "") {
                         card.openZoom()
                     } else {
                         Live.requestAudio(Live.audioFeedId === card.feedId ? "" : card.feedId)

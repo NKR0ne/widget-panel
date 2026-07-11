@@ -17,19 +17,42 @@ Item {
     property bool titleDragEnabled: true
     property bool resizable: false  // media widgets opt in to manual height
     readonly property bool dragging: dragHandler.active
+    property int expandedRevision: 0
+    readonly property bool collapsed: {
+        expandedRevision
+        let state = {}
+        try { state = JSON.parse(Store.get("wp-expanded", "{}")) } catch (e) {}
+        return state[widgetId] === false
+    }
 
     width: parent ? parent.width : 0
     implicitHeight: loader.item ? loader.item.implicitHeight : 0
 
     // Manual height (persisted per widget) overrides content height when set.
     property real userHeight: Number(Store.get("wp-" + widgetId + "-height", 0)) || 0
-    height: (resizable && userHeight > 0) ? userHeight : implicitHeight
-    clip: resizable && userHeight > 0
+    height: collapsed ? 38 : ((resizable && userHeight > 0) ? userHeight : implicitHeight)
+    clip: collapsed || (resizable && userHeight > 0)
     z: dragging ? 1000 : 0
 
     // setSource (not a source binding) so initialProperties are applied
     // before the widget's Component.onCompleted runs.
     Component.onCompleted: loader.setSource(source, initialProperties)
+
+    function toggleCollapsed() {
+        let state = {}
+        try { state = JSON.parse(Store.get("wp-expanded", "{}")) } catch (e) {}
+        state[widgetId] = collapsed
+        Store.set("wp-expanded", JSON.stringify(state))
+        SoundFx.tap()
+    }
+
+    Connections {
+        target: Store
+        function onChanged(key) {
+            if (key === "wp-expanded")
+                host.expandedRevision++
+        }
+    }
 
     // While dragging, follow the pointer and tell the layout to unclip columns.
     transform: Translate {
@@ -46,6 +69,7 @@ Item {
         id: loader
         anchors.left: parent.left
         anchors.right: parent.right
+        height: host.resizable ? host.height : implicitHeight
         opacity: dragHandler.active ? 0.85 : 0
         scale: 0.97
 
@@ -137,6 +161,11 @@ Item {
         height: 20
         visible: host.dragEnabled && host.titleDragEnabled
         z: 2
+
+        TapHandler {
+            enabled: titleDragZone.visible
+            onTapped: if (!host.dragging) host.toggleCollapsed()
+        }
 
         DragHandler {
             id: dragHandler

@@ -260,6 +260,33 @@ GlassCard {
         return specs
     }
 
+    function graphWidth(index, availableWidth) {
+        if (kind === "cpu")
+            return index === 0 ? availableWidth : Math.max(88, (availableWidth - 15) / 4)
+        if (kind === "gpu")
+            return Math.max(132, (availableWidth - 5) / 2)
+        return availableWidth
+    }
+
+    function graphFlowHeight(availableWidth) {
+        const specs = graphSpecs()
+        let x = 0
+        let y = 0
+        let rowHeight = 0
+        for (let i = 0; i < specs.length; i++) {
+            const itemWidth = graphWidth(i, availableWidth)
+            const itemHeight = Math.max(26, Number(specs[i].height) || 42) + 22
+            if (x > 0 && x + itemWidth > availableWidth + 0.5) {
+                y += rowHeight + 5
+                x = 0
+                rowHeight = 0
+            }
+            x += itemWidth + 5
+            rowHeight = Math.max(rowHeight, itemHeight)
+        }
+        return specs.length > 0 ? y + rowHeight : 0
+    }
+
     function footerTiles() {
         if (kind === "cpu")
             return [
@@ -388,9 +415,14 @@ GlassCard {
             wrapMode: Text.WordWrap
         }
 
-        Column {
+        Flow {
+            id: graphFlow
             visible: Workstation.connected && card.tab === "graphs"
             width: parent.width
+            height: {
+                card.snapRev
+                return visible ? card.graphFlowHeight(width) : 0
+            }
             spacing: 5
 
             Repeater {
@@ -398,7 +430,8 @@ GlassCard {
                 delegate: Rectangle {
                     id: graph
                     required property var modelData
-                    width: parent.width
+                    required property int index
+                    width: card.graphWidth(index, graphFlow.width)
                     height: Math.max(26, Number(modelData.height) || 42) + 22
                     radius: 6
                     color: Qt.rgba(0.01, 0.03, 0.07, 0.28)

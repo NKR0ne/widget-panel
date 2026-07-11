@@ -1,11 +1,15 @@
 #include <QDir>
+#include <QCommandLineOption>
+#include <QCommandLineParser>
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QQmlApplicationEngine>
+#include <QQmlContext>
 #include <QQuickWindow>
+#include <QRegularExpression>
 #include <QSGRendererInterface>
 #include <QTimer>
 #include <QtQml>
@@ -35,6 +39,14 @@ using namespace qtpanel;
 
 namespace {
 const char kInstanceName[] = "qt-panel-single-instance";
+
+QString safeProfileName(QString value)
+{
+    value = value.trimmed();
+    value.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9._-]")),
+                  QStringLiteral("-"));
+    return value.left(64);
+}
 } // namespace
 
 int main(int argc, char* argv[])
@@ -43,15 +55,79 @@ int main(int argc, char* argv[])
     QGuiApplication::setOrganizationName(QStringLiteral("qt-panel"));
     QGuiApplication app(argc, argv);
 
+    QCommandLineParser parser;
+    parser.setApplicationDescription(QStringLiteral("Native Widget Panel"));
+    parser.addHelpOption();
+    const QCommandLineOption noHelperOption(
+        QStringLiteral("no-helper"),
+        QStringLiteral("Disable the taskbar helper listener and helper process."));
+    const QCommandLineOption profileOption(
+        QStringLiteral("profile"),
+        QStringLiteral("Use an isolated settings/log profile."),
+        QStringLiteral("name"));
+    const QCommandLineOption exitAfterOption(
+        QStringLiteral("exit-after-ms"),
+        QStringLiteral("Exit automatically after the given number of milliseconds."),
+        QStringLiteral("milliseconds"));
+    const QCommandLineOption diagFitModeOption(
+        QStringLiteral("diag-fitmode"),
+        QStringLiteral("Capture the built-in fit-mode diagnostic screenshots."));
+    const QCommandLineOption rendererOption(
+        QStringLiteral("renderer"),
+        QStringLiteral("Select auto, vulkan, or d3d11 rendering."),
+        QStringLiteral("backend"),
+        QStringLiteral("auto"));
+    const QCommandLineOption startModeOption(
+        QStringLiteral("start-mode"),
+        QStringLiteral("Open directly in base, news, monitor, or live mode."),
+        QStringLiteral("mode"),
+        QStringLiteral("base"));
+    parser.addOption(noHelperOption);
+    parser.addOption(profileOption);
+    parser.addOption(exitAfterOption);
+    parser.addOption(diagFitModeOption);
+    parser.addOption(rendererOption);
+    parser.addOption(startModeOption);
+    parser.process(app);
+
+    const QString startMode = parser.value(startModeOption).trimmed().toLower();
+    const QStringList validModes = {
+        QStringLiteral("base"), QStringLiteral("news"),
+        QStringLiteral("monitor"), QStringLiteral("live")
+    };
+    if (!validModes.contains(startMode)) {
+        qCritical() << "[startup] --start-mode must be base, news, monitor, or live";
+        return 5;
+    }
+
     const QString appData = QString::fromLocal8Bit(qgetenv("APPDATA"));
-    const QString dataDir = appData + QStringLiteral("/qt-panel");
+    const QString profile = safeProfileName(parser.value(profileOption));
+    QString dataDir = appData + QStringLiteral("/qt-panel");
+    if (!profile.isEmpty())
+        dataDir += QStringLiteral("/profiles/") + profile;
     QDir().mkpath(dataDir);
     initLogging(dataDir + QStringLiteral("/qt-panel.log"));
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, [] {
+        qInfo() << "[startup] exiting cleanly";
+    });
+    qInfo() << "[startup] profile="
+            << (profile.isEmpty() ? QStringLiteral("default") : profile)
+            << "dataDir=" << QDir::toNativeSeparators(dataDir);
+
+    bool exitAfterOk = false;
+    const int exitAfterMs = parser.value(exitAfterOption).toInt(&exitAfterOk);
+    if (parser.isSet(exitAfterOption) && (!exitAfterOk || exitAfterMs <= 0)) {
+        qCritical() << "[startup] --exit-after-ms must be a positive integer";
+        return 2;
+    }
 
     // Single instance: forward a toggle to the running panel and exit.
+    const QString instanceName = profile.isEmpty()
+        ? QString::fromLatin1(kInstanceName)
+        : QString::fromLatin1(kInstanceName) + QLatin1Char('-') + profile;
     {
         QLocalSocket probe;
-        probe.connectToServer(QLatin1String(kInstanceName));
+        probe.connectToServer(instanceName);
         if (probe.waitForConnected(250)) {
             probe.write("toggle\n");
             probe.waitForBytesWritten(250);
@@ -60,17 +136,37 @@ int main(int argc, char* argv[])
         }
     }
     QLocalServer instanceServer;
-    QLocalServer::removeServer(QLatin1String(kInstanceName));
-    instanceServer.listen(QLatin1String(kInstanceName));
+    QLocalServer::removeServer(instanceName);
+    if (!instanceServer.listen(instanceName)) {
+        qCritical() << "[startup] single-instance listener failed:"
+                    << instanceServer.errorString();
+        return 3;
+    }
 
-    // Renderer selection: prefer Vulkan; since Qt 6.5 the scene graph falls
-    // back to D3D11 automatically when Vulkan initialization fails. The API
-    // that actually won is surfaced in the panel header.
-    QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
-    qInfo() << "[render] requesting Vulkan (automatic D3D11 fallback)";
+    const QString renderer = parser.value(rendererOption).trimmed().toLower();
+    if (renderer == QLatin1String("vulkan")) {
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
+        qInfo() << "[render] forced Vulkan";
+    } else if (renderer == QLatin1String("d3d11")) {
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Direct3D11);
+        qInfo() << "[render] forced D3D11";
+    } else if (renderer == QLatin1String("auto")) {
+        // D3D11 is Qt's reliable Windows RHI backend and does not require a
+        // Vulkan SDK/runtime. Vulkan remains available as an explicit test.
+        QQuickWindow::setGraphicsApi(QSGRendererInterface::Direct3D11);
+        qInfo() << "[render] auto selected D3D11";
+    } else {
+        qCritical() << "[startup] --renderer must be auto, vulkan, or d3d11";
+        return 4;
+    }
 
     SettingsStore settings(dataDir + QStringLiteral("/settings.json"));
-    settings.importLegacyIfEmpty(appData + QStringLiteral("/widget-panel/config.json"));
+    if (profile.isEmpty())
+        settings.importLegacyIfEmpty(appData + QStringLiteral("/widget-panel/config.json"));
+    if (parser.isSet(diagFitModeOption)) {
+        settings.set(QStringLiteral("wp-pinned"), true);
+        settings.set(QStringLiteral("wp-pinned-opacity"), QStringLiteral("1"));
+    }
 
     // Move secrets out of plaintext settings into the Windows Credential
     // Manager (one-time; no-op once migrated). Camera password is split out of
@@ -130,7 +226,6 @@ int main(int argc, char* argv[])
     HttpClient http;
     WeatherService weather(&settings, &http);
     WorkstationClient workstation;
-    workstation.setActive(true);
     StocksModel stocks(&settings, &vault, &http);
     NewsService news(&settings, &http);
     MsGraphService msGraph(&settings, &http);
@@ -166,6 +261,7 @@ int main(int argc, char* argv[])
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "SoundFx", &soundFx);
 
     QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("StartupMode"), startMode);
     QmlNetworkFactory netFactory;
     engine.setNetworkAccessManagerFactory(&netFactory);
     engine.addImageProvider(QStringLiteral("camera"), cameraProvider);
@@ -183,6 +279,7 @@ int main(int argc, char* argv[])
         return 1;
     }
     controller.attach(window);
+    qInfo() << "[startup] QML root attached";
 
     QObject::connect(&instanceServer, &QLocalServer::newConnection, &controller, [&] {
         while (QLocalSocket* peer = instanceServer.nextPendingConnection()) {
@@ -191,12 +288,16 @@ int main(int argc, char* argv[])
         }
     });
 
-    const bool noHelper = app.arguments().contains(QStringLiteral("--no-helper"));
-    helper.start(!noHelper);
+    const bool noHelper = parser.isSet(noHelperOption);
+    if (noHelper) {
+        qInfo() << "[helper] disabled by --no-helper";
+    } else {
+        helper.start(true);
+    }
 
     // Temporary diagnostic: reproduce the settings-stepper column change and
     // dump scene grabs before/after to verify rendering survives the resize.
-    if (app.arguments().contains(QStringLiteral("--diag-fitmode"))) {
+    if (parser.isSet(diagFitModeOption) && startMode == QStringLiteral("base")) {
         QTimer::singleShot(5000, window, [window, &dataDir] {
             window->grabWindow().save(dataDir + QStringLiteral("/diag-before.png"));
             qInfo() << "[diag] before grab saved, window" << window->geometry();
@@ -217,9 +318,24 @@ int main(int argc, char* argv[])
             window->grabWindow().save(dataDir + QStringLiteral("/diag-wide.png"));
             qInfo() << "[diag] wide grab saved, window" << window->geometry();
         });
+    } else if (parser.isSet(diagFitModeOption)) {
+        const int captureDelayMs = startMode == QStringLiteral("live") ? 12000 : 5000;
+        QTimer::singleShot(captureDelayMs, window, [window, &dataDir, startMode] {
+            const QString path = dataDir + QStringLiteral("/diag-") + startMode
+                               + QStringLiteral(".png");
+            window->grabWindow().save(path);
+            qInfo() << "[diag]" << startMode << "grab saved, window" << window->geometry();
+        });
     }
 
     controller.showPanel();
+    if (startMode != QStringLiteral("base"))
+        controller.fitMode(startMode, 3, {});
+    qInfo() << "[startup] ready";
+    if (exitAfterOk) {
+        qInfo() << "[startup] bounded run; exiting after" << exitAfterMs << "ms";
+        QTimer::singleShot(exitAfterMs, &app, &QCoreApplication::quit);
+    }
     const int rc = app.exec();
     settings.flush();
     return rc;

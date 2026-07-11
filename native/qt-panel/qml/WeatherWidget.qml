@@ -3,8 +3,23 @@ import QtPanel.Native
 
 GlassCard {
     id: card
-    title: "Prévisions"
+    title: "Pr\u00e9visions"
     implicitHeight: body.implicitHeight + 24
+
+    property real dailyHeight: {
+        const stored = Number(Store.get("wp-weather-daily-height", 164))
+        return Math.max(110, Math.min(420, stored || 164))
+    }
+    property real resizeStartHeight: dailyHeight
+
+    function precipitationLabel(value) {
+        const amount = Number(value)
+        if (!isFinite(amount))
+            return "--"
+        if (amount <= 0)
+            return "0 mm"
+        return (amount >= 10 ? amount.toFixed(0) : amount.toFixed(1)) + " mm"
+    }
 
     Column {
         id: body
@@ -12,7 +27,7 @@ GlassCard {
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.margins: 12
-        spacing: 10
+        spacing: 8
 
         Text {
             text: Weather.locationName || card.title
@@ -25,6 +40,7 @@ GlassCard {
         }
 
         Row {
+            width: parent.width
             spacing: 10
             visible: Weather.ready
 
@@ -34,9 +50,9 @@ GlassCard {
                 anchors.verticalCenter: parent.verticalCenter
             }
             Column {
-                spacing: 0
+                spacing: 1
                 Text {
-                    text: Weather.ready ? Math.round(Weather.current.tempC) + "°" : "—"
+                    text: Math.round(Weather.current.tempC) + "\u00b0"
                     color: Theme.textPrimary
                     font.pixelSize: 30
                     font.weight: Font.Light
@@ -47,101 +63,276 @@ GlassCard {
                     font.pixelSize: Theme.fontSizeBody
                 }
             }
+            Item { width: Math.max(0, parent.width - 230); height: 1 }
+            Column {
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 2
+                Text {
+                    text: "Humidit\u00e9  " + Math.round(Weather.current.humidityPct) + "%"
+                    color: Theme.textSecondary
+                    font.pixelSize: 10
+                }
+                Text {
+                    text: "Vent  " + Math.round(Weather.current.windKmh) + " km/h"
+                    color: Theme.textSecondary
+                    font.pixelSize: 10
+                }
+            }
         }
 
         Text {
             visible: Weather.ready
-            text: Weather.ready
-                ? "Ressenti " + Math.round(Weather.current.apparentC) + "° · "
-                  + Math.round(Weather.current.humidityPct) + "% · "
-                  + Math.round(Weather.current.windKmh) + " km/h"
-                : ""
+            text: "Ressenti " + Math.round(Weather.current.apparentC) + "\u00b0"
             color: Theme.textSecondary
             font.pixelSize: Theme.fontSizeCaption
         }
 
         Text {
             visible: !Weather.ready
-            text: Weather.error ? "Météo indisponible" : "Chargement…"
-            color: Theme.textSecondary
+            text: Weather.error ? "M\u00e9t\u00e9o indisponible" : "Chargement..."
+            color: Weather.error ? "#fca5a5" : Theme.textSecondary
             font.pixelSize: Theme.fontSizeBody
         }
 
-        // Hourly strip (next 8 hours)
         Row {
             visible: Weather.ready && Weather.hourly.length > 0
             width: parent.width
-            spacing: 4
+            spacing: 2
 
             Repeater {
-                model: Weather.hourly.slice(0, 8)
-                delegate: Column {
+                model: Weather.hourly.slice(0, 6)
+                delegate: Rectangle {
                     required property var modelData
-                    width: (body.width - 7 * 4) / 8
-                    spacing: 2
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: modelData.hour
-                        color: Theme.textSecondary
-                        font.pixelSize: 9
-                    }
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: modelData.emoji
-                        font.pixelSize: 12
-                    }
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: Math.round(modelData.tempC) + "°"
-                        color: Theme.textPrimary
-                        font.pixelSize: 10
+                    required property int index
+                    width: (body.width - 10) / 6
+                    height: 53
+                    radius: 5
+                    color: index === 0 ? Qt.rgba(0.97, 0.79, 0.31, 0.10) : "transparent"
+
+                    Column {
+                        anchors.centerIn: parent
+                        spacing: 2
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: index === 0 ? "Maint." : modelData.hour
+                            color: index === 0 ? "#f7c94f" : Theme.textSecondary
+                            font.pixelSize: 8
+                        }
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: modelData.emoji
+                            font.pixelSize: 12
+                        }
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: Math.round(modelData.tempC) + "\u00b0"
+                            color: Theme.textPrimary
+                            font.pixelSize: 10
+                        }
                     }
                 }
             }
         }
 
-        // Daily rows (5 days)
-        Column {
+        Rectangle {
             visible: Weather.ready && Weather.daily.length > 0
             width: parent.width
-            spacing: 4
+            height: 25
+            color: Qt.rgba(0.12, 0.43, 1.0, 0.07)
+            border.color: Qt.rgba(1, 1, 1, 0.06)
 
-            Repeater {
-                model: Weather.daily
-                delegate: Row {
-                    required property var modelData
-                    width: parent.width
-                    spacing: 6
+            Row {
+                anchors.fill: parent
+                anchors.leftMargin: 2
+                anchors.rightMargin: 2
+                spacing: 2
+                property real usable: width - spacing * 5
 
-                    Text {
-                        width: 34
-                        text: modelData.day
-                        color: Theme.textSecondary
-                        font.pixelSize: Theme.fontSizeCaption
+                Repeater {
+                    model: [
+                        { text: "JOUR", ratio: 0.18, align: Text.AlignLeft },
+                        { text: "CIEL", ratio: 0.10, align: Text.AlignHCenter },
+                        { text: "MAX", ratio: 0.12, align: Text.AlignHCenter },
+                        { text: "PR\u00c9CIP.", ratio: 0.20, align: Text.AlignHCenter },
+                        { text: "VENT", ratio: 0.14, align: Text.AlignHCenter },
+                        { text: "MIN/MAX", ratio: 0.26, align: Text.AlignHCenter },
+                    ]
+                    delegate: Text {
+                        required property var modelData
+                        width: parent.usable * modelData.ratio
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: modelData.text
+                        color: Qt.rgba(0.96, 0.98, 1, 0.56)
+                        font.pixelSize: 7
+                        horizontalAlignment: modelData.align
+                        elide: Text.ElideRight
                     }
-                    Text {
-                        width: 18
-                        text: modelData.emoji
-                        font.pixelSize: 11
+                }
+            }
+        }
+
+        Flickable {
+            id: dailyFlick
+            visible: Weather.ready && Weather.daily.length > 0
+            width: parent.width
+            height: card.dailyHeight
+            contentHeight: dailyRows.height
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+
+            Column {
+                id: dailyRows
+                width: dailyFlick.width
+
+                Repeater {
+                    model: Weather.daily
+                    delegate: Item {
+                        required property var modelData
+                        required property int index
+                        width: dailyRows.width
+                        height: 32
+
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            height: 1
+                            color: Qt.rgba(1, 1, 1, 0.04)
+                        }
+
+                        Row {
+                            anchors.fill: parent
+                            anchors.leftMargin: 2
+                            anchors.rightMargin: 2
+                            spacing: 2
+                            property real usable: width - spacing * 5
+
+                            Column {
+                                width: parent.usable * 0.18
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 1
+                                Text {
+                                    text: modelData.day
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 9
+                                    elide: Text.ElideRight
+                                    width: parent.width
+                                }
+                                Text {
+                                    text: modelData.dateLabel
+                                    color: Theme.textSecondary
+                                    font.pixelSize: 8
+                                }
+                            }
+                            Text {
+                                width: parent.usable * 0.10
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: modelData.emoji
+                                font.pixelSize: 11
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                            Text {
+                                width: parent.usable * 0.12
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: Math.round(modelData.maxC) + "\u00b0"
+                                color: "#ff7169"
+                                font.pixelSize: 11
+                                horizontalAlignment: Text.AlignHCenter
+                            }
+                            Text {
+                                width: parent.usable * 0.20
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: card.precipitationLabel(modelData.precipMm)
+                                color: Number(modelData.precipMm) > 0 ? "#70a8ff" : Theme.textSecondary
+                                font.pixelSize: 8
+                                horizontalAlignment: Text.AlignHCenter
+                                elide: Text.ElideRight
+                            }
+                            Rectangle {
+                                width: parent.usable * 0.14
+                                height: 20
+                                radius: 10
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: Qt.rgba(1, 1, 1, 0.025)
+                                border.color: Number(modelData.windKmh) >= 25
+                                              ? Qt.rgba(0.97, 0.79, 0.31, 0.72)
+                                              : Qt.rgba(0.96, 0.98, 1, 0.28)
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: Math.round(Number(modelData.windKmh)) || "--"
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 8
+                                }
+                            }
+                            Item {
+                                width: parent.usable * 0.26
+                                height: 20
+                                anchors.verticalCenter: parent.verticalCenter
+                                Text {
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: Math.round(modelData.minC) + "\u00b0"
+                                    color: Theme.textSecondary
+                                    font.pixelSize: 7
+                                }
+                                Rectangle {
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.leftMargin: 15
+                                    anchors.rightMargin: 15
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    height: 3
+                                    radius: 2
+                                    gradient: Gradient {
+                                        orientation: Gradient.Horizontal
+                                        GradientStop { position: 0; color: "#4f8ef7" }
+                                        GradientStop { position: 1; color: "#f7c94f" }
+                                    }
+                                    opacity: 0.42
+                                }
+                                Text {
+                                    anchors.right: parent.right
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: Math.round(modelData.maxC) + "\u00b0"
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 7
+                                }
+                            }
+                        }
                     }
-                    Text {
-                        text: Math.round(modelData.minC) + "°"
-                        color: Theme.textSecondary
-                        font.pixelSize: Theme.fontSizeCaption
+                }
+            }
+        }
+
+        Item {
+            visible: Weather.ready && Weather.daily.length > 0
+            width: parent.width
+            height: 8
+
+            Rectangle {
+                width: 28
+                height: 2
+                radius: 1
+                anchors.centerIn: parent
+                color: Qt.rgba(1, 1, 1, resizeDrag.active ? 0.28 : 0.10)
+            }
+
+            DragHandler {
+                id: resizeDrag
+                target: null
+                xAxis.enabled: false
+                yAxis.enabled: true
+                onActiveChanged: {
+                    if (active) {
+                        card.resizeStartHeight = card.dailyHeight
+                    } else {
+                        Store.set("wp-weather-daily-height", String(Math.round(card.dailyHeight)))
                     }
-                    Text {
-                        text: Math.round(modelData.maxC) + "°"
-                        color: Theme.textPrimary
-                        font.pixelSize: Theme.fontSizeCaption
-                        font.weight: Font.DemiBold
-                    }
-                    Item { width: 4; height: 1 }
-                    Text {
-                        visible: Number(modelData.precipPct) >= 20
-                        text: Math.round(modelData.precipPct) + "%"
-                        color: "#6fb7ff"
-                        font.pixelSize: 10
-                    }
+                }
+                onActiveTranslationChanged: {
+                    if (active)
+                        card.dailyHeight = Math.max(110, Math.min(420,
+                            card.resizeStartHeight + activeTranslation.y))
                 }
             }
         }

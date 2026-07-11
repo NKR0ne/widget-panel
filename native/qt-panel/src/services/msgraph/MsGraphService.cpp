@@ -420,14 +420,25 @@ QString MsGraphService::selectedTodoListId() const
 void MsGraphService::toggleCalendar(const QString& id)
 {
     QStringList ids = selectedCalendarIds();
+    if (ids.isEmpty()) {
+        for (const QVariant& calendar : std::as_const(m_calendars)) {
+            const QString calendarId = calendar.toMap().value(QStringLiteral("id")).toString();
+            if (!calendarId.isEmpty())
+                ids.append(calendarId);
+        }
+    }
     if (ids.contains(id))
         ids.removeAll(id);
     else
         ids.append(id);
-    // Persist as a JSON array (Electron-compatible; ids contain commas/specials).
-    m_settings->set(QStringLiteral("wp-agenda-cal-ids"),
-                    QString::fromUtf8(QJsonDocument(QJsonArray::fromStringList(ids))
-                                          .toJson(QJsonDocument::Compact)));
+    if (ids.size() == m_calendars.size()) {
+        m_settings->remove(QStringLiteral("wp-agenda-cal-ids"));
+    } else {
+        // Persist as a JSON array (Electron-compatible; ids contain commas/specials).
+        m_settings->set(QStringLiteral("wp-agenda-cal-ids"),
+                        QString::fromUtf8(QJsonDocument(QJsonArray::fromStringList(ids))
+                                              .toJson(QJsonDocument::Compact)));
+    }
     emit calendarsChanged();
     fetchAgenda();
 }
@@ -477,9 +488,9 @@ void MsGraphService::fetchAgenda()
 {
     const QDateTime now = QDateTime::currentDateTime();
     const QString range = QStringLiteral("startDateTime=%1&endDateTime=%2")
-        .arg(now.toUTC().toString(Qt::ISODate), now.addDays(7).toUTC().toString(Qt::ISODate));
+        .arg(now.toUTC().toString(Qt::ISODate), now.addMonths(1).toUTC().toString(Qt::ISODate));
     const QString sel = QStringLiteral(
-        "&$select=subject,start,end,location,isAllDay,webLink&$orderby=start/dateTime&$top=25");
+        "&$select=subject,start,end,location,isAllDay,webLink&$orderby=start/dateTime&$top=200");
 
     const QStringList calIds = selectedCalendarIds();
     m_agendaAccum.clear();
@@ -501,12 +512,30 @@ void MsGraphService::fetchAgenda()
                      .value(QLatin1String("dateTime")).toString().left(19), Qt::ISODate);
             startDt.setTimeZone(QTimeZone::utc());
             const QDateTime local = startDt.toLocalTime();
+            QDateTime endDt = QDateTime::fromString(
+                event.value(QLatin1String("end")).toObject()
+                     .value(QLatin1String("dateTime")).toString().left(19), Qt::ISODate);
+            endDt.setTimeZone(QTimeZone::utc());
+            const int durationMinutes = qMax<qint64>(0, startDt.secsTo(endDt) / 60);
             const bool allDay = event.value(QLatin1String("isAllDay")).toBool();
+            const QDate today = QDate::currentDate();
+            QString dayLabel;
+            if (local.date() == today)
+                dayLabel = QStringLiteral("Aujourd'hui");
+            else if (local.date() == today.addDays(1))
+                dayLabel = QStringLiteral("Demain");
+            else
+                dayLabel = locale.toString(local.date(), QStringLiteral("dddd d MMM"));
             m_agendaAccum.append(QVariantMap{
                 {QStringLiteral("subject"), event.value(QLatin1String("subject")).toString()},
-                {QStringLiteral("day"), locale.toString(local.date(), QStringLiteral("ddd d MMM"))},
+                {QStringLiteral("day"), dayLabel},
+                {QStringLiteral("dateKey"), local.date().toString(Qt::ISODate)},
+                {QStringLiteral("dateLong"),
+                 locale.toString(local.date(), QStringLiteral("dddd d MMMM"))},
                 {QStringLiteral("time"), allDay ? QStringLiteral("Journée")
                                                 : local.toString(QStringLiteral("HH:mm"))},
+                {QStringLiteral("durationMinutes"), durationMinutes},
+                {QStringLiteral("allDay"), allDay},
                 {QStringLiteral("isToday"), local.date() == QDate::currentDate()},
                 {QStringLiteral("sortKey"), local.toMSecsSinceEpoch()},
                 {QStringLiteral("color"), color},
@@ -522,6 +551,14 @@ void MsGraphService::fetchAgenda()
             return a.toMap().value(QStringLiteral("sortKey")).toLongLong()
                  < b.toMap().value(QStringLiteral("sortKey")).toLongLong();
         });
+        QString previousDay;
+        for (QVariant& entry : m_agendaAccum) {
+            QVariantMap map = entry.toMap();
+            const QString dateKey = map.value(QStringLiteral("dateKey")).toString();
+            map.insert(QStringLiteral("showDayHeader"), dateKey != previousDay);
+            previousDay = dateKey;
+            entry = map;
+        }
         m_agendaEvents = m_agendaAccum;
         emit agendaChanged();
         qInfo() << "[msgraph] agenda:" << m_agendaEvents.size() << "events";
@@ -617,13 +654,19 @@ void MsGraphService::fetchTodo()
         const QJsonArray lists = doc.object().value(QLatin1String("value")).toArray();
         if (lists.isEmpty())
             return;
-        fetchTodoTasks(lists.first().toObject().value(QLatin1String("id")).toString());
+        const QString listId = lists.first().toObject().value(QLatin1String("id")).toString();
+        m_settings->set(QStringLiteral("wp-todo-list-id"), listId);
+        emit todoListsChanged();
+        fetchTodoTasks(listId);
     });
 }
 
 void MsGraphService::fetchTodoTasks(const QString& listId)
 {
-    graphGet(QStringLiteral("/me/todo/lists/%1/tasks?$top=40").arg(listId),
+    const QString encodedListId = QString::fromUtf8(QUrl::toPercentEncoding(listId));
+    graphGet(QStringLiteral("/me/todo/lists/%1/tasks?$filter=status ne 'completed'"
+                            "&$orderby=importance desc,createdDateTime&$top=20")
+                 .arg(encodedListId),
              [this, listId](const QJsonDocument& doc) {
         QVariantList tasks;
         const QJsonArray values = doc.object().value(QLatin1String("value")).toArray();
@@ -641,7 +684,7 @@ void MsGraphService::fetchTodoTasks(const QString& listId)
                 {QStringLiteral("important"),
                  task.value(QLatin1String("importance")).toString() == QLatin1String("high")},
             });
-            if (tasks.size() >= 12)
+            if (tasks.size() >= 20)
                 break;
         }
         m_todoTasks = tasks;
@@ -683,6 +726,48 @@ void MsGraphService::markMailRead(const QString& messageId)
     });
 }
 
+void MsGraphService::moveMail(const QString& messageId, const QString& destinationId)
+{
+    if (destinationId != QLatin1String("deleteditems")
+            && destinationId != QLatin1String("junkemail")) {
+        qWarning() << "[msgraph] rejected mail destination" << destinationId;
+        return;
+    }
+
+    for (int i = 0; i < m_mailMessages.size(); ++i) {
+        const QVariantMap map = m_mailMessages.at(i).toMap();
+        if (map.value(QStringLiteral("id")).toString() == messageId) {
+            m_mailMessages.removeAt(i);
+            break;
+        }
+    }
+    int unread = 0;
+    for (const QVariant& entry : std::as_const(m_mailMessages)) {
+        if (!entry.toMap().value(QStringLiteral("isRead")).toBool())
+            ++unread;
+    }
+    m_unreadCount = unread;
+    emit mailChanged();
+    emit unreadCountChanged();
+
+    ensureToken([this, messageId, destinationId](const QString& token) {
+        const QJsonObject body{{QStringLiteral("destinationId"), destinationId}};
+        const QByteArray encodedId = QUrl::toPercentEncoding(messageId);
+        m_http->requestJsonAuth(
+            "POST",
+            QUrl(QLatin1String(kGraphBase) + QStringLiteral("/me/messages/")
+                 + QString::fromUtf8(encodedId) + QStringLiteral("/move")),
+            token, QJsonDocument(body).toJson(QJsonDocument::Compact), this,
+            [this, destinationId](const QJsonDocument&, int status, const QString& error) {
+            if (status < 200 || status >= 300) {
+                qWarning() << "[msgraph] move mail failed:" << destinationId
+                           << status << error;
+                fetchMail();
+            }
+        });
+    });
+}
+
 void MsGraphService::completeTodoTask(const QString& taskId)
 {
     QString listId;
@@ -707,6 +792,59 @@ void MsGraphService::completeTodoTask(const QString& taskId)
             [](const QJsonDocument&, int status, const QString& error) {
             if (status < 200 || status >= 300)
                 qWarning() << "[msgraph] completeTask failed:" << status << error;
+        });
+    });
+}
+
+void MsGraphService::addTodoTask(const QString& title)
+{
+    const QString trimmed = title.trimmed();
+    const QString listId = selectedTodoListId();
+    if (trimmed.isEmpty() || listId.isEmpty())
+        return;
+
+    const QString temporaryId = QStringLiteral("tmp-%1")
+        .arg(QDateTime::currentMSecsSinceEpoch());
+    m_todoTasks.prepend(QVariantMap{
+        {QStringLiteral("id"), temporaryId},
+        {QStringLiteral("listId"), listId},
+        {QStringLiteral("title"), trimmed},
+        {QStringLiteral("due"), QString()},
+        {QStringLiteral("important"), false},
+    });
+    emit todoChanged();
+
+    ensureToken([this, listId, trimmed, temporaryId](const QString& token) {
+        const QString encodedListId = QString::fromUtf8(QUrl::toPercentEncoding(listId));
+        const QJsonObject body{{QStringLiteral("title"), trimmed}};
+        m_http->requestJsonAuth(
+            "POST",
+            QUrl(QLatin1String(kGraphBase)
+                 + QStringLiteral("/me/todo/lists/%1/tasks").arg(encodedListId)),
+            token, QJsonDocument(body).toJson(QJsonDocument::Compact), this,
+            [this, listId, trimmed, temporaryId](const QJsonDocument& doc, int status,
+                                                  const QString& error) {
+            for (int i = 0; i < m_todoTasks.size(); ++i) {
+                const QVariantMap current = m_todoTasks.at(i).toMap();
+                if (current.value(QStringLiteral("id")).toString() != temporaryId)
+                    continue;
+                if (status >= 200 && status < 300) {
+                    const QJsonObject task = doc.object();
+                    m_todoTasks[i] = QVariantMap{
+                        {QStringLiteral("id"), task.value(QLatin1String("id")).toString()},
+                        {QStringLiteral("listId"), listId},
+                        {QStringLiteral("title"),
+                         task.value(QLatin1String("title")).toString(trimmed)},
+                        {QStringLiteral("due"), QString()},
+                        {QStringLiteral("important"), false},
+                    };
+                } else {
+                    m_todoTasks.removeAt(i);
+                    qWarning() << "[msgraph] add task failed:" << status << error;
+                }
+                emit todoChanged();
+                return;
+            }
         });
     });
 }

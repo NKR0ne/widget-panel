@@ -12,6 +12,7 @@
 #include <QDir>
 #include <QHash>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
@@ -641,7 +642,19 @@ double PanelWindowController::pinnedOpacity() const
 
 int PanelWindowController::storedWidth() const
 {
-    return qMax(kMinPanelWidth, m_settings->getInt(QStringLiteral("wp-width"), 720));
+    QVariantMap colWidths;
+    const QVariant rawWidths = m_settings->get(QStringLiteral("wp-col-widths"));
+    if (rawWidths.canConvert<QVariantMap>()) {
+        colWidths = rawWidths.toMap();
+    } else {
+        const QJsonDocument doc = QJsonDocument::fromJson(rawWidths.toString().toUtf8());
+        if (doc.isObject())
+            colWidths = doc.object().toVariantMap();
+    }
+    const int columns = m_settings->getInt(QStringLiteral("wp-base-columns"), 3);
+    const int layoutMinimum = basePanelWidth(columns, colWidths);
+    const int stored = m_settings->getInt(QStringLiteral("wp-width"), layoutMinimum);
+    return qMax(layoutMinimum, qMax(kMinPanelWidth, stored));
 }
 
 int PanelWindowController::fullPanelWidth() const

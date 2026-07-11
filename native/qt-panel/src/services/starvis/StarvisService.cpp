@@ -32,7 +32,7 @@ namespace {
 const char kDefaultModel[] = "gpt-5.5";
 const char kDefaultBaseUrl[] = "https://api.openai.com/v1";
 
-// STARVIS_SYSTEM_PROMPT from main.js, agent-mode lines omitted (no agent yet).
+// STARVIS_SYSTEM_PROMPT from main.js; native agent tools are appended per request.
 const char kSystemPrompt[] =
     "You are Starvis, an embedded assistant inside the Widget Panel desktop app.\n"
     "Default behavior is ChatGPT-like: answer naturally, reason clearly, and adapt to the user. "
@@ -545,7 +545,8 @@ bool StarvisService::resolveInWorkspace(const QString& rel, QString& absOut) con
     const QDir root(workspaceRoot());
     const QString abs = QDir::cleanPath(root.absoluteFilePath(rel.isEmpty() ? QStringLiteral(".") : rel));
     const QString rootAbs = QDir::cleanPath(root.absolutePath());
-    if (!abs.startsWith(rootAbs))
+    if (abs.compare(rootAbs, Qt::CaseInsensitive) != 0
+        && !abs.startsWith(rootAbs + QLatin1Char('/'), Qt::CaseInsensitive))
         return false; // path traversal guard
     // Skip noisy/ignored dirs.
     static const QStringList ignore = {QStringLiteral("/.git/"), QStringLiteral("/node_modules/"),
@@ -670,23 +671,68 @@ QVariantMap StarvisService::evaluatePolicy(const QVariantMap& action) const
                 return blocked(QStringLiteral("Mutating git must use a dedicated action type."));
             return allowed(QStringLiteral("Read-only git command."));
         }
+        if (cmd == QLatin1String("node")) {
+            QString script;
+            if (args.isEmpty() || !resolveInWorkspace(args.first(), script))
+                return blocked(QStringLiteral("Node command needs a workspace script."));
+            static const QStringList scriptSuffixes = {
+                QStringLiteral("js"), QStringLiteral("mjs"), QStringLiteral("cjs")};
+            if (!scriptSuffixes.contains(QFileInfo(script).suffix().toLower()))
+                return blocked(QStringLiteral("Node command only allows JavaScript files."));
+            return allowed(QStringLiteral("Node workspace script after approval."));
+        }
         return allowed(QStringLiteral("Node workspace script — review before approving."));
     }
     if (type == QLatin1String("file_edit")) {
         QString abs;
         if (!resolveInWorkspace(action.value(QStringLiteral("path")).toString(), abs))
             return blocked(QStringLiteral("File path is outside the workspace or ignored."));
+        static const QStringList protectedNames = {
+            QStringLiteral(".env"), QStringLiteral("credentials.json"),
+            QStringLiteral("id_rsa"), QStringLiteral("id_ed25519")};
+        static const QStringList protectedSuffixes = {
+            QStringLiteral("exe"), QStringLiteral("dll"), QStringLiteral("pfx"),
+            QStringLiteral("p12"), QStringLiteral("pem"), QStringLiteral("key"),
+            QStringLiteral("db"), QStringLiteral("sqlite")};
+        const QFileInfo target(abs);
+        if (protectedNames.contains(target.fileName().toLower())
+            || protectedSuffixes.contains(target.suffix().toLower()))
+            return blocked(QStringLiteral("File edit targets a protected or binary file."));
         const QString content = action.value(QStringLiteral("content")).toString();
         if (content.isEmpty()) return blocked(QStringLiteral("Missing replacement content."));
+        if (content.contains(QChar::Null)) return blocked(QStringLiteral("Content appears binary."));
         if (content.size() > 200000) return blocked(QStringLiteral("Content too large."));
         return allowed(QStringLiteral("Text file write after approval."));
     }
-    if (type == QLatin1String("git_commit"))
+    if (type == QLatin1String("git_commit")) {
+        if (action.value(QStringLiteral("message")).toString().trimmed().isEmpty())
+            return blocked(QStringLiteral("Git commit is missing a message."));
+        const QStringList paths = action.value(QStringLiteral("args")).toStringList();
+        if (paths.isEmpty())
+            return blocked(QStringLiteral("Git commit needs explicit workspace paths."));
+        for (const QString& path : paths) {
+            QString abs;
+            if (!resolveInWorkspace(path, abs))
+                return blocked(QStringLiteral("Git commit path is not allowed: %1").arg(path));
+            static const QStringList protectedSuffixes = {
+                QStringLiteral("pfx"), QStringLiteral("p12"), QStringLiteral("pem"),
+                QStringLiteral("key"), QStringLiteral("db"), QStringLiteral("sqlite")};
+            const QFileInfo target(abs);
+            if (target.fileName().compare(QStringLiteral(".env"), Qt::CaseInsensitive) == 0
+                || protectedSuffixes.contains(target.suffix().toLower()))
+                return blocked(QStringLiteral("Git commit path is protected: %1").arg(path));
+        }
         return allowed(QStringLiteral("Git commit after approval."));
-    if (type == QLatin1String("git_push"))
+    }
+    if (type == QLatin1String("git_push")) {
+        const QStringList args = action.value(QStringLiteral("args")).toStringList();
+        if (std::any_of(args.begin(), args.end(), hasUnsafe))
+            return blocked(QStringLiteral("Git push target contains unsafe characters."));
         return QVariantMap{{QStringLiteral("allowed"), true},
                            {QStringLiteral("reason"), QStringLiteral("Git push needs two approvals.")},
-                           {QStringLiteral("severity"), QStringLiteral("high")}};
+                           {QStringLiteral("severity"), QStringLiteral("high")},
+                           {QStringLiteral("requiresSecondApproval"), true}};
+    }
     if (type == QLatin1String("open_url")) {
         const QString url = action.value(QStringLiteral("url")).toString();
         if (!url.startsWith(QLatin1String("http")))
@@ -711,7 +757,11 @@ void StarvisService::queueAction(const QString& name, const QJsonObject& args)
         {QStringLiteral("verdict"), verdict.value(QStringLiteral("allowed"))},
         {QStringLiteral("reason"), verdict.value(QStringLiteral("reason"))},
         {QStringLiteral("severity"), verdict.value(QStringLiteral("severity"))},
+        {QStringLiteral("requiresSecondApproval"),
+         verdict.value(QStringLiteral("requiresSecondApproval"), false)},
+        {QStringLiteral("confirmationArmed"), false},
         {QStringLiteral("createdAt"), QDateTime::currentMSecsSinceEpoch()},
+        {QStringLiteral("updatedAt"), QDateTime::currentMSecsSinceEpoch()},
     };
     m_actions.prepend(entry);
     while (m_actions.size() > 50)
@@ -727,9 +777,23 @@ QVariantList StarvisService::pendingActions() const
     QVariantList out;
     for (const QVariant& v : m_actions) {
         const QVariantMap a = v.toMap();
-        if (a.value(QStringLiteral("status")).toString() != QLatin1String("approved")
-            && a.value(QStringLiteral("status")).toString() != QLatin1String("rejected"))
+        const QString status = a.value(QStringLiteral("status")).toString();
+        if (status == QLatin1String("pending") || status == QLatin1String("blocked"))
             out.append(a);
+    }
+    return out;
+}
+
+QVariantList StarvisService::recentActions() const
+{
+    QVariantList out;
+    for (const QVariant& v : m_actions) {
+        const QVariantMap action = v.toMap();
+        const QString status = action.value(QStringLiteral("status")).toString();
+        if (status != QLatin1String("pending") && status != QLatin1String("blocked"))
+            out.append(action);
+        if (out.size() >= 8)
+            break;
     }
     return out;
 }
@@ -753,8 +817,35 @@ void StarvisService::approveAction(const QString& id)
         QVariantMap a = m_actions[i].toMap();
         if (a.value(QStringLiteral("id")).toString() != id)
             continue;
-        if (!a.value(QStringLiteral("verdict")).toBool()) {
+        const QJsonObject detail = QJsonDocument::fromJson(
+            a.value(QStringLiteral("detail")).toString().toUtf8()).object();
+        const QVariantMap policy = evaluatePolicy(detail.toVariantMap());
+        a.insert(QStringLiteral("verdict"), policy.value(QStringLiteral("allowed")));
+        a.insert(QStringLiteral("reason"), policy.value(QStringLiteral("reason")));
+        a.insert(QStringLiteral("severity"), policy.value(QStringLiteral("severity")));
+        a.insert(QStringLiteral("requiresSecondApproval"),
+                 policy.value(QStringLiteral("requiresSecondApproval"), false));
+        if (a.value(QStringLiteral("status")).toString() != QLatin1String("pending")
+            || !policy.value(QStringLiteral("allowed")).toBool()) {
+            if (a.value(QStringLiteral("status")).toString() == QLatin1String("pending")) {
+                a.insert(QStringLiteral("status"), QStringLiteral("blocked"));
+                a.insert(QStringLiteral("updatedAt"), QDateTime::currentMSecsSinceEpoch());
+                m_actions[i] = a;
+                persistActions();
+                emit actionsChanged();
+            }
             qWarning() << "[starvis] approve refused — action is blocked by policy";
+            return;
+        }
+        if (a.value(QStringLiteral("requiresSecondApproval")).toBool()
+            && !a.value(QStringLiteral("confirmationArmed")).toBool()) {
+            a.insert(QStringLiteral("confirmationArmed"), true);
+            a.insert(QStringLiteral("result"),
+                     QStringLiteral("Second approval required before execution."));
+            a.insert(QStringLiteral("updatedAt"), QDateTime::currentMSecsSinceEpoch());
+            m_actions[i] = a;
+            persistActions();
+            emit actionsChanged();
             return;
         }
         if (!executionEnabled()) {
@@ -764,31 +855,70 @@ void StarvisService::approveAction(const QString& id)
             qInfo() << "[starvis] action approved (audit only — execution disabled)";
         } else {
             const QString type = a.value(QStringLiteral("actionType")).toString();
-            const QJsonObject detail = QJsonDocument::fromJson(
-                a.value(QStringLiteral("detail")).toString().toUtf8()).object();
             bool ok = false;
+            QString result;
+            auto run = [this, &result](const QString& program, const QStringList& args,
+                                       int timeoutMs) {
+                QProcess process;
+                process.setWorkingDirectory(workspaceRoot());
+                process.start(program, args);
+                if (!process.waitForStarted(5000)) {
+                    result = process.errorString();
+                    return false;
+                }
+                if (!process.waitForFinished(timeoutMs)) {
+                    process.kill();
+                    process.waitForFinished(2000);
+                    result = QStringLiteral("Process timed out.");
+                    return false;
+                }
+                result = QString::fromUtf8(process.readAllStandardOutput()
+                                           + process.readAllStandardError()).left(12000);
+                return process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0;
+            };
             if (type == QLatin1String("open_url")) {
                 ok = QDesktopServices::openUrl(QUrl(detail.value(QLatin1String("url")).toString()));
+                result = ok ? QStringLiteral("URL opened.") : QStringLiteral("Could not open URL.");
             } else if (type == QLatin1String("file_edit")) {
                 QString abs;
                 if (resolveInWorkspace(detail.value(QLatin1String("path")).toString(), abs)) {
+                    QDir().mkpath(QFileInfo(abs).absolutePath());
                     QFile f(abs);
                     if (f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
                         f.write(detail.value(QLatin1String("content")).toString().toUtf8());
                         ok = true;
+                        result = QStringLiteral("Wrote %1.").arg(
+                            QDir(workspaceRoot()).relativeFilePath(abs));
+                    } else {
+                        result = f.errorString();
                     }
                 }
             } else if (type == QLatin1String("command")) {
-                QProcess p;
-                p.setWorkingDirectory(workspaceRoot());
-                p.start(detail.value(QLatin1String("command")).toString(),
-                        detail.value(QLatin1String("args")).toVariant().toStringList());
-                ok = p.waitForFinished(60000);
+                ok = run(detail.value(QLatin1String("command")).toString(),
+                         detail.value(QLatin1String("args")).toVariant().toStringList(), 60000);
+            } else if (type == QLatin1String("git_commit")) {
+                const QStringList paths = detail.value(QLatin1String("args")).toVariant().toStringList();
+                QStringList addArgs{QStringLiteral("add"), QStringLiteral("--")};
+                addArgs.append(paths);
+                ok = run(QStringLiteral("git"), addArgs, 30000);
+                if (ok)
+                    ok = run(QStringLiteral("git"),
+                             {QStringLiteral("commit"), QStringLiteral("-m"),
+                              detail.value(QLatin1String("message")).toString()}, 60000);
+            } else if (type == QLatin1String("git_push")) {
+                const QStringList target = detail.value(QLatin1String("args")).toVariant().toStringList();
+                QStringList pushArgs{QStringLiteral("push"),
+                                     target.value(0, QStringLiteral("origin"))};
+                if (!target.value(1).isEmpty())
+                    pushArgs.append(target.value(1));
+                ok = run(QStringLiteral("git"), pushArgs, 120000);
             }
             a.insert(QStringLiteral("status"),
                      ok ? QStringLiteral("approved") : QStringLiteral("failed"));
+            a.insert(QStringLiteral("result"), result);
             qInfo() << "[starvis] action executed:" << type << "ok=" << ok;
         }
+        a.insert(QStringLiteral("updatedAt"), QDateTime::currentMSecsSinceEpoch());
         m_actions[i] = a;
         persistActions();
         emit actionsChanged();
@@ -801,7 +931,10 @@ void StarvisService::rejectAction(const QString& id)
     for (int i = 0; i < m_actions.size(); ++i) {
         QVariantMap a = m_actions[i].toMap();
         if (a.value(QStringLiteral("id")).toString() == id) {
+            if (a.value(QStringLiteral("status")).toString() != QLatin1String("pending"))
+                return;
             a.insert(QStringLiteral("status"), QStringLiteral("rejected"));
+            a.insert(QStringLiteral("updatedAt"), QDateTime::currentMSecsSinceEpoch());
             m_actions[i] = a;
             persistActions();
             emit actionsChanged();
@@ -823,6 +956,23 @@ void StarvisService::loadActions()
     if (raw.isEmpty())
         return;
     m_actions = QJsonDocument::fromJson(raw.toUtf8()).array().toVariantList();
+    for (int i = 0; i < m_actions.size(); ++i) {
+        QVariantMap action = m_actions.at(i).toMap();
+        const QJsonObject detail = QJsonDocument::fromJson(
+            action.value(QStringLiteral("detail")).toString().toUtf8()).object();
+        if (detail.isEmpty())
+            continue;
+        const QVariantMap policy = evaluatePolicy(detail.toVariantMap());
+        action.insert(QStringLiteral("verdict"), policy.value(QStringLiteral("allowed")));
+        action.insert(QStringLiteral("reason"), policy.value(QStringLiteral("reason")));
+        action.insert(QStringLiteral("severity"), policy.value(QStringLiteral("severity")));
+        action.insert(QStringLiteral("requiresSecondApproval"),
+                      policy.value(QStringLiteral("requiresSecondApproval"), false));
+        if (action.value(QStringLiteral("status")).toString() == QLatin1String("pending")
+            && !policy.value(QStringLiteral("allowed")).toBool())
+            action.insert(QStringLiteral("status"), QStringLiteral("blocked"));
+        m_actions[i] = action;
+    }
 }
 
 } // namespace qtpanel

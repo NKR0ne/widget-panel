@@ -10,8 +10,11 @@ GlassCard {
 
     ListModel { id: transcript }
     property bool agentMode: false
+    property bool allowInternet: false
+    property string lastUserMessage: ""
+    property string pendingInternetRequest: ""
 
-    function send(text) {
+    function send(text, forceInternet, appendUser) {
         const message = text.trim()
         if (message === "" || Starvis.busy)
             return
@@ -20,15 +23,23 @@ GlassCard {
             const turn = transcript.get(i)
             history.push({ role: turn.role, text: turn.text })
         }
-        transcript.append({ role: "user", text: message })
+        if (appendUser !== false) {
+            transcript.append({ role: "user", text: message })
+            lastUserMessage = message
+        }
         input.text = ""
-        // Agent mode enables the tool loop + web search.
-        Starvis.chat(message, history, card.agentMode, card.agentMode)
+        Starvis.chat(message, history,
+            forceInternet === true || card.allowInternet || card.agentMode,
+            card.agentMode)
     }
 
     Connections {
         target: Starvis
         function onReplyReceived(text, model, latencyMs) {
+            if (text.indexOf("INTERNET_PERMISSION_REQUEST:") === 0)
+                card.pendingInternetRequest = card.lastUserMessage
+            else
+                card.pendingInternetRequest = ""
             transcript.append({ role: "assistant", text: text })
         }
         function onChatFailed(error) {
@@ -66,7 +77,38 @@ GlassCard {
                     NumberAnimation { to: 1.0; duration: 500 }
                 }
             }
-            Item { width: parent.width - x - agentBtn.width - briefingBtn.width - 6; height: 1 }
+            Item {
+                width: Math.max(0, parent.width - x - webBtn.width
+                    - agentBtn.width - briefingBtn.width - 12)
+                height: 1
+            }
+            Rectangle {
+                id: webBtn
+                width: webLabel.implicitWidth + 14
+                height: 20
+                radius: 5
+                anchors.verticalCenter: parent.verticalCenter
+                color: card.allowInternet ? Theme.activeFill
+                    : webMouse.containsMouse ? Theme.hover : Theme.cardFill
+                border.color: card.allowInternet ? Theme.accent : Theme.cardStroke
+                Text {
+                    id: webLabel
+                    anchors.centerIn: parent
+                    text: "Web"
+                    color: card.allowInternet ? Theme.accent : Theme.textSecondary
+                    font.pixelSize: 9
+                }
+                MouseArea {
+                    id: webMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        card.allowInternet = !card.allowInternet
+                        SoundFx.tap()
+                    }
+                }
+            }
             Rectangle {
                 id: agentBtn
                 width: agentLabel.implicitWidth + 16
@@ -276,11 +318,19 @@ GlassCard {
                             spacing: 6
                             visible: modelData.verdict === true
                             Rectangle {
-                                width: 58; height: 18; radius: 4
+                                width: approveLabel.implicitWidth + 14; height: 18; radius: 4
                                 color: apprMouse.containsMouse ? Qt.rgba(0.2, 0.83, 0.6, 0.3)
                                                                : Qt.rgba(0.2, 0.83, 0.6, 0.16)
                                 border.color: "#34d399"
-                                Text { anchors.centerIn: parent; text: "Approuver"; color: "#34d399"; font.pixelSize: 9 }
+                                Text {
+                                    id: approveLabel
+                                    anchors.centerIn: parent
+                                    text: modelData.confirmationArmed ? "Confirmer"
+                                        : modelData.requiresSecondApproval ? "Approuver 1/2"
+                                        : "Approuver"
+                                    color: "#34d399"
+                                    font.pixelSize: 9
+                                }
                                 MouseArea {
                                     id: apprMouse; anchors.fill: parent; hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
@@ -305,6 +355,129 @@ GlassCard {
             }
         }
 
+        Column {
+            width: parent.width
+            spacing: 4
+            visible: card.agentMode && Starvis.recentActions.length > 0
+
+            Text {
+                text: "Activit\u00e9 r\u00e9cente"
+                color: Theme.textSecondary
+                font.pixelSize: 9
+                font.capitalization: Font.AllUppercase
+                font.letterSpacing: 1
+            }
+
+            Repeater {
+                model: Math.min(3, Starvis.recentActions.length)
+                delegate: Row {
+                    required property int index
+                    property var action: Starvis.recentActions[index]
+                    width: parent.width
+                    spacing: 6
+
+                    Text {
+                        width: 86
+                        text: (parent.action.actionType || "?") + " \u00b7 "
+                            + (parent.action.status || "")
+                        color: parent.action.status === "failed" ? "#f87171"
+                            : parent.action.status === "rejected" ? Theme.textSecondary
+                            : "#34d399"
+                        font.pixelSize: 9
+                        elide: Text.ElideRight
+                    }
+                    Text {
+                        width: Math.max(0, parent.width - x)
+                        text: parent.action.result || parent.action.summary || ""
+                        color: Theme.textSecondary
+                        font.pixelSize: 9
+                        elide: Text.ElideRight
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            visible: card.pendingInternetRequest !== ""
+            width: parent.width
+            height: permissionRow.implicitHeight + 14
+            radius: 7
+            color: Qt.rgba(0.31, 0.56, 0.97, 0.10)
+            border.color: Qt.rgba(0.31, 0.56, 0.97, 0.32)
+
+            Row {
+                id: permissionRow
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 7
+                spacing: 6
+
+                Text {
+                    width: Math.max(40, parent.width - allowOnce.width - denyOnce.width - 12)
+                    text: "Acc\u00e8s Web requis pour cette demande"
+                    color: Theme.textSecondary
+                    font.pixelSize: 9
+                    wrapMode: Text.WordWrap
+                }
+                Rectangle {
+                    id: allowOnce
+                    width: allowOnceLabel.implicitWidth + 14
+                    height: 22
+                    radius: 5
+                    color: allowOnceMouse.containsMouse
+                        ? Theme.activeFill : Qt.rgba(0.31, 0.56, 0.97, 0.15)
+                    border.color: Theme.accent
+                    Text {
+                        id: allowOnceLabel
+                        anchors.centerIn: parent
+                        text: "Une fois"
+                        color: Theme.textPrimary
+                        font.pixelSize: 9
+                    }
+                    MouseArea {
+                        id: allowOnceMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            const request = card.pendingInternetRequest
+                            card.pendingInternetRequest = ""
+                            card.send(request, true, false)
+                        }
+                    }
+                }
+                Rectangle {
+                    id: denyOnce
+                    width: denyOnceLabel.implicitWidth + 14
+                    height: 22
+                    radius: 5
+                    color: denyOnceMouse.containsMouse ? Theme.hover : Theme.cardFill
+                    border.color: Theme.cardStroke
+                    Text {
+                        id: denyOnceLabel
+                        anchors.centerIn: parent
+                        text: "Refuser"
+                        color: Theme.textSecondary
+                        font.pixelSize: 9
+                    }
+                    MouseArea {
+                        id: denyOnceMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            card.pendingInternetRequest = ""
+                            transcript.append({
+                                role: "assistant",
+                                text: "Compris. Je reste sur le contexte local."
+                            })
+                        }
+                    }
+                }
+            }
+        }
+
         // Input
         Rectangle {
             width: parent.width
@@ -322,7 +495,7 @@ GlassCard {
                 font.pixelSize: Theme.fontSizeCaption
                 clip: true
                 enabled: Starvis.configured && !Starvis.busy
-                onAccepted: card.send(text)
+                onAccepted: card.send(text, false, true)
 
                 Text {
                     visible: input.text === "" && !input.activeFocus

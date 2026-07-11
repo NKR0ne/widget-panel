@@ -8,6 +8,7 @@
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QUrl>
+#include <QUrlQuery>
 
 namespace qtpanel {
 
@@ -72,6 +73,14 @@ QString extractHlsManifestUrl(const QString& html)
     return url;
 }
 
+QString youtubeConfigValue(const QString& html, const QString& key)
+{
+    const QRegularExpression pattern(
+        QStringLiteral("\"") + QRegularExpression::escape(key)
+        + QStringLiteral("\"\\s*:\\s*\"([^\"]+)\""));
+    return pattern.match(html).captured(1);
+}
+
 } // namespace
 
 LiveFeedService::LiveFeedService(HttpClient* http, QObject* parent)
@@ -81,12 +90,12 @@ LiveFeedService::LiveFeedService(HttpClient* http, QObject* parent)
     // Port of LIVE_FEEDS in renderer/widgets/live/LiveFeedGrid.jsx +
     // EURONEWS_HLS_URL from euronews.constants.js.
     m_feeds = {
-        {QStringLiteral("live-bloomberg"), QStringLiteral("Bloomberg Live"), true,
-         QStringLiteral("iEpJwprxDdk")},
+        {QStringLiteral("live-bloomberg"), QStringLiteral("Bloomberg Live"), false,
+         QStringLiteral("https://www.bloomberg.com/media-manifest/streams/us.m3u8")},
         {QStringLiteral("live-radio-canada"), QStringLiteral("Radio-Canada.info"), true,
          QStringLiteral("oacvZh5Rmcg")},
         {QStringLiteral("live-france24"), QStringLiteral("France 24"), true,
-         QStringLiteral("HvZt-nh9sGg")},
+         QStringLiteral("a47ckXKZjxI")},
         {QStringLiteral("live-cbc-news"), QStringLiteral("CBC News"), true,
          QStringLiteral("5vfaDsMhCF4")},
         {QStringLiteral("live-lcn"), QStringLiteral("LCN"), false,
@@ -211,22 +220,83 @@ void LiveFeedService::resolveYouTube(const Feed& feed)
         "https://www.youtube.com/watch?v=%1&bpctr=9999999999&has_verified=1").arg(feed.source));
     const QString feedId = feed.id;
 
-    m_http->getText(watchUrl, this, [this, feedId](const QString& html, const QString& error) {
-        m_pending.remove(feedId);
+    m_http->getText(watchUrl, this, [this, feedId, watchUrl](const QString& html, const QString& error) {
         if (!error.isEmpty()) {
+            m_pending.remove(feedId);
             qWarning() << "[live]" << feedId << "watch page failed:" << error;
             emit feedFailed(feedId, error);
             return;
         }
         const QString hlsUrl = extractHlsManifestUrl(html);
-        if (hlsUrl.isEmpty()) {
-            qWarning() << "[live]" << feedId << "no HLS manifest in player response";
-            emit feedFailed(feedId, QStringLiteral("No HLS manifest exposed by YouTube"));
+        if (!hlsUrl.isEmpty()) {
+            m_pending.remove(feedId);
+            m_cache.insert(feedId, {hlsUrl, QDateTime::currentMSecsSinceEpoch()});
+            qInfo() << "[live]" << feedId << "watch-page manifest host:"
+                    << QUrl(hlsUrl).host();
+            emit feedResolved(feedId, hlsUrl);
             return;
         }
-        m_cache.insert(feedId, {hlsUrl, QDateTime::currentMSecsSinceEpoch()});
-        qInfo() << "[live]" << feedId << "manifest host:" << QUrl(hlsUrl).host();
-        emit feedResolved(feedId, hlsUrl);
+
+        const QString apiKey = youtubeConfigValue(html, QStringLiteral("INNERTUBE_API_KEY"));
+        const QString clientVersion = youtubeConfigValue(
+            html, QStringLiteral("INNERTUBE_CLIENT_VERSION"));
+        const Feed* feed = feedById(feedId);
+        if (apiKey.isEmpty() || clientVersion.isEmpty() || !feed) {
+            m_pending.remove(feedId);
+            qWarning() << "[live]" << feedId << "YouTube player configuration unavailable";
+            emit feedFailed(feedId, QStringLiteral("YouTube requires browser playback"));
+            return;
+        }
+
+        const QJsonObject client{
+            {QStringLiteral("clientName"), QStringLiteral("WEB")},
+            {QStringLiteral("clientVersion"), clientVersion},
+            {QStringLiteral("hl"), QStringLiteral("en")},
+            {QStringLiteral("gl"), QStringLiteral("CA")},
+        };
+        const QJsonObject body{
+            {QStringLiteral("context"), QJsonObject{
+                 {QStringLiteral("client"), client}
+             }},
+            {QStringLiteral("videoId"), feed->source},
+            {QStringLiteral("contentCheckOk"), true},
+            {QStringLiteral("racyCheckOk"), true},
+        };
+        QUrl playerUrl(QStringLiteral("https://www.youtube.com/youtubei/v1/player"));
+        QUrlQuery query;
+        query.addQueryItem(QStringLiteral("key"), apiKey);
+        query.addQueryItem(QStringLiteral("prettyPrint"), QStringLiteral("false"));
+        playerUrl.setQuery(query);
+
+        m_http->requestJsonAuth(
+            QByteArrayLiteral("POST"), playerUrl, {},
+            QJsonDocument(body).toJson(QJsonDocument::Compact), this,
+            [this, feedId](const QJsonDocument& doc, int status, const QString& postError) {
+                m_pending.remove(feedId);
+                const QJsonObject root = doc.object();
+                const QString manifest = root.value(QLatin1String("streamingData"))
+                    .toObject().value(QLatin1String("hlsManifestUrl")).toString();
+                if (!manifest.isEmpty()) {
+                    m_cache.insert(feedId, {manifest, QDateTime::currentMSecsSinceEpoch()});
+                    qInfo() << "[live]" << feedId << "player-api manifest host:"
+                            << QUrl(manifest).host();
+                    emit feedResolved(feedId, manifest);
+                    return;
+                }
+                const QJsonObject playability = root.value(
+                    QLatin1String("playabilityStatus")).toObject();
+                const QString reason = playability.value(QLatin1String("reason")).toString();
+                qWarning() << "[live]" << feedId << "player API unavailable"
+                           << status << postError << reason;
+                emit feedFailed(feedId, reason.isEmpty()
+                    ? QStringLiteral("YouTube requires browser playback") : reason);
+            },
+            {
+                {QByteArrayLiteral("Origin"), QByteArrayLiteral("https://www.youtube.com")},
+                {QByteArrayLiteral("Referer"), watchUrl.toString().toUtf8()},
+                {QByteArrayLiteral("X-YouTube-Client-Name"), QByteArrayLiteral("1")},
+                {QByteArrayLiteral("X-YouTube-Client-Version"), clientVersion.toUtf8()},
+            });
     }, QStringLiteral("text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"));
 }
 

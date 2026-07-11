@@ -195,6 +195,8 @@ void WeatherService::applyPayload(const QVariantMap& payload)
     const QVariantList maxes = daily.value(QStringLiteral("temperature_2m_max")).toList();
     const QVariantList mins = daily.value(QStringLiteral("temperature_2m_min")).toList();
     const QVariantList precip = daily.value(QStringLiteral("precipitation_probability_max")).toList();
+    const QVariantList precipSum = daily.value(QStringLiteral("precipitation_sum")).toList();
+    const QVariantList maxWind = daily.value(QStringLiteral("wind_speed_10m_max")).toList();
     for (int i = 0; i < days.size() && m_daily.size() < 14; ++i) {
         const QDate day = QDate::fromString(days.at(i).toString(), Qt::ISODate);
         if (!day.isValid())
@@ -205,9 +207,12 @@ void WeatherService::applyPayload(const QVariantMap& payload)
                                            : locale.dayName(day.dayOfWeek(), QLocale::ShortFormat)},
             {QStringLiteral("emoji"), dayInfo.emoji},
             {QStringLiteral("label"), dayInfo.label},
+            {QStringLiteral("dateLabel"), QString::number(day.day())},
             {QStringLiteral("maxC"), maxes.value(i)},
             {QStringLiteral("minC"), mins.value(i)},
             {QStringLiteral("precipPct"), precip.value(i)},
+            {QStringLiteral("precipMm"), precipSum.value(i)},
+            {QStringLiteral("windKmh"), maxWind.value(i)},
         });
     }
 

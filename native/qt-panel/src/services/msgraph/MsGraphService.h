@@ -51,7 +51,9 @@ public:
     Q_INVOKABLE void signOut();
     Q_INVOKABLE void refreshAll();
     Q_INVOKABLE void markMailRead(const QString& messageId);
+    Q_INVOKABLE void moveMail(const QString& messageId, const QString& destinationId);
     Q_INVOKABLE void completeTodoTask(const QString& taskId);
+    Q_INVOKABLE void addTodoTask(const QString& title);
     Q_INVOKABLE void toggleCalendar(const QString& id);
     Q_INVOKABLE void setTodoList(const QString& id);
 

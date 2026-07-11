@@ -11,7 +11,7 @@
 using namespace qtpanel;
 
 // Unit coverage for the trickiest pure-logic ports: encoding repair, the
-// blur-to-hide heuristics, the settings store, and RSS/Atom parsing.
+// blur-to-hide heuristics, settings, feed parsing, and reader extraction.
 class TestQtPanel : public QObject {
     Q_OBJECT
 
@@ -163,6 +163,98 @@ private slots:
         QVERIFY(article.value(QStringLiteral("paywall")).toBool());
         QCOMPARE(paragraphs.size(), 2);
         QVERIFY(paragraphs.first().toString().startsWith(QStringLiteral("This first fallback")));
+    }
+
+    void readerStripsHostileMarkupAndPreservesStructure()
+    {
+        const QString html = QStringLiteral(
+            "<html><head><title>Hostile Markup Story</title>"
+            "<script>document.write('script noise that must never appear');</script>"
+            "</head><body>"
+            "<header><p>Header navigation that must never appear in reader output.</p></header>"
+            "<article class=\"article-body\">"
+            "<h2>Why native extraction needs defensive parsing.</h2>"
+            "<p>The opening paragraph contains enough meaningful detail to establish"
+            " the article and survive the reader quality filters.</p>"
+            "<p>The second paragraph explains the implementation constraints with enough"
+            " context to remain useful after chrome is removed.</p>"
+            "<blockquote>This quoted observation is deliberately long enough to remain"
+            " visible as part of the extracted article body.</blockquote>"
+            "<ul><li>This structured list item carries a complete explanatory sentence.</li></ul>"
+            "<div class=\"newsletter-promo\"><p>Newsletter promotion must be removed"
+            " even though its text is long enough to resemble content.</p></div>"
+            "<p>The final article paragraph confirms that noise removal does not truncate"
+            " legitimate content surrounding an embedded promotion.</p>"
+            "<h3>Read Next</h3>"
+            "<p>This recommendation belongs outside the extracted article body.</p>"
+            "</article><footer><p>Footer noise must never appear.</p></footer>"
+            "</body></html>");
+
+        const QVariantMap article = ReaderService::extractArticleHtml(
+            html, QStringLiteral("https://example.com/hostile"));
+        const QVariantList paragraphs = article.value(QStringLiteral("paragraphs")).toList();
+        const QString body = [&paragraphs] {
+            QStringList lines;
+            for (const QVariant& paragraph : paragraphs)
+                lines.append(paragraph.toString());
+            return lines.join(QLatin1Char('\n'));
+        }();
+
+        QCOMPARE(article.value(QStringLiteral("title")).toString(),
+                 QStringLiteral("Hostile Markup Story"));
+        QVERIFY(body.contains(QStringLiteral("defensive parsing")));
+        QVERIFY(body.contains(QStringLiteral("quoted observation")));
+        QVERIFY(body.contains(QStringLiteral("structured list item")));
+        QVERIFY(body.contains(QStringLiteral("final article paragraph")));
+        QVERIFY(!body.contains(QStringLiteral("script noise")));
+        QVERIFY(!body.contains(QStringLiteral("Newsletter promotion")));
+        QVERIFY(!body.contains(QStringLiteral("recommendation belongs")));
+        QVERIFY(!body.contains(QStringLiteral("Footer noise")));
+    }
+
+    void readerDetectsBotChallenge()
+    {
+        const QString html = QStringLiteral(
+            "<html><head><title>Checking your browser</title></head>"
+            "<body><main><h1>Checking your browser</h1>"
+            "<p>Cloudflare is performing security verification before allowing access.</p>"
+            "</main></body></html>");
+
+        const QVariantMap article = ReaderService::extractArticleHtml(
+            html, QStringLiteral("https://protected.example/story"));
+
+        QVERIFY(!article.value(QStringLiteral("challenge")).toString().isEmpty());
+        QVERIFY(!article.value(QStringLiteral("paywall")).toBool());
+        QCOMPARE(article.value(QStringLiteral("source")).toString(),
+                 QStringLiteral("protected.example"));
+    }
+
+    void readerResolvesFiltersAndDeduplicatesImages()
+    {
+        const QString html = QStringLiteral(
+            "<html><head><meta property=\"og:title\" content=\"Image Story\">"
+            "<meta property=\"og:image\" content=\"/media/hero.jpg\"></head><body>"
+            "<article class=\"story-content\">"
+            "<p>The first image story paragraph is long enough to pass all reader"
+            " extraction thresholds and provide useful context.</p>"
+            "<p>The second image story paragraph is similarly complete and ensures"
+            " this article region is selected by the scoring logic.</p>"
+            "<p>The third image story paragraph provides additional body text so the"
+            " image assertions exercise the primary extraction path.</p>"
+            "<img src=\"/media/hero.jpg\"><img data-src=\"../photos/detail.jpg\">"
+            "<img src=\"//cdn.example.net/chart.png\"><img src=\"/assets/site-logo.svg\">"
+            "<img src=\"/tracking/pixel.gif\"><img data-original=\"/media/extra.jpg\">"
+            "</article></body></html>");
+
+        const QVariantMap article = ReaderService::extractArticleHtml(
+            html, QStringLiteral("https://example.com/news/story"));
+        const QVariantList images = article.value(QStringLiteral("images")).toList();
+
+        QCOMPARE(images.size(), 4);
+        QCOMPARE(images.at(0).toString(), QStringLiteral("https://example.com/media/hero.jpg"));
+        QCOMPARE(images.at(1).toString(), QStringLiteral("https://example.com/photos/detail.jpg"));
+        QCOMPARE(images.at(2).toString(), QStringLiteral("https://cdn.example.net/chart.png"));
+        QCOMPARE(images.at(3).toString(), QStringLiteral("https://example.com/media/extra.jpg"));
     }
 };
 

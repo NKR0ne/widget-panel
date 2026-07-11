@@ -10,13 +10,26 @@ Item {
 
     // base | news | monitor | live — drives both window width (Panel.fitMode)
     // and the column arrangement (PanelColumns).
-    property string panelMode: "base"
+    property string panelMode: StartupMode
     property string modeSwitchError: ""
+    property int storeRevision: 0
+    readonly property int baseColumnCount: {
+        storeRevision
+        return Math.max(3, Math.min(6, Number(Store.get("wp-base-columns", 3)) || 3))
+    }
+
+    Connections {
+        target: Store
+        function onChanged(key) {
+            if (key === "wp-base-columns")
+                surface.storeRevision++
+        }
+    }
 
     function fitCurrentWindowMode(mode) {
         let widths = {}
         try { widths = JSON.parse(Store.get("wp-col-widths", "{}")) } catch (e) {}
-        return Panel.fitMode(mode, Number(Store.get("wp-base-columns", 6)) || 6, widths)
+        return Panel.fitMode(mode, Number(Store.get("wp-base-columns", 3)) || 3, widths)
     }
 
     function switchMode(mode) {
@@ -33,6 +46,28 @@ Item {
             fitCurrentWindowMode(previousMode)
             modeSwitchError = "Mode indisponible"
         }
+    }
+
+    function adjustBaseColumns(delta) {
+        const next = Math.max(3, Math.min(6, baseColumnCount + delta))
+        if (next === baseColumnCount)
+            return
+        Store.set("wp-base-columns", next)
+        fitCurrentWindowMode("base")
+    }
+
+    function refreshData() {
+        Weather.refresh()
+        Stocks.refresh()
+        Stocks.refreshEarnings()
+        Stocks.refreshIpos()
+        News.refresh()
+        MsGraph.refreshAll()
+        if (panelMode === "live") {
+            for (const id of Live.feedIds())
+                Live.resolve(id, true)
+        }
+        SoundFx.tap()
     }
 
     // Resting x must NOT be bound to surface.width: the binding would fire on
@@ -194,7 +229,64 @@ Item {
                     elide: Text.ElideRight
                 }
 
+                Row {
+                    visible: surface.panelMode === "base"
+                    spacing: 2
+                    Layout.alignment: Qt.AlignVCenter
+
+                    Rectangle {
+                        width: 20; height: 20; radius: 5
+                        opacity: surface.baseColumnCount > 3 ? 1 : 0.35
+                        color: fewerMouse.containsMouse ? Theme.hover : "transparent"
+                        Text {
+                            anchors.centerIn: parent
+                            text: "-"
+                            color: Theme.textSecondary
+                            font.pixelSize: 13
+                        }
+                        MouseArea {
+                            id: fewerMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            enabled: surface.baseColumnCount > 3
+                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: surface.adjustBaseColumns(-1)
+                        }
+                    }
+                    Text {
+                        width: 14
+                        text: surface.baseColumnCount
+                        color: Theme.textSecondary
+                        font.pixelSize: 9
+                        horizontalAlignment: Text.AlignHCenter
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Rectangle {
+                        width: 20; height: 20; radius: 5
+                        opacity: surface.baseColumnCount < 6 ? 1 : 0.35
+                        color: moreMouse.containsMouse ? Theme.hover : "transparent"
+                        Text {
+                            anchors.centerIn: parent
+                            text: "+"
+                            color: Theme.textSecondary
+                            font.pixelSize: 13
+                        }
+                        MouseArea {
+                            id: moreMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            enabled: surface.baseColumnCount < 6
+                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: surface.adjustBaseColumns(1)
+                        }
+                    }
+                }
+
                 Item { Layout.fillWidth: true }
+                IconButton {
+                    glyph: "\uE72C"
+                    onClicked: surface.refreshData()
+                }
                 IconButton {
                     glyph: ""   // GridView: manage widgets
                     onClicked: manageModal.show(surface.panelMode)

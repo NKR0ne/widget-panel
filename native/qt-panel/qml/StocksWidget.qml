@@ -224,6 +224,44 @@ GlassCard {
         anchors.margins: 12
         spacing: 6
 
+        Row {
+            width: parent.width
+            height: 20
+            spacing: 6
+
+            Text {
+                text: card.title
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontSizeCaption
+                font.capitalization: Font.AllUppercase
+                font.letterSpacing: 1.2
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Item {
+                width: Math.max(0, parent.width - x - providerLabel.implicitWidth
+                    - providerDot.width - 10)
+                height: 1
+            }
+            Rectangle {
+                id: providerDot
+                width: 6
+                height: 6
+                radius: 3
+                color: Stocks.count > 0 ? "#34d399" : Qt.rgba(1, 1, 1, 0.24)
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Text {
+                id: providerLabel
+                text: {
+                    card.storeRevision
+                    return String(Store.get("wp-market-provider", "auto")).toUpperCase()
+                }
+                color: Theme.textSecondary
+                font.pixelSize: 8
+                anchors.verticalCenter: parent.verticalCenter
+            }
+        }
+
         // Tab bar (horizontally scrollable)
         Flickable {
             width: parent.width
@@ -274,29 +312,6 @@ GlassCard {
                         }
                     }
                 }
-                Rectangle {
-                    height: 18
-                    width: syncLabel.implicitWidth + 12
-                    radius: 5
-                    color: Stocks.watchlistsRefreshing ? Theme.activeFill
-                         : syncMouse.containsMouse ? Theme.hover : Theme.cardFill
-                    border.color: Theme.cardStroke
-                    Text {
-                        id: syncLabel
-                        anchors.centerIn: parent
-                        text: Stocks.watchlistsRefreshing ? "..." : "Sync"
-                        color: Theme.textSecondary
-                        font.pixelSize: 9
-                    }
-                    MouseArea {
-                        id: syncMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        enabled: !Stocks.watchlistsRefreshing
-                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: Stocks.refreshWatchlists()
-                    }
-                }
             }
         }
 
@@ -309,17 +324,17 @@ GlassCard {
             elide: Text.ElideRight
         }
 
+        Text {
+            width: parent.width
+            text: card.tradingViewStatus()
+            color: Theme.textSecondary
+            font.pixelSize: 9
+            elide: Text.ElideRight
+        }
+
         Row {
             width: parent.width
             spacing: 5
-            Text {
-                width: Math.max(40, parent.width - loginBtn.width - captureBtn.width - forgetBtn.width - syncMini.width - 24)
-                text: card.tradingViewStatus()
-                color: Theme.textSecondary
-                font.pixelSize: 9
-                elide: Text.ElideRight
-                anchors.verticalCenter: parent.verticalCenter
-            }
             Rectangle {
                 id: loginBtn
                 width: tvLoginLabel.implicitWidth + 12; height: 18; radius: 5

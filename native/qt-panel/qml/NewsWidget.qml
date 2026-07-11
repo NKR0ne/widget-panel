@@ -111,7 +111,7 @@ GlassCard {
                 easing.bezierCurve: Motion.emphasized
             }
             NumberAnimation {
-                target: carouselTilt; property: "rotation"; from: card.flipDirection >= 0 ? 6 : -6; to: 0
+                target: carouselTilt; property: "angle"; from: card.flipDirection >= 0 ? 6 : -6; to: 0
                 duration: Motion.normalMs
                 easing.type: Easing.OutCubic
             }
@@ -193,7 +193,7 @@ GlassCard {
                 origin.x: carouselCard.width / 2
                 origin.y: carouselCard.height / 2
                 axis { x: 0; y: 1; z: 0 }
-                rotation: 0
+                angle: 0
             }
 
             Item {
