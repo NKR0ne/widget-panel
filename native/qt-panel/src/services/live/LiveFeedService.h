@@ -23,6 +23,7 @@ public:
     QString audioFeedId() const { return m_audioFeedId; }
 
     Q_INVOKABLE void resolve(const QString& feedId, bool force = false);
+    Q_INVOKABLE void cancelResolve(const QString& feedId);
     Q_INVOKABLE QStringList feedIds() const;
     Q_INVOKABLE QString title(const QString& feedId) const;
     Q_INVOKABLE QString sourceLabel(const QString& feedId) const;
@@ -54,12 +55,13 @@ private:
     };
 
     const Feed* feedById(const QString& feedId) const;
-    void resolveYouTube(const Feed& feed);
+    void resolveYouTube(const Feed& feed, quint64 generation);
 
     HttpClient* m_http = nullptr;
     QList<Feed> m_feeds;
     QHash<QString, Resolved> m_cache;
     QSet<QString> m_pending;
+    QHash<QString, quint64> m_resolveGenerations;
     QString m_audioFeedId;
 };
 

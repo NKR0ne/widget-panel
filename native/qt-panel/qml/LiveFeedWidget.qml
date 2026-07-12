@@ -36,21 +36,30 @@ GlassCard {
             + "video{width:100%;height:100%;background:#000;object-fit:contain}</style>"
             + "<script src='https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js'></script></head>"
             + "<body><div id='wrap'><div id='bar'><b>" + htmlEscape(card.title)
-            + "</b><span id='state'>Loading HLS</span></div><video id='v' controls autoplay></video></div>"
+            + "</b><span id='state'>Loading HLS</span></div><video id='v' controls autoplay muted playsinline></video></div>"
             + "<script>var src=" + JSON.stringify(src) + ";var v=document.getElementById('v');var s=document.getElementById('state');"
-            + "function note(x){s.textContent=x}if(window.Hls&&Hls.isSupported()){var h=new Hls({lowLatencyMode:true});"
-            + "h.on(Hls.Events.ERROR,function(_,d){note(d&&d.details?d.details:'HLS error')});"
+            + "function note(x){s.textContent=x}if(window.Hls&&Hls.isSupported()){var h=new Hls({lowLatencyMode:true,backBufferLength:30,manifestLoadingTimeOut:12000,levelLoadingTimeOut:12000,fragLoadingTimeOut:16000});"
+            + "h.on(Hls.Events.ERROR,function(_,d){note(d&&d.details?d.details:'HLS error');if(!d||!d.fatal)return;"
+            + "if(d.type===Hls.ErrorTypes.NETWORK_ERROR){note('Retrying network');try{h.startLoad()}catch(e){note('Network recovery failed')}}"
+            + "else if(d.type===Hls.ErrorTypes.MEDIA_ERROR){note('Recovering media');try{h.recoverMediaError()}catch(e){note('Media recovery failed')}}"
+            + "else{note('Fatal HLS error');h.destroy()}});"
             + "h.loadSource(src);h.attachMedia(v);h.on(Hls.Events.MANIFEST_PARSED,function(){note('Ready');v.play().catch(function(){note('Press play')})})}"
             + "else{v.src=src;v.addEventListener('loadedmetadata',function(){note('Ready');v.play().catch(function(){note('Press play')})});"
-            + "v.addEventListener('error',function(){note('Playback error')})}</script></body></html>"
+            + "v.addEventListener('error',function(){note('Playback error')})}"
+            + "v.addEventListener('playing',function(){note('Playing')});v.addEventListener('waiting',function(){note('Buffering')});"
+            + "v.addEventListener('stalled',function(){note('Stream stalled')})</script></body></html>"
         return "data:text/html;charset=utf-8," + encodeURIComponent(html)
     }
 
     function openZoom() {
+        if (Live.audioFeedId === card.feedId)
+            Live.requestAudio("")
         Panel.openIsland(zoomUrl())
     }
 
     function openCompactEmbed() {
+        if (Live.audioFeedId === card.feedId)
+            Live.requestAudio("")
         Panel.openIsland(Live.embedUrl(card.feedId))
     }
 
@@ -69,6 +78,7 @@ GlassCard {
     }
 
     function useBrowserFallback(message) {
+        Live.cancelResolve(card.feedId)
         resolveWatchdog.stop()
         playbackWatchdog.stop()
         retryTimer.stop()
@@ -101,6 +111,7 @@ GlassCard {
 
     Component.onCompleted: beginResolve(false)
     Component.onDestruction: {
+        Live.cancelResolve(card.feedId)
         resolveWatchdog.stop()
         playbackWatchdog.stop()
         retryTimer.stop()

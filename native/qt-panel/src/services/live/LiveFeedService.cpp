@@ -196,6 +196,16 @@ void LiveFeedService::notePlayback(const QString& feedId, const QString& state)
     qInfo() << "[live]" << feedId << "playback:" << state;
 }
 
+void LiveFeedService::cancelResolve(const QString& feedId)
+{
+    if (!isKnownFeed(feedId))
+        return;
+    const bool wasPending = m_pending.remove(feedId);
+    m_resolveGenerations.insert(feedId, m_resolveGenerations.value(feedId) + 1);
+    if (wasPending)
+        qInfo() << "[live]" << feedId << "resolution cancelled";
+}
+
 void LiveFeedService::resolve(const QString& feedId, bool force)
 {
     const Feed* feed = feedById(feedId);
@@ -216,20 +226,28 @@ void LiveFeedService::resolve(const QString& feedId, bool force)
         emit feedResolved(feedId, cached->hlsUrl);
         return;
     }
-    if (m_pending.contains(feedId))
+    if (!force && m_pending.contains(feedId))
         return;
+    const quint64 generation = m_resolveGenerations.value(feedId) + 1;
+    m_resolveGenerations.insert(feedId, generation);
     m_pending.insert(feedId);
-    resolveYouTube(*feed);
+    resolveYouTube(*feed, generation);
 }
 
-void LiveFeedService::resolveYouTube(const Feed& feed)
+void LiveFeedService::resolveYouTube(const Feed& feed, quint64 generation)
 {
     // bpctr/has_verified skip the content-warning interstitials.
     const QUrl watchUrl(QStringLiteral(
         "https://www.youtube.com/watch?v=%1&bpctr=9999999999&has_verified=1").arg(feed.source));
     const QString feedId = feed.id;
 
-    m_http->getText(watchUrl, this, [this, feedId, watchUrl](const QString& html, const QString& error) {
+    m_http->getText(watchUrl, this,
+                    [this, feedId, watchUrl, generation](const QString& html,
+                                                         const QString& error) {
+        if (m_resolveGenerations.value(feedId) != generation) {
+            qInfo() << "[live]" << feedId << "ignored stale watch-page response";
+            return;
+        }
         if (!error.isEmpty()) {
             m_pending.remove(feedId);
             qWarning() << "[live]" << feedId << "watch page failed:" << error;
@@ -280,7 +298,12 @@ void LiveFeedService::resolveYouTube(const Feed& feed)
         m_http->requestJsonAuth(
             QByteArrayLiteral("POST"), playerUrl, {},
             QJsonDocument(body).toJson(QJsonDocument::Compact), this,
-            [this, feedId](const QJsonDocument& doc, int status, const QString& postError) {
+            [this, feedId, generation](const QJsonDocument& doc, int status,
+                                       const QString& postError) {
+                if (m_resolveGenerations.value(feedId) != generation) {
+                    qInfo() << "[live]" << feedId << "ignored stale player response";
+                    return;
+                }
                 m_pending.remove(feedId);
                 const QJsonObject root = doc.object();
                 const QString manifest = root.value(QLatin1String("streamingData"))
