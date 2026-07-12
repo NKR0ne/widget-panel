@@ -90,12 +90,12 @@ LiveFeedService::LiveFeedService(HttpClient* http, QObject* parent)
     // Port of LIVE_FEEDS in renderer/widgets/live/LiveFeedGrid.jsx +
     // EURONEWS_HLS_URL from euronews.constants.js.
     m_feeds = {
-        {QStringLiteral("live-bloomberg"), QStringLiteral("Bloomberg Live"), false,
-         QStringLiteral("https://www.bloomberg.com/media-manifest/streams/us.m3u8")},
+        {QStringLiteral("live-bloomberg"), QStringLiteral("Bloomberg Live"), true,
+         QStringLiteral("iEpJwprxDdk")},
         {QStringLiteral("live-radio-canada"), QStringLiteral("Radio-Canada.info"), true,
          QStringLiteral("oacvZh5Rmcg")},
         {QStringLiteral("live-france24"), QStringLiteral("France 24"), true,
-         QStringLiteral("a47ckXKZjxI")},
+         QStringLiteral("HvZt-nh9sGg")},
         {QStringLiteral("live-cbc-news"), QStringLiteral("CBC News"), true,
          QStringLiteral("5vfaDsMhCF4")},
         {QStringLiteral("live-lcn"), QStringLiteral("LCN"), false,
@@ -140,6 +140,11 @@ bool LiveFeedService::isYouTube(const QString& feedId) const
     return feed ? feed->youtube : false;
 }
 
+bool LiveFeedService::isKnownFeed(const QString& feedId) const
+{
+    return feedById(feedId) != nullptr;
+}
+
 QString LiveFeedService::embedUrl(const QString& feedId) const
 {
     const QString id = videoId(feedId);
@@ -175,6 +180,10 @@ QString LiveFeedService::webUrl(const QString& feedId) const
 
 void LiveFeedService::requestAudio(const QString& feedId)
 {
+    if (!feedId.isEmpty() && !isKnownFeed(feedId)) {
+        qWarning() << "[live] ignoring audio request for unknown feed" << feedId;
+        return;
+    }
     if (m_audioFeedId == feedId)
         return;
     m_audioFeedId = feedId;

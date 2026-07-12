@@ -1,5 +1,5 @@
 ; Inno Setup script for qt-panel.
-; Build the deployed app first:  build.ps1 -Deploy   (produces build\release with the
+; Build the deployed app first:  build.ps1 -Deploy   (produces build\nmake-release with the
 ; Qt runtime, qml/, and helpers\). Then compile this with ISCC:
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\qt-panel.iss
 ; Output: installer\Output\qt-panel-setup.exe
@@ -7,7 +7,7 @@
 #define AppName "Widget Panel"
 #define AppVersion "1.0.0"
 #define AppExe "qt-panel.exe"
-#define SrcDir "..\build\release"
+#define SrcDir "..\build\nmake-release"
 
 [Setup]
 AppId={{A7E3D2C1-9F4B-4E8A-B2C6-1D5E9F0A3B77}

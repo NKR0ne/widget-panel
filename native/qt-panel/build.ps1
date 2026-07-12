@@ -188,6 +188,15 @@ if (Test-Path $cacheFile) {
 
 $generatorName = if ($Generator -eq 'NMake') { 'NMake Makefiles' } else { 'Ninja' }
 $testsValue = if ($Tests) { 'ON' } else { 'OFF' }
+# Once a build tree has test support, keep it enabled. Flipping this option
+# between `-Tests` and `-Deploy` regenerates every Qt QML cache unit.
+if (-not $Tests -and (Test-Path $cacheFile)) {
+    $cachedTests = Select-String -Path $cacheFile -Pattern '^QTPANEL_BUILD_TESTS:BOOL=(ON|OFF)$' |
+        Select-Object -First 1
+    if ($cachedTests -and $cachedTests.Matches[0].Groups[1].Value -eq 'ON') {
+        $testsValue = 'ON'
+    }
+}
 $rootPrefix = $root -replace '\\', '/'
 $requiredCacheValues = @{
     'CMAKE_BUILD_TYPE' = $buildType
@@ -243,15 +252,17 @@ if ($appNeedsBuild) {
     } else {
         Invoke-NativeCommand -FilePath $CMAKE -Arguments @('--build', $build) -WorkingDirectory $root -TimeoutSeconds $BuildTimeoutSeconds
     }
-} elseif ($Tests) {
-    Write-Host 'Application inputs unchanged; building tests only.' -ForegroundColor DarkGray
+} else {
+    Write-Host 'Application inputs unchanged; build is up to date.' -ForegroundColor DarkGray
+}
+
+if ($Tests) {
+    Write-Host 'Building tests...' -ForegroundColor Cyan
     if ($Generator -eq 'NMake') {
         Invoke-NativeCommand -FilePath $NMAKE -Arguments @('/nologo', 'qt-panel-tests') -WorkingDirectory $build -TimeoutSeconds $BuildTimeoutSeconds
     } else {
         Invoke-NativeCommand -FilePath $CMAKE -Arguments @('--build', $build, '--target', 'qt-panel-tests') -WorkingDirectory $root -TimeoutSeconds $BuildTimeoutSeconds
     }
-} else {
-    Write-Host 'Application inputs unchanged; build is up to date.' -ForegroundColor DarkGray
 }
 
 if (-not (Test-Path $exe)) { Write-Error "Build succeeded but exe not at: $exe" }

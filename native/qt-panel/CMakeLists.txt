@@ -12,7 +12,7 @@ add_subdirectory(qml)
 option(QTPANEL_BUILD_TESTS "Build the QtTest suite" OFF)
 if(QTPANEL_BUILD_TESTS)
     enable_testing()
-    add_subdirectory(tests)
+    add_subdirectory(tests EXCLUDE_FROM_ALL)
 endif()
 
 qt_add_executable(qt-panel WIN32

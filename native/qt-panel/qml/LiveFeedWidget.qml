@@ -15,6 +15,8 @@ GlassCard {
     property bool failed: false
     property string hlsUrl: ""
     property string statusText: "Résolution du flux…"
+    property int retryCount: 0
+    readonly property int maxAutoRetries: 3
     readonly property bool youtube: Live.isYouTube(feedId)
     readonly property string ytId: Live.videoId(feedId)
 
@@ -53,15 +55,58 @@ GlassCard {
     }
 
     function retryNow() {
+        retryCount = 0
+        beginResolve(true)
+    }
+
+    function beginResolve(force) {
         failed = false
         statusText = card.youtube ? "Resolution YouTube..." : "Resolution du flux..."
         retryTimer.stop()
-        Live.resolve(feedId, true)
+        playbackWatchdog.stop()
+        resolveWatchdog.restart()
+        Live.resolve(feedId, force)
     }
 
-    Component.onCompleted: {
-        card.statusText = card.youtube ? "Resolution YouTube..." : "Resolution du flux..."
-        Live.resolve(feedId)
+    function useBrowserFallback(message) {
+        resolveWatchdog.stop()
+        playbackWatchdog.stop()
+        retryTimer.stop()
+        player.stop()
+        card.hlsUrl = ""
+        card.failed = false
+        card.statusText = message || "Lecture via navigateur"
+        if (Live.audioFeedId === card.feedId)
+            Live.requestAudio("")
+    }
+
+    function scheduleRecovery(message) {
+        resolveWatchdog.stop()
+        playbackWatchdog.stop()
+        player.stop()
+        if (Live.audioFeedId === card.feedId)
+            Live.requestAudio("")
+        card.failed = true
+        card.statusText = message || "Flux indisponible"
+        if (retryTimer.running)
+            return
+        if (card.retryCount >= card.maxAutoRetries) {
+            card.statusText += " - nouvelle tentative requise"
+            return
+        }
+        retryTimer.interval = Math.min(45000, 8000 * Math.pow(2, card.retryCount))
+        card.retryCount++
+        retryTimer.restart()
+    }
+
+    Component.onCompleted: beginResolve(false)
+    Component.onDestruction: {
+        resolveWatchdog.stop()
+        playbackWatchdog.stop()
+        retryTimer.stop()
+        player.stop()
+        if (Live.audioFeedId === card.feedId)
+            Live.requestAudio("")
     }
 
     Connections {
@@ -69,9 +114,12 @@ GlassCard {
         function onFeedResolved(id, hlsUrl) {
             if (id !== card.feedId)
                 return
+            resolveWatchdog.stop()
             card.failed = false
             card.hlsUrl = hlsUrl
             card.statusText = "Connexion…"
+            playbackWatchdog.restart()
+            player.stop()
             player.source = hlsUrl
             player.play()
         }
@@ -79,22 +127,49 @@ GlassCard {
             if (id !== card.feedId)
                 return
             if (card.youtube) {
-                card.failed = false
-                card.hlsUrl = ""
-                card.statusText = "Lecture via navigateur"
+                card.useBrowserFallback(error || "Lecture via navigateur")
                 return
             }
-            card.failed = true
-            card.statusText = error || "Flux indisponible"
-            retryTimer.start()
+            card.scheduleRecovery(error || "Flux indisponible")
+        }
+    }
+
+    Timer {
+        id: resolveWatchdog
+        interval: 17000
+        repeat: false
+        onTriggered: {
+            if (card.youtube)
+                card.useBrowserFallback("Resolution impossible - lecture via navigateur")
+            else
+                card.scheduleRecovery("Resolution du flux expiree")
+        }
+    }
+
+    Timer {
+        id: playbackWatchdog
+        interval: 18000
+        repeat: false
+        onTriggered: {
+            if (player.playbackState !== MediaPlayer.PlayingState)
+                card.scheduleRecovery("Le flux ne demarre pas")
         }
     }
 
     Timer {
         id: retryTimer
-        interval: 45000
+        interval: 8000
         running: false
-        onTriggered: Live.resolve(card.feedId, true)
+        repeat: false
+        onTriggered: {
+            card.failed = false
+            card.hlsUrl = ""
+            card.statusText = "Nouvelle tentative " + card.retryCount + "/" + card.maxAutoRetries
+            player.stop()
+            player.source = ""
+            resolveWatchdog.restart()
+            Live.resolve(card.feedId, true)
+        }
     }
 
     MediaPlayer {
@@ -109,24 +184,27 @@ GlassCard {
             Live.notePlayback(card.feedId,
                 playbackState === MediaPlayer.PlayingState ? "playing"
               : playbackState === MediaPlayer.PausedState ? "paused" : "stopped")
+            if (playbackState === MediaPlayer.PlayingState) {
+                playbackWatchdog.stop()
+                retryTimer.stop()
+                card.retryCount = 0
+                card.failed = false
+                card.statusText = "En direct"
+            }
         }
         onMediaStatusChanged: {
             const names = ["nomedia", "loading", "loaded", "stalled", "buffering",
                            "buffered", "endofmedia", "invalidmedia"]
             Live.notePlayback(card.feedId, "status: " + (names[mediaStatus] || mediaStatus))
             if (mediaStatus === MediaPlayer.EndOfMedia
-                || mediaStatus === MediaPlayer.InvalidMedia) {
-                retryTimer.interval = 8000
-                retryTimer.start()
-            }
+                || mediaStatus === MediaPlayer.InvalidMedia)
+                card.scheduleRecovery(mediaStatus === MediaPlayer.InvalidMedia
+                                      ? "Format de flux non pris en charge"
+                                      : "Le flux s'est termine")
         }
         onErrorOccurred: function(error, errorString) {
             Live.notePlayback(card.feedId, "error: " + errorString)
-            card.failed = true
-            card.statusText = "Erreur de lecture"
-            // Manifest likely expired — force a fresh resolution.
-            retryTimer.interval = 8000
-            retryTimer.start()
+            card.scheduleRecovery(errorString || "Erreur de lecture")
         }
     }
 

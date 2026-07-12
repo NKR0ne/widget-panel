@@ -113,6 +113,7 @@ private:
     void failIslandLoad(const QString& error);
     void setPanelVisibleState(bool visible);
     void resolveGraphicsApiName();
+    QString autostartCommand() const;
     double pinnedOpacity() const;
     int storedWidth() const;
     int fullPanelWidth() const;

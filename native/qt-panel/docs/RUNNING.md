@@ -19,7 +19,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -Generator NMake # fallback i
 powershell -ExecutionPolicy Bypass -File launch.ps1              # launch existing build
 powershell -ExecutionPolicy Bypass -File kill-build-processes.ps1 # cleanup only
 ```
-Output: `build\release\qt-panel.exe`. Without `-Deploy`, the exe needs
+Output: `build\nmake-release\qt-panel.exe`. Without `-Deploy`, the exe needs
 `C:\Qt\6.10.3\msvc2022_64\bin` on PATH (build.ps1 -Run handles this).
 `build.ps1` runs `kill-build-processes.ps1` before every build by default and
 wraps configure/build/deploy commands with a hard timeout that kills the native

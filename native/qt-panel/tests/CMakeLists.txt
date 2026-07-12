@@ -8,6 +8,7 @@ qt_add_executable(qt-panel-tests
     ${CMAKE_SOURCE_DIR}/src/shell/FocusPolicy.cpp
     ${CMAKE_SOURCE_DIR}/src/services/news/NewsService.cpp
     ${CMAKE_SOURCE_DIR}/src/services/reader/ReaderService.cpp
+    ${CMAKE_SOURCE_DIR}/src/services/live/LiveFeedService.cpp
 )
 
 target_include_directories(qt-panel-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)

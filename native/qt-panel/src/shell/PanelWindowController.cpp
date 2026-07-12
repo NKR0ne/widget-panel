@@ -10,6 +10,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
+#include <QFileInfo>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -17,6 +18,7 @@
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QSettings>
+#include <QStandardPaths>
 
 namespace qtpanel {
 
@@ -72,6 +74,18 @@ PanelWindowController::PanelWindowController(SettingsStore* settings, HelperServ
                 });
         connect(m_brave, &BraveHostClient::errorReceived,
                 this, [this](const QString& error) { failIslandLoad(error); });
+    }
+
+    // Development builds need launch.ps1 to put the Qt runtime on PATH.
+    // Deployed builds with adjacent Qt DLLs continue launching directly.
+    if (autostart()) {
+        QSettings run(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows"
+                                     "\\CurrentVersion\\Run"), QSettings::NativeFormat);
+        const QString desired = autostartCommand();
+        if (!desired.isEmpty() && run.value(QStringLiteral("qt-panel")).toString() != desired) {
+            run.setValue(QStringLiteral("qt-panel"), desired);
+            qInfo() << "[settings] migrated autostart command";
+        }
     }
 }
 
@@ -605,14 +619,48 @@ bool PanelWindowController::autostart() const
     return run.contains(QStringLiteral("qt-panel"));
 }
 
+QString PanelWindowController::autostartCommand() const
+{
+    const QString appPath = QDir::toNativeSeparators(QCoreApplication::applicationFilePath());
+    const auto quote = [](const QString& value) {
+        return QLatin1Char('"') + QDir::toNativeSeparators(value) + QLatin1Char('"');
+    };
+
+    const QDir appDir(QCoreApplication::applicationDirPath());
+    if (QFileInfo::exists(appDir.filePath(QStringLiteral("Qt6Core.dll"))))
+        return quote(appPath);
+
+    QDir sourceRoot = appDir;
+    if (!sourceRoot.cdUp() || !sourceRoot.cdUp())
+        return quote(appPath);
+    const QString launcher = sourceRoot.filePath(QStringLiteral("launch.ps1"));
+    if (!QFileInfo::exists(launcher)) {
+        qWarning() << "[settings] autostart runtime missing and no launcher found beside build tree";
+        return quote(appPath);
+    }
+
+    QString powershell = QStandardPaths::findExecutable(QStringLiteral("powershell.exe"));
+    if (powershell.isEmpty()) {
+        powershell = QDir(qEnvironmentVariable("SystemRoot", QStringLiteral("C:\\Windows")))
+            .filePath(QStringLiteral("System32/WindowsPowerShell/v1.0/powershell.exe"));
+    }
+
+    const QString buildName = appDir.dirName().toLower();
+    const QString config = buildName.endsWith(QLatin1String("debug"))
+        ? QStringLiteral("debug") : QStringLiteral("release");
+    const QString generator = buildName.startsWith(QLatin1String("nmake-"))
+        ? QStringLiteral("NMake") : QStringLiteral("Ninja");
+    return QStringLiteral("%1 -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass"
+                          " -File %2 -Config %3 -Generator %4")
+        .arg(quote(powershell), quote(launcher), config, generator);
+}
+
 void PanelWindowController::setAutostart(bool enabled)
 {
     QSettings run(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows"
                                  "\\CurrentVersion\\Run"), QSettings::NativeFormat);
     if (enabled) {
-        run.setValue(QStringLiteral("qt-panel"), QLatin1Char('"')
-            + QDir::toNativeSeparators(QCoreApplication::applicationFilePath())
-            + QLatin1Char('"'));
+        run.setValue(QStringLiteral("qt-panel"), autostartCommand());
     } else {
         run.remove(QStringLiteral("qt-panel"));
     }

@@ -1,9 +1,11 @@
 #include <QtTest>
 
+#include "core/HttpClient.h"
 #include "core/TextFix.h"
 #include "core/SettingsStore.h"
 #include "services/news/NewsService.h"
 #include "services/reader/ReaderService.h"
+#include "services/live/LiveFeedService.h"
 #include "shell/FocusPolicy.h"
 
 #include <QTemporaryDir>
@@ -255,6 +257,47 @@ private slots:
         QCOMPARE(images.at(1).toString(), QStringLiteral("https://example.com/photos/detail.jpg"));
         QCOMPARE(images.at(2).toString(), QStringLiteral("https://cdn.example.net/chart.png"));
         QCOMPARE(images.at(3).toString(), QStringLiteral("https://example.com/media/extra.jpg"));
+    }
+
+    void liveFeedCatalogMatchesRendererSources()
+    {
+        HttpClient http;
+        LiveFeedService live(&http);
+
+        QCOMPARE(live.feedIds(), QStringList({
+            QStringLiteral("live-bloomberg"),
+            QStringLiteral("live-radio-canada"),
+            QStringLiteral("live-france24"),
+            QStringLiteral("live-cbc-news"),
+            QStringLiteral("live-lcn"),
+            QStringLiteral("euronews"),
+        }));
+        QVERIFY(live.isYouTube(QStringLiteral("live-bloomberg")));
+        QCOMPARE(live.videoId(QStringLiteral("live-bloomberg")),
+                 QStringLiteral("iEpJwprxDdk"));
+        QCOMPARE(live.videoId(QStringLiteral("live-france24")),
+                 QStringLiteral("HvZt-nh9sGg"));
+        QCOMPARE(live.sourceLabel(QStringLiteral("live-lcn")), QStringLiteral("HLS"));
+        QVERIFY(live.webUrl(QStringLiteral("euronews")).endsWith(
+            QStringLiteral("playlist.m3u8")));
+    }
+
+    void liveAudioOwnerRejectsUnknownFeeds()
+    {
+        HttpClient http;
+        LiveFeedService live(&http);
+        QSignalSpy changed(&live, &LiveFeedService::audioFeedIdChanged);
+
+        live.requestAudio(QStringLiteral("not-a-feed"));
+        QCOMPARE(live.audioFeedId(), QString());
+        QCOMPARE(changed.count(), 0);
+
+        live.requestAudio(QStringLiteral("euronews"));
+        QCOMPARE(live.audioFeedId(), QStringLiteral("euronews"));
+        QCOMPARE(changed.count(), 1);
+        live.requestAudio(QString());
+        QCOMPARE(live.audioFeedId(), QString());
+        QCOMPARE(changed.count(), 2);
     }
 };
 

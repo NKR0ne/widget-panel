@@ -30,6 +30,7 @@ public:
     Q_INVOKABLE QString videoId(const QString& feedId) const;
     Q_INVOKABLE QString embedUrl(const QString& feedId) const;
     Q_INVOKABLE bool isYouTube(const QString& feedId) const;
+    Q_INVOKABLE bool isKnownFeed(const QString& feedId) const;
     // Pass an empty id to mute everything.
     Q_INVOKABLE void requestAudio(const QString& feedId);
     // Player state breadcrumbs into the app log (diagnostics only).
