@@ -37,6 +37,8 @@ Item {
         if (panelMode === targetMode)
             return
         const previousMode = panelMode
+        if (Live.detailOpen)
+            Live.closeDetail()
         if (Panel.islandOpen)
             Panel.closeIsland()
         panelMode = targetMode
@@ -326,6 +328,11 @@ Item {
         }
     }
 
+    LiveDetailView {
+        anchors.fill: parent
+        z: 70
+    }
+
     ReaderOverlay {
         anchors.fill: parent
     }
@@ -427,7 +434,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 glyph: ""  // OpenInNewWindow
                 onClicked: {
-                    Qt.openUrlExternally(Panel.islandUrl)
+                    Panel.openExternal(Panel.islandUrl)
                     Panel.closeIsland()
                 }
             }

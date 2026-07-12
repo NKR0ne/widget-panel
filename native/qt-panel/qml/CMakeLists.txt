@@ -26,6 +26,7 @@ qt_add_qml_module(qtpanel_ui
         WorkstationWidget.qml
         MonitorStage.qml
         LiveFeedWidget.qml
+        LiveDetailView.qml
         LiveStage.qml
         NewsWidget.qml
         NewsStage.qml

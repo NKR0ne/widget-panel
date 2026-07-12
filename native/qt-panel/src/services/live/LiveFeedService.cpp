@@ -81,6 +81,15 @@ QString youtubeConfigValue(const QString& html, const QString& key)
     return pattern.match(html).captured(1);
 }
 
+bool isRestrictedPlayback(const QString& reason)
+{
+    static const QRegularExpression restrictedRe(
+        QStringLiteral("video unavailable|restricted mode|content is not available|"
+                       "not available in your country|blocked by your administrator"),
+        QRegularExpression::CaseInsensitiveOption);
+    return restrictedRe.match(reason).hasMatch();
+}
+
 } // namespace
 
 LiveFeedService::LiveFeedService(HttpClient* http, QObject* parent)
@@ -206,6 +215,40 @@ void LiveFeedService::cancelResolve(const QString& feedId)
         qInfo() << "[live]" << feedId << "resolution cancelled";
 }
 
+bool LiveFeedService::openDetail(const QString& feedId, const QString& hlsUrl)
+{
+    const Feed* feed = feedById(feedId);
+    if (!feed || feed->youtube)
+        return false;
+    const QString target = hlsUrl.trimmed().isEmpty() ? feed->source : hlsUrl.trimmed();
+    const QUrl url(target);
+    if (!url.isValid()
+        || (url.scheme() != QLatin1String("http") && url.scheme() != QLatin1String("https")))
+        return false;
+
+    requestAudio(QString());
+    m_detailOpen = true;
+    m_detailFeedId = feedId;
+    m_detailUrl = url.toString();
+    emit detailChanged();
+    qInfo() << "[live] native detail opened" << feedId << QUrl(m_detailUrl).host();
+    return true;
+}
+
+void LiveFeedService::closeDetail()
+{
+    if (!m_detailOpen)
+        return;
+    if (m_audioFeedId == m_detailFeedId)
+        requestAudio(QString());
+    const QString feedId = m_detailFeedId;
+    m_detailOpen = false;
+    m_detailFeedId.clear();
+    m_detailUrl.clear();
+    emit detailChanged();
+    qInfo() << "[live] native detail closed" << feedId;
+}
+
 void LiveFeedService::resolve(const QString& feedId, bool force)
 {
     const Feed* feed = feedById(feedId);
@@ -217,6 +260,12 @@ void LiveFeedService::resolve(const QString& feedId, bool force)
     if (!feed->youtube) {
         qInfo() << "[live]" << feedId << "direct HLS:" << QUrl(feed->source).host();
         emit feedResolved(feedId, feed->source);
+        return;
+    }
+
+    const auto restricted = m_restrictedFeeds.constFind(feedId);
+    if (restricted != m_restrictedFeeds.constEnd()) {
+        emit feedRestricted(feedId, restricted.value());
         return;
     }
 
@@ -320,6 +369,13 @@ void LiveFeedService::resolveYouTube(const Feed& feed, quint64 generation)
                 const QString reason = playability.value(QLatin1String("reason")).toString();
                 qWarning() << "[live]" << feedId << "player API unavailable"
                            << status << postError << reason;
+                if (isRestrictedPlayback(reason)) {
+                    const QString message = reason.isEmpty()
+                        ? QStringLiteral("Unavailable on this network") : reason;
+                    m_restrictedFeeds.insert(feedId, message);
+                    emit feedRestricted(feedId, message);
+                    return;
+                }
                 emit feedFailed(feedId, reason.isEmpty()
                     ? QStringLiteral("YouTube requires browser playback") : reason);
             },

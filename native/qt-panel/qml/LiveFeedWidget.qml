@@ -16,51 +16,19 @@ GlassCard {
     property string hlsUrl: ""
     property string statusText: "Résolution du flux…"
     property int retryCount: 0
+    property bool restricted: false
+    property bool pausedForDetail: false
     readonly property int maxAutoRetries: 3
     readonly property bool youtube: Live.isYouTube(feedId)
     readonly property string ytId: Live.videoId(feedId)
 
-    function htmlEscape(text) {
-        return String(text || "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
+    function openDetail() {
+        if (card.hlsUrl)
+            Live.openDetail(card.feedId, card.hlsUrl)
     }
 
-    function zoomUrl() {
-        const web = Live.webUrl(card.feedId)
-        const src = card.hlsUrl || (card.youtube ? "" : web)
-        if (!src)
-            return web
-        const html = "<!doctype html><html><head><meta charset='utf-8'>"
-            + "<style>html,body{margin:0;width:100%;height:100%;background:#05070a;color:#dbeafe;font-family:Segoe UI,Arial,sans-serif}"
-            + "#wrap{position:fixed;inset:0;display:grid;grid-template-rows:auto 1fr}"
-            + "#bar{height:36px;display:flex;align-items:center;gap:10px;padding:0 12px;background:#0b1020;border-bottom:1px solid rgba(255,255,255,.08);font-size:12px}"
-            + "video{width:100%;height:100%;background:#000;object-fit:contain}</style>"
-            + "<script src='https://cdn.jsdelivr.net/npm/hls.js@1/dist/hls.min.js'></script></head>"
-            + "<body><div id='wrap'><div id='bar'><b>" + htmlEscape(card.title)
-            + "</b><span id='state'>Loading HLS</span></div><video id='v' controls autoplay muted playsinline></video></div>"
-            + "<script>var src=" + JSON.stringify(src) + ";var v=document.getElementById('v');var s=document.getElementById('state');"
-            + "function note(x){s.textContent=x}if(window.Hls&&Hls.isSupported()){var h=new Hls({lowLatencyMode:true,backBufferLength:30,manifestLoadingTimeOut:12000,levelLoadingTimeOut:12000,fragLoadingTimeOut:16000});"
-            + "h.on(Hls.Events.ERROR,function(_,d){note(d&&d.details?d.details:'HLS error');if(!d||!d.fatal)return;"
-            + "if(d.type===Hls.ErrorTypes.NETWORK_ERROR){note('Retrying network');try{h.startLoad()}catch(e){note('Network recovery failed')}}"
-            + "else if(d.type===Hls.ErrorTypes.MEDIA_ERROR){note('Recovering media');try{h.recoverMediaError()}catch(e){note('Media recovery failed')}}"
-            + "else{note('Fatal HLS error');h.destroy()}});"
-            + "h.loadSource(src);h.attachMedia(v);h.on(Hls.Events.MANIFEST_PARSED,function(){note('Ready');v.play().catch(function(){note('Press play')})})}"
-            + "else{v.src=src;v.addEventListener('loadedmetadata',function(){note('Ready');v.play().catch(function(){note('Press play')})});"
-            + "v.addEventListener('error',function(){note('Playback error')})}"
-            + "v.addEventListener('playing',function(){note('Playing')});v.addEventListener('waiting',function(){note('Buffering')});"
-            + "v.addEventListener('stalled',function(){note('Stream stalled')})</script></body></html>"
-        return "data:text/html;charset=utf-8," + encodeURIComponent(html)
-    }
-
-    function openZoom() {
-        if (Live.audioFeedId === card.feedId)
-            Live.requestAudio("")
-        Panel.openIsland(zoomUrl())
-    }
-
-    function openCompactEmbed() {
-        if (Live.audioFeedId === card.feedId)
-            Live.requestAudio("")
-        Panel.openIsland(Live.embedUrl(card.feedId))
+    function openExternal() {
+        Panel.openExternal(Live.webUrl(card.feedId))
     }
 
     function retryNow() {
@@ -70,6 +38,7 @@ GlassCard {
 
     function beginResolve(force) {
         failed = false
+        restricted = false
         statusText = card.youtube ? "Resolution YouTube..." : "Resolution du flux..."
         retryTimer.stop()
         playbackWatchdog.stop()
@@ -77,7 +46,7 @@ GlassCard {
         Live.resolve(feedId, force)
     }
 
-    function useBrowserFallback(message) {
+    function useExternalFallback(message, networkRestricted) {
         Live.cancelResolve(card.feedId)
         resolveWatchdog.stop()
         playbackWatchdog.stop()
@@ -85,7 +54,9 @@ GlassCard {
         player.stop()
         card.hlsUrl = ""
         card.failed = false
-        card.statusText = message || "Lecture via navigateur"
+        card.restricted = !!networkRestricted
+        card.statusText = networkRestricted ? "Indisponible sur ce reseau"
+                                             : (message || "Lecture native indisponible")
         if (Live.audioFeedId === card.feedId)
             Live.requestAudio("")
     }
@@ -127,6 +98,7 @@ GlassCard {
                 return
             resolveWatchdog.stop()
             card.failed = false
+            card.restricted = false
             card.hlsUrl = hlsUrl
             card.statusText = "Connexion…"
             playbackWatchdog.restart()
@@ -138,10 +110,25 @@ GlassCard {
             if (id !== card.feedId)
                 return
             if (card.youtube) {
-                card.useBrowserFallback(error || "Lecture via navigateur")
+                card.useExternalFallback(error || "Lecture native indisponible", false)
                 return
             }
             card.scheduleRecovery(error || "Flux indisponible")
+        }
+        function onFeedRestricted(id, reason) {
+            if (id !== card.feedId)
+                return
+            card.useExternalFallback(reason, true)
+        }
+        function onDetailChanged() {
+            if (Live.detailOpen && Live.detailFeedId === card.feedId) {
+                card.pausedForDetail = true
+                player.pause()
+            } else if (card.pausedForDetail) {
+                card.pausedForDetail = false
+                if (card.hlsUrl && !card.failed)
+                    player.play()
+            }
         }
     }
 
@@ -151,7 +138,7 @@ GlassCard {
         repeat: false
         onTriggered: {
             if (card.youtube)
-                card.useBrowserFallback("Resolution impossible - lecture via navigateur")
+                card.useExternalFallback("Resolution native impossible", false)
             else
                 card.scheduleRecovery("Resolution du flux expiree")
         }
@@ -279,14 +266,15 @@ GlassCard {
                 Text {
                     id: sourceText
                     anchors.centerIn: parent
-                    text: Live.sourceLabel(card.feedId)
-                    color: Theme.textSecondary
+                    text: card.restricted ? "RESTRICTED" : Live.sourceLabel(card.feedId)
+                    color: card.restricted ? "#fbbf24" : Theme.textSecondary
                     font.pixelSize: 8
                 }
             }
             Item { width: Math.max(1, parent.width - x - zoomBtn.width - speaker.width - 8); height: 1 }
             Rectangle {
                 id: zoomBtn
+                visible: card.hlsUrl !== ""
                 width: 22
                 height: 18
                 radius: 5
@@ -305,7 +293,7 @@ GlassCard {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: card.openZoom()
+                    onClicked: card.openDetail()
                 }
             }
             Text {
@@ -362,51 +350,36 @@ GlassCard {
                     font.weight: Font.DemiBold
                     horizontalAlignment: Text.AlignHCenter
                 }
-                Row {
+                Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
-                    spacing: 6
-                    Rectangle {
-                        width: openYoutubeLabel.implicitWidth + 24
-                        height: 28
-                        radius: 7
-                        color: openYoutubeMouse.containsMouse ? Qt.rgba(0.97, 0.18, 0.18, 0.35)
-                                                               : Qt.rgba(0.97, 0.18, 0.18, 0.22)
-                        border.color: Qt.rgba(1, 1, 1, 0.24)
+                    width: externalYoutubeRow.implicitWidth + 22
+                    height: 28
+                    radius: 7
+                    color: openYoutubeMouse.containsMouse ? Qt.rgba(0.97, 0.18, 0.18, 0.35)
+                                                           : Qt.rgba(0.97, 0.18, 0.18, 0.22)
+                    border.color: Qt.rgba(1, 1, 1, 0.24)
+                    Row {
+                        id: externalYoutubeRow
+                        anchors.centerIn: parent
+                        spacing: 6
                         Text {
-                            id: openYoutubeLabel
-                            anchors.centerIn: parent
-                            text: "Watch"
+                            text: "î¢§"
+                            font.family: "Segoe Fluent Icons"
+                            font.pixelSize: 10
+                            color: Theme.textPrimary
+                        }
+                        Text {
+                            text: "Ouvrir dans le navigateur"
                             color: Theme.textPrimary
                             font.pixelSize: Theme.fontSizeCaption
                         }
-                        MouseArea {
-                            id: openYoutubeMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: card.openZoom()
-                        }
                     }
-                    Rectangle {
-                        width: embedYoutubeLabel.implicitWidth + 18
-                        height: 28
-                        radius: 7
-                        color: embedYoutubeMouse.containsMouse ? Theme.hover : Qt.rgba(1, 1, 1, 0.08)
-                        border.color: Theme.cardStroke
-                        Text {
-                            id: embedYoutubeLabel
-                            anchors.centerIn: parent
-                            text: "Embed"
-                            color: Theme.textSecondary
-                            font.pixelSize: Theme.fontSizeCaption
-                        }
-                        MouseArea {
-                            id: embedYoutubeMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: card.openCompactEmbed()
-                        }
+                    MouseArea {
+                        id: openYoutubeMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: card.openExternal()
                     }
                 }
             }
@@ -456,42 +429,15 @@ GlassCard {
                             onClicked: card.retryNow()
                         }
                     }
-                    Rectangle {
-                        width: webLabel.implicitWidth + 22
-                        height: 26
-                        radius: 6
-                        color: webMouse.containsMouse ? Qt.rgba(0.31, 0.56, 0.97, 0.28)
-                                                       : Qt.rgba(0.31, 0.56, 0.97, 0.16)
-                        border.color: Qt.rgba(0.31, 0.56, 0.97, 0.45)
-                        Text {
-                            id: webLabel
-                            anchors.centerIn: parent
-                            text: "Web"
-                            color: Theme.textPrimary
-                            font.pixelSize: Theme.fontSizeCaption
-                        }
-                        MouseArea {
-                            id: webMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: card.openZoom()
-                        }
-                    }
                 }
             }
 
             MouseArea {
                 anchors.fill: parent
                 z: 1
-                cursorShape: Qt.PointingHandCursor
-                onClicked: {
-                    if (card.failed || card.hlsUrl === "") {
-                        card.openZoom()
-                    } else {
-                        Live.requestAudio(Live.audioFeedId === card.feedId ? "" : card.feedId)
-                    }
-                }
+                enabled: card.hlsUrl !== "" && !card.failed
+                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                onClicked: Live.requestAudio(Live.audioFeedId === card.feedId ? "" : card.feedId)
             }
         }
     }

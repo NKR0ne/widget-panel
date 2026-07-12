@@ -330,6 +330,33 @@ private slots:
         QCOMPARE(live.audioFeedId(), QString());
         QCOMPARE(changed.count(), 2);
     }
+
+    void liveDetailAcceptsOnlyNativeHlsFeeds()
+    {
+        HttpClient http;
+        LiveFeedService live(&http);
+        QSignalSpy detailChanged(&live, &LiveFeedService::detailChanged);
+
+        QVERIFY(!live.openDetail(QStringLiteral("not-a-feed")));
+        QVERIFY(!live.openDetail(QStringLiteral("live-bloomberg")));
+        QVERIFY(!live.detailOpen());
+        QCOMPARE(detailChanged.count(), 0);
+
+        QVERIFY(live.openDetail(QStringLiteral("euronews")));
+        QVERIFY(live.detailOpen());
+        QCOMPARE(live.detailFeedId(), QStringLiteral("euronews"));
+        QVERIFY(live.detailUrl().endsWith(QStringLiteral("playlist.m3u8")));
+        QCOMPARE(detailChanged.count(), 1);
+
+        live.requestAudio(QStringLiteral("euronews"));
+        QCOMPARE(live.audioFeedId(), QStringLiteral("euronews"));
+        live.closeDetail();
+        QVERIFY(!live.detailOpen());
+        QCOMPARE(live.detailFeedId(), QString());
+        QCOMPARE(live.detailUrl(), QString());
+        QCOMPARE(live.audioFeedId(), QString());
+        QCOMPARE(detailChanged.count(), 2);
+    }
 };
 
 QTEST_MAIN(TestQtPanel)

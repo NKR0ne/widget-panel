@@ -69,6 +69,7 @@ public:
     Q_INVOKABLE void backIsland();
     Q_INVOKABLE void forwardIsland();
     Q_INVOKABLE QString runIslandScript(const QString& script);
+    Q_INVOKABLE bool openExternal(const QString& url);
     Q_INVOKABLE void captureTradingViewSession();
     Q_INVOKABLE void closeIsland();
     // Settings surface (persists to the wp-* keys, applies live).

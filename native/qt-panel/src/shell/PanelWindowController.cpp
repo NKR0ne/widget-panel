@@ -9,6 +9,7 @@
 #include <QCursor>
 #include <QDateTime>
 #include <QDebug>
+#include <QDesktopServices>
 #include <QDir>
 #include <QFileInfo>
 #include <QHash>
@@ -491,6 +492,20 @@ QString PanelWindowController::runIslandScript(const QString& script)
     if (!m_islandOpen || script.trimmed().isEmpty() || !m_brave)
         return {};
     return m_brave->evaluate(script);
+}
+
+bool PanelWindowController::openExternal(const QString& url)
+{
+    const QUrl target = QUrl::fromUserInput(url.trimmed());
+    if (!target.isValid()
+        || (target.scheme() != QLatin1String("http")
+            && target.scheme() != QLatin1String("https"))) {
+        qWarning() << "[external] rejected URL" << url;
+        return false;
+    }
+    const bool opened = QDesktopServices::openUrl(target);
+    qInfo() << "[external]" << (opened ? "opened" : "failed") << target.host();
+    return opened;
 }
 
 void PanelWindowController::captureTradingViewSession()
