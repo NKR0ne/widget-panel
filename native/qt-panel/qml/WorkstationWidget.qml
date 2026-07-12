@@ -11,6 +11,7 @@ GlassCard {
     property string tab: "graphs"
     property int snapRev: 0
     property bool detailMode: false
+    property bool modelSyncQueued: false
 
     title: ({ cpu: "CPU", gpu: "GPU", ram: "RAM", disk: "Disque", network: "Reseau" })[kind] || kind
     implicitHeight: body.implicitHeight + 24
@@ -53,8 +54,45 @@ GlassCard {
 
     Connections {
         target: Workstation
-        function onSnapshotChanged() { card.snapRev++ }
+        function onSnapshotChanged() {
+            card.snapRev++
+            card.scheduleModelSync()
+        }
     }
+
+    ListModel { id: graphModel; dynamicRoles: true }
+    ListModel { id: detailModel; dynamicRoles: true }
+    ListModel { id: footerModel; dynamicRoles: true }
+
+    function syncListModel(model, values) {
+        const next = values || []
+        while (model.count > next.length)
+            model.remove(model.count - 1)
+        for (let i = 0; i < next.length; i++) {
+            const row = { spec: next[i] }
+            if (i < model.count)
+                model.set(i, row)
+            else
+                model.append(row)
+        }
+    }
+
+    function syncModels() {
+        modelSyncQueued = false
+        syncListModel(graphModel, graphSpecs())
+        syncListModel(detailModel, detailRows())
+        syncListModel(footerModel, footerTiles())
+    }
+
+    function scheduleModelSync() {
+        if (modelSyncQueued)
+            return
+        modelSyncQueued = true
+        Qt.callLater(syncModels)
+    }
+
+    onKindChanged: scheduleModelSync()
+    Component.onCompleted: scheduleModelSync()
 
     function valuesOf(value) {
         const out = []
@@ -294,16 +332,12 @@ GlassCard {
         if (kind === "cpu")
             return [
                 { label: "Clock", value: fmt(metric.frequencyMHz, " MHz", 0) },
-                { label: "Threads", value: fmtInt(metric.threads) },
-                { label: "Power", value: fmt(metric.powerW, " W") },
-                { label: "Temp", value: fmt(metric.temperatureC, " C") }
+                { label: "Threads", value: fmtInt(metric.threads) }
             ]
         if (kind === "gpu")
             return [
                 { label: "Clock", value: fmt(metric.clockMHz, " MHz", 0) },
-                { label: "VRAM", value: fmtMemoryMB(metric.vramUsedMB) },
-                { label: "Power", value: fmt(metric.powerW, " W") },
-                { label: "Temp", value: fmt(metric.temperatureC, " C") }
+                { label: "VRAM", value: fmtMemoryMB(metric.vramUsedMB) }
             ]
         if (kind === "ram") {
             const bw = metric.bandwidth || ({})
@@ -413,13 +447,13 @@ GlassCard {
             spacing: 5
 
             Repeater {
-                model: card.snapRev, card.graphSpecs()
+                model: graphModel
                 delegate: Rectangle {
                     id: graph
-                    required property var modelData
+                    required property var spec
                     required property int index
                     width: card.graphWidth(index, graphFlow.width)
-                    height: Math.max(26, Number(modelData.height) || 42) + 22
+                    height: Math.max(26, Number(spec.height) || 42) + 22
                     radius: 6
                     color: Qt.rgba(0.01, 0.03, 0.07, 0.28)
                     border.color: Theme.cardStroke
@@ -429,7 +463,7 @@ GlassCard {
                         x: 7
                         y: 4
                         width: Math.max(40, parent.width - graphValue.width - 20)
-                        text: graph.modelData.label || ""
+                        text: graph.spec.label || ""
                         color: Theme.textSecondary
                         font.pixelSize: 8
                         elide: Text.ElideRight
@@ -439,7 +473,7 @@ GlassCard {
                         anchors.right: parent.right
                         anchors.rightMargin: 7
                         y: 4
-                        text: graph.modelData.value || "--"
+                        text: graph.spec.value || "--"
                         color: Theme.textPrimary
                         font.pixelSize: 8
                     }
@@ -454,6 +488,10 @@ GlassCard {
                             target: card
                             function onSnapRevChanged() { chart.requestPaint() }
                         }
+                        Connections {
+                            target: graph
+                            function onSpecChanged() { chart.requestPaint() }
+                        }
 
                         onPaint: {
                             const ctx = getContext("2d")
@@ -466,8 +504,8 @@ GlassCard {
                             ctx.lineTo(width, height - 0.5)
                             ctx.stroke()
 
-                            const max = Math.max(1, Number(graph.modelData.max) || 100)
-                            const series = graph.modelData.series || []
+                            const max = Math.max(1, Number(graph.spec.max) || 100)
+                            const series = graph.spec.series || []
                             for (const line of series) {
                                 const values = card.valuesOf(line.values)
                                 if (values.length < 2)
@@ -512,9 +550,9 @@ GlassCard {
             spacing: 0
 
             Repeater {
-                model: card.snapRev, card.detailRows()
+                model: detailModel
                 delegate: Row {
-                    required property var modelData
+                    required property var spec
                     width: parent.width
                     height: Math.max(labelText.implicitHeight, valueText.implicitHeight) + 8
                     spacing: 8
@@ -522,7 +560,7 @@ GlassCard {
                         id: labelText
                         width: Math.max(76, parent.width * 0.43)
                         anchors.verticalCenter: parent.verticalCenter
-                        text: modelData.label
+                        text: spec.label
                         color: Theme.textSecondary
                         font.pixelSize: 9
                         elide: Text.ElideRight
@@ -531,7 +569,7 @@ GlassCard {
                         id: valueText
                         width: Math.max(40, parent.width - labelText.width - 8)
                         anchors.verticalCenter: parent.verticalCenter
-                        text: modelData.value
+                        text: spec.value
                         color: Theme.textPrimary
                         font.pixelSize: 10
                         horizontalAlignment: Text.AlignRight
@@ -542,30 +580,102 @@ GlassCard {
         }
 
         Grid {
-            visible: Workstation.connected
+            visible: Workstation.connected && card.kind !== "cpu" && card.kind !== "gpu"
             width: parent.width
-            columns: Math.min(card.footerTiles().length, 4)
+            columns: Math.min(footerModel.count, 4)
             spacing: 6
             Repeater {
-                model: card.snapRev, card.footerTiles()
+                model: footerModel
                 delegate: Column {
-                    required property var modelData
+                    required property var spec
                     width: Math.floor((body.width - Math.max(0, parent.columns - 1) * parent.spacing)
                                       / Math.max(1, parent.columns))
                     spacing: 2
                     Text {
                         width: parent.width
-                        text: modelData.label
+                        text: spec.label
                         color: Theme.textSecondary
                         font.pixelSize: 8
                         elide: Text.ElideRight
                     }
                     Text {
                         width: parent.width
-                        text: modelData.value
+                        text: spec.value
                         color: Theme.textPrimary
                         font.pixelSize: 9
                         elide: Text.ElideRight
+                    }
+                }
+            }
+        }
+
+        Column {
+            id: instrumentFooter
+            visible: Workstation.connected && (card.kind === "cpu" || card.kind === "gpu")
+            width: parent.width
+            spacing: 6
+
+            Rectangle {
+                width: parent.width
+                height: 1
+                color: Qt.rgba(0.97, 0.98, 1, 0.10)
+            }
+
+            Row {
+                id: instrumentRow
+                width: parent.width
+                height: 48
+                spacing: 6
+                readonly property real powerWidth: width >= 360 ? 94 : 48
+                readonly property real tempWidth: width >= 360 ? 74 : 52
+                readonly property real metricWidth: Math.max(
+                    26, (width - powerWidth - tempWidth - spacing * 3) / 2)
+
+                Repeater {
+                    model: footerModel
+                    delegate: Column {
+                        required property var spec
+                        width: instrumentRow.metricWidth
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 2
+                        Text {
+                            width: parent.width
+                            text: spec.label
+                            color: Theme.textSecondary
+                            font.pixelSize: 8
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            width: parent.width
+                            text: spec.value
+                            color: Theme.textPrimary
+                            font.pixelSize: 9
+                            elide: Text.ElideRight
+                        }
+                    }
+                }
+
+                PowerGauge {
+                    width: instrumentRow.powerWidth
+                    height: parent.height
+                    value: Number(card.metric.powerW)
+                    maximum: {
+                        const reported = Number(card.metric.powerLimitW)
+                        if (isFinite(reported) && reported > 0)
+                            return reported
+                        return card.kind === "cpu" ? 130 : 320
+                    }
+                }
+
+                TemperatureBar {
+                    width: instrumentRow.tempWidth
+                    height: parent.height
+                    value: Number(card.metric.temperatureC)
+                    maximum: {
+                        const reported = Number(card.metric.tjMaxC)
+                        if (isFinite(reported) && reported > 0)
+                            return reported
+                        return card.kind === "cpu" ? 100 : 95
                     }
                 }
             }

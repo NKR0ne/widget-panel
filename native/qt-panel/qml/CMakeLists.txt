@@ -29,6 +29,8 @@ qt_add_qml_module(qtpanel_ui
         WeatherWidget.qml
         TrafficWidget.qml
         StocksWidget.qml
+        PowerGauge.qml
+        TemperatureBar.qml
         WorkstationWidget.qml
         MonitorStage.qml
         LiveFeedWidget.qml
