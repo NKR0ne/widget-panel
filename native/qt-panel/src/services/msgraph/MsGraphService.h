@@ -25,6 +25,7 @@ class MsGraphService : public QObject {
     // "none" (no client id), "setup" (needs interactive auth),
     // "authenticating", "refreshing", "ok", "error"
     Q_PROPERTY(QString authState READ authState NOTIFY authStateChanged)
+    Q_PROPERTY(QString authError READ authError NOTIFY authErrorChanged)
     Q_PROPERTY(QVariantList agendaEvents READ agendaEvents NOTIFY agendaChanged)
     Q_PROPERTY(QVariantList mailMessages READ mailMessages NOTIFY mailChanged)
     Q_PROPERTY(QVariantList todoTasks READ todoTasks NOTIFY todoChanged)
@@ -38,6 +39,7 @@ public:
     MsGraphService(SettingsStore* settings, HttpClient* http, QObject* parent = nullptr);
 
     QString authState() const { return m_authState; }
+    QString authError() const { return m_authError; }
     QVariantList agendaEvents() const { return m_agendaEvents; }
     QVariantList mailMessages() const { return m_mailMessages; }
     QVariantList todoTasks() const { return m_todoTasks; }
@@ -48,6 +50,7 @@ public:
     QString selectedTodoListId() const;
 
     Q_INVOKABLE void startAuth(const QString& clientId);
+    Q_INVOKABLE void cancelAuth();
     Q_INVOKABLE void signOut();
     Q_INVOKABLE void refreshAll();
     Q_INVOKABLE void markMailRead(const QString& messageId);
@@ -59,6 +62,8 @@ public:
 
 signals:
     void authStateChanged();
+    void authErrorChanged();
+    void authUrlReady(const QString& url);
     void agendaChanged();
     void mailChanged();
     void todoChanged();
@@ -70,6 +75,7 @@ private:
     using TokenCallback = std::function<void(const QString& accessToken)>;
 
     void setAuthState(const QString& state);
+    void failAuth(const QString& error);
     void loadStoredTokens();
     void saveTokens(const QString& accessToken, const QString& refreshToken, qint64 expiryMs);
     void ensureToken(TokenCallback onReady);
@@ -89,6 +95,7 @@ private:
     HttpClient* m_http = nullptr;
 
     QString m_authState = QStringLiteral("none");
+    QString m_authError;
     QString m_clientId;
     QString m_accessToken;
     QString m_refreshToken;
@@ -99,6 +106,7 @@ private:
     // Interactive PKCE state
     QTcpServer* m_authServer = nullptr;
     QString m_codeVerifier;
+    QString m_authStateToken;
     QTimer m_authTimeout;
 
     QTimer m_agendaTimer;

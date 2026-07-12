@@ -2,8 +2,8 @@ import QtQuick
 import QtPanel.Native
 
 // Shared auth-state strip for the Microsoft widgets: silent while "ok",
-// explains itself in every other state. Interactive sign-in opens the
-// system browser (PKCE + loopback callback).
+// explains itself in every other state. Interactive sign-in opens in the
+// native Brave island (PKCE + loopback callback).
 Column {
     id: pane
     spacing: 4
@@ -30,6 +30,32 @@ Column {
         font.pixelSize: Theme.fontSizeCaption
         wrapMode: Text.WordWrap
     }
+    Rectangle {
+        width: cancelLabel.implicitWidth + 18
+        height: 22
+        radius: 5
+        visible: MsGraph.authState === "authenticating"
+        color: cancelMouse.containsMouse ? Theme.hover : Qt.rgba(1, 1, 1, 0.05)
+        border.color: Theme.cardStroke
+        Text {
+            id: cancelLabel
+            anchors.centerIn: parent
+            text: "Annuler"
+            color: Theme.textSecondary
+            font.pixelSize: Theme.fontSizeCaption
+        }
+        MouseArea {
+            id: cancelMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+                MsGraph.cancelAuth()
+                if (Panel.islandOpen)
+                    Panel.closeIsland()
+            }
+        }
+    }
     Column {
         width: parent.width
         spacing: 6
@@ -38,8 +64,8 @@ Column {
 
         Text {
             width: parent.width
-            text: (MsGraph.authState === "error" ? "Échec de l'authentification. " : "")
-                  + "Reconnexion à Microsoft requise."
+            text: MsGraph.authState === "error" && MsGraph.authError !== ""
+                ? MsGraph.authError : "Reconnexion à Microsoft requise."
             color: Theme.textSecondary
             font.pixelSize: Theme.fontSizeCaption
             wrapMode: Text.WordWrap

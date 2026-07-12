@@ -6,7 +6,6 @@
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
-#include <QDesktopServices>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -63,7 +62,7 @@ MsGraphService::MsGraphService(SettingsStore* settings, HttpClient* http, QObjec
     connect(&m_authTimeout, &QTimer::timeout, this, [this] {
         stopAuthServer();
         if (m_authState == QLatin1String("authenticating"))
-            setAuthState(QStringLiteral("error"));
+            failAuth(QStringLiteral("Microsoft sign-in timed out."));
     });
 
     m_agendaTimer.setInterval(kAgendaPollMin * 60 * 1000);
@@ -102,6 +101,10 @@ MsGraphService::MsGraphService(SettingsStore* settings, HttpClient* http, QObjec
 
 void MsGraphService::setAuthState(const QString& state)
 {
+    if (state != QLatin1String("error") && !m_authError.isEmpty()) {
+        m_authError.clear();
+        emit authErrorChanged();
+    }
     if (m_authState == state)
         return;
     m_authState = state;
@@ -173,11 +176,20 @@ void MsGraphService::refreshToken(TokenCallback onReady)
         const QJsonObject body = doc.object();
         const QString accessToken = body.value(QLatin1String("access_token")).toString();
         if (status != 200 || accessToken.isEmpty()) {
-            qWarning() << "[msgraph] token refresh failed:" << status
-                       << (error.isEmpty()
-                           ? body.value(QLatin1String("error")).toString() : error);
+            const QString detail = !error.isEmpty() ? error
+                : !body.value(QLatin1String("error_description")).toString().isEmpty()
+                    ? body.value(QLatin1String("error_description")).toString()
+                    : body.value(QLatin1String("error")).toString();
             m_tokenWaiters.clear();
-            setAuthState(QStringLiteral("setup"));
+            if (status == 400 || status == 401) {
+                m_accessToken.clear();
+                m_refreshToken.clear();
+                m_expiryMs = 0;
+                m_settings->remove(QStringLiteral("wp-ms-tokens"));
+            }
+            failAuth(detail.isEmpty()
+                         ? QStringLiteral("Microsoft token refresh failed (%1).").arg(status)
+                         : detail);
             return;
         }
         const qint64 expiresIn = static_cast<qint64>(
@@ -196,8 +208,10 @@ void MsGraphService::refreshToken(TokenCallback onReady)
 
 void MsGraphService::startAuth(const QString& clientId)
 {
-    if (clientId.trimmed().isEmpty())
+    if (clientId.trimmed().isEmpty()) {
+        failAuth(QStringLiteral("Microsoft client ID is not configured."));
         return;
+    }
     m_clientId = clientId.trimmed();
     m_settings->set(QStringLiteral("wp-ms-client"), m_clientId);
     stopAuthServer();
@@ -206,6 +220,10 @@ void MsGraphService::startAuth(const QString& clientId)
     QRandomGenerator::system()->fillRange(
         reinterpret_cast<quint32*>(verifierBytes.data()), verifierBytes.size() / 4);
     m_codeVerifier = base64Url(verifierBytes);
+    QByteArray stateBytes(24, Qt::Uninitialized);
+    QRandomGenerator::system()->fillRange(
+        reinterpret_cast<quint32*>(stateBytes.data()), stateBytes.size() / 4);
+    m_authStateToken = base64Url(stateBytes);
     const QString challenge = base64Url(
         QCryptographicHash::hash(m_codeVerifier.toLatin1(), QCryptographicHash::Sha256));
 
@@ -226,6 +244,21 @@ void MsGraphService::startAuth(const QString& clientId)
                 const QUrlQuery query(QUrl(QString::fromLatin1(parts[1])).query());
                 const QString code = query.queryItemValue(QStringLiteral("code"));
                 const QString error = query.queryItemValue(QStringLiteral("error"));
+                const QString errorDescription = query.queryItemValue(
+                    QStringLiteral("error_description"));
+                const QString returnedState = query.queryItemValue(QStringLiteral("state"));
+                const bool stateValid = !m_authStateToken.isEmpty()
+                    && returnedState == m_authStateToken;
+                const bool success = error.isEmpty() && !code.isEmpty() && stateValid;
+                QString callbackError;
+                if (!stateValid)
+                    callbackError = QStringLiteral("OAuth state validation failed.");
+                else if (!errorDescription.isEmpty())
+                    callbackError = errorDescription;
+                else if (!error.isEmpty())
+                    callbackError = error;
+                else if (code.isEmpty())
+                    callbackError = QStringLiteral("Microsoft returned no authorization code.");
 
                 const QByteArray html = QStringLiteral(
                     "<!DOCTYPE html><html><head><meta charset=utf-8><title>Widget Panel</title></head>"
@@ -233,10 +266,11 @@ void MsGraphService::startAuth(const QString& clientId)
                     "align-items:center;justify-content:center;height:100vh;margin:0;"
                     "flex-direction:column;gap:14px\"><div style=\"font-size:32px\">%1</div>"
                     "<div style=\"font-size:14px\">%2</div></body></html>")
-                    .arg(error.isEmpty() ? QStringLiteral("✓") : QStringLiteral("✗"),
-                         error.isEmpty()
+                    .arg(success ? QStringLiteral("✓") : QStringLiteral("✗"),
+                         success
                              ? QStringLiteral("Authentication complete — you can close this tab.")
-                             : QStringLiteral("Authentication failed: ") + error)
+                             : (QStringLiteral("Authentication failed: ")
+                                + callbackError.toHtmlEscaped()))
                     .toUtf8();
                 socket->write("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n"
                               "Content-Length: " + QByteArray::number(html.size()) + "\r\n\r\n" + html);
@@ -244,8 +278,8 @@ void MsGraphService::startAuth(const QString& clientId)
                 socket->disconnectFromHost();
 
                 stopAuthServer();
-                if (!error.isEmpty() || code.isEmpty())
-                    setAuthState(QStringLiteral("error"));
+                if (!success)
+                    failAuth(callbackError);
                 else
                     exchangeAuthCode(code);
             });
@@ -254,7 +288,7 @@ void MsGraphService::startAuth(const QString& clientId)
     if (!m_authServer->listen(QHostAddress::LocalHost, kAuthPort)) {
         qWarning() << "[msgraph] auth callback port" << kAuthPort << "unavailable";
         stopAuthServer();
-        setAuthState(QStringLiteral("error"));
+        failAuth(QStringLiteral("Microsoft callback port 47340 is unavailable."));
         return;
     }
 
@@ -267,13 +301,14 @@ void MsGraphService::startAuth(const QString& clientId)
     query.addQueryItem(QStringLiteral("scope"), QLatin1String(kScopes));
     query.addQueryItem(QStringLiteral("code_challenge"), challenge);
     query.addQueryItem(QStringLiteral("code_challenge_method"), QStringLiteral("S256"));
+    query.addQueryItem(QStringLiteral("state"), m_authStateToken);
     query.addQueryItem(QStringLiteral("prompt"), QStringLiteral("select_account"));
     authUrl.setQuery(query);
 
     setAuthState(QStringLiteral("authenticating"));
     m_authTimeout.start();
-    QDesktopServices::openUrl(authUrl);
-    qInfo() << "[msgraph] PKCE auth opened in system browser";
+    emit authUrlReady(authUrl.toString());
+    qInfo() << "[msgraph] PKCE auth opened in native browser island";
 }
 
 void MsGraphService::exchangeAuthCode(const QString& code)
@@ -291,8 +326,13 @@ void MsGraphService::exchangeAuthCode(const QString& code)
         const QJsonObject body = doc.object();
         const QString accessToken = body.value(QLatin1String("access_token")).toString();
         if (status != 200 || accessToken.isEmpty()) {
-            qWarning() << "[msgraph] code exchange failed:" << status << error;
-            setAuthState(QStringLiteral("error"));
+            const QString detail = !error.isEmpty() ? error
+                : !body.value(QLatin1String("error_description")).toString().isEmpty()
+                    ? body.value(QLatin1String("error_description")).toString()
+                    : body.value(QLatin1String("error")).toString();
+            failAuth(detail.isEmpty()
+                         ? QStringLiteral("Microsoft code exchange failed (%1).").arg(status)
+                         : detail);
             return;
         }
         const qint64 expiresIn = static_cast<qint64>(
@@ -301,6 +341,8 @@ void MsGraphService::exchangeAuthCode(const QString& code)
                    body.value(QLatin1String("refresh_token")).toString(),
                    QDateTime::currentMSecsSinceEpoch() + expiresIn * 1000);
         setAuthState(QStringLiteral("ok"));
+        m_codeVerifier.clear();
+        m_authStateToken.clear();
         refreshAll();
     });
 }
@@ -313,6 +355,17 @@ void MsGraphService::stopAuthServer()
         m_authServer->deleteLater();
         m_authServer = nullptr;
     }
+}
+
+void MsGraphService::cancelAuth()
+{
+    if (m_authState != QLatin1String("authenticating"))
+        return;
+    stopAuthServer();
+    m_codeVerifier.clear();
+    m_authStateToken.clear();
+    setAuthState(m_clientId.isEmpty() ? QStringLiteral("none") : QStringLiteral("setup"));
+    qInfo() << "[msgraph] interactive authentication cancelled";
 }
 
 void MsGraphService::signOut()
@@ -724,6 +777,18 @@ void MsGraphService::markMailRead(const QString& messageId)
                 qWarning() << "[msgraph] markRead failed:" << status << error;
         });
     });
+}
+
+void MsGraphService::failAuth(const QString& error)
+{
+    const QString detail = error.trimmed().isEmpty()
+        ? QStringLiteral("Microsoft authentication failed.") : error.trimmed();
+    if (m_authError != detail) {
+        m_authError = detail;
+        emit authErrorChanged();
+    }
+    setAuthState(QStringLiteral("error"));
+    qWarning() << "[msgraph] auth failed:" << detail;
 }
 
 void MsGraphService::moveMail(const QString& messageId, const QString& destinationId)

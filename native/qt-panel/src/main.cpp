@@ -240,6 +240,17 @@ int main(int argc, char* argv[])
     // Outlook unread count → AppBar pill badge (and any future overlay).
     QObject::connect(&msGraph, &MsGraphService::unreadCountChanged, &helper,
                      [&] { helper.sendBadge(msGraph.unreadCount()); });
+    QObject::connect(&msGraph, &MsGraphService::authUrlReady, &controller,
+                     [&controller](const QString& url) { controller.openIsland(url); });
+    QObject::connect(&msGraph, &MsGraphService::authStateChanged, &controller,
+                     [&msGraph, &controller] {
+        if (msGraph.authState() != QLatin1String("ok") || !controller.islandOpen())
+            return;
+        const QString url = controller.islandUrl();
+        if (url.contains(QLatin1String("login.microsoftonline.com"), Qt::CaseInsensitive)
+            || url.contains(QLatin1String("localhost:47340"), Qt::CaseInsensitive))
+            controller.closeIsland();
+    });
 
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Panel", &controller);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Store", &settings);
