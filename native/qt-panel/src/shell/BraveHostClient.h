@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QJsonObject>
+#include <QElapsedTimer>
 #include <QObject>
 #include <QPointer>
 #include <QTcpServer>
@@ -22,7 +23,9 @@ public:
     explicit BraveHostClient(QObject* parent = nullptr);
 
     void start();
-    bool connected() const { return m_socket != nullptr; }
+    bool connected() const {
+        return m_socket && m_socket->state() == QAbstractSocket::ConnectedState;
+    }
 
     void open(const QString& url, int physX, int physY, int physW, int physH);
     void navigate(const QString& url);
@@ -56,6 +59,9 @@ private:
     QProcess* m_helperProcess = nullptr;
     QJsonObject m_pendingOpen; // queued until brave-host connects
     QJsonObject m_pendingEval;
+    QJsonObject m_lastOpen;
+    bool m_stateRequestPending = false;
+    QElapsedTimer m_stateRequestAge;
     quint64 m_nextEvaluationId = 0;
 };
 

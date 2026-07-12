@@ -8,6 +8,7 @@
 //   Electron → brave-host  {"type":"navigate","url":"..."}
 //   Electron → brave-host  {"type":"resize","w":W,"h":H}
 //   Electron → brave-host  {"type":"close"}
+//   Test/owner → brave-host {"type":"quit"}
 //   Electron → brave-host  {"type":"detach"}
 //   Electron → brave-host  {"type":"round-corners","hwnd":N}
 //   Electron → brave-host  {"type":"z-top","hwnd":N}
@@ -23,7 +24,6 @@
 #include <winhttp.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <tlhelp32.h>
 #include <psapi.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -33,6 +33,8 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
+#include <condition_variable>
+#include <deque>
 #include <mutex>
 #include <fstream>
 #include <sstream>
@@ -271,27 +273,16 @@ static HWND FindNewBraveHwnd(const std::vector<HWND>& before, int timeoutMs = 12
     return NULL;
 }
 
-// ── Kill process tree ─────────────────────────────────────────────────────────
-static void KillTree(DWORD pid) {
-    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snap == INVALID_HANDLE_VALUE) return;
-    PROCESSENTRY32W pe{ sizeof(pe) };
-    std::vector<DWORD> kids;
-    if (Process32FirstW(snap, &pe))
-        do { if (pe.th32ParentProcessID == pid) kids.push_back(pe.th32ProcessID); }
-        while (Process32NextW(snap, &pe));
-    CloseHandle(snap);
-    for (auto k : kids) KillTree(k);
-    HANDLE h = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
-    if (h) { TerminateProcess(h, 0); CloseHandle(h); }
-}
-
 // ── CDP navigation via WinHTTP WebSocket ──────────────────────────────────────
 static const int CDP_PORT = 9232;
 
 static std::string CdpHttpGet(const wchar_t* path) {
     HINTERNET hSess = WinHttpOpen(L"wp", WINHTTP_ACCESS_TYPE_NO_PROXY, NULL, NULL, 0);
     if (!hSess) return "";
+    // The shell window lives on the socket thread. Bound localhost calls even
+    // though CDP work normally runs on the worker, so shutdown and recovery
+    // cannot stall indefinitely when Chromium is redirecting or exiting.
+    WinHttpSetTimeouts(hSess, 1000, 1000, 1000, 1000);
     HINTERNET hConn = WinHttpConnect(hSess, L"localhost", CDP_PORT, 0);
     HINTERNET hReq  = WinHttpOpenRequest(hConn, L"GET", path, NULL, NULL, NULL, 0);
     std::string result;
@@ -565,6 +556,7 @@ static int                 g_x = 0, g_y = 0, g_w = 900, g_h = 800;
 static int                 g_shellX = 0, g_shellY = 0;
 static std::wstring        g_bravePath;
 static bool                g_launched = false;
+static std::atomic<bool>    g_exitRequested{false};
 
 static void DestroyShell() {
     if (g_shell && IsWindow(g_shell)) {
@@ -580,15 +572,21 @@ static void KillBrave() {
         ShowWindow(g_brave, SW_HIDE);
     }
     g_brave = NULL;
+    if (g_braveJob) {
+        // The dedicated browser and every child renderer are assigned to this
+        // kill-on-close job. Terminating the job is bounded and avoids a slow
+        // recursive process snapshot on the Win32 shell thread.
+        TerminateJobObject(g_braveJob, 0);
+        CloseHandle(g_braveJob);
+        g_braveJob = NULL;
+    } else if (g_pi.hProcess
+               && WaitForSingleObject(g_pi.hProcess, 0) == WAIT_TIMEOUT) {
+        TerminateProcess(g_pi.hProcess, 0);
+    }
     if (g_pi.hProcess) {
-        KillTree(g_pi.dwProcessId);
         CloseHandle(g_pi.hProcess);
         CloseHandle(g_pi.hThread);
         g_pi = {};
-    }
-    if (g_braveJob) {
-        CloseHandle(g_braveJob);
-        g_braveJob = NULL;
     }
 }
 
@@ -703,18 +701,86 @@ static bool ReparentBrave(const std::vector<HWND>& snapBefore) {
 // ── TCP ───────────────────────────────────────────────────────────────────────
 static SOCKET g_sock = INVALID_SOCKET;
 static std::mutex g_sockMtx;
+static std::atomic<unsigned long long> g_cdpGeneration{1};
+static thread_local unsigned long long g_activeCdpGeneration = 0;
 static void Send(const std::string& json) {
+    if (g_activeCdpGeneration != 0
+        && g_activeCdpGeneration != g_cdpGeneration.load())
+        return;
     std::lock_guard<std::mutex> lk(g_sockMtx);
     if (g_sock == INVALID_SOCKET) return;
     std::string line = json + "\n";
     send(g_sock, line.c_str(), (int)line.size(), 0);
 }
 
-static void HandleMessage(const std::string& line) {
+struct CdpTask {
+    std::string line;
+    std::string type;
+    unsigned long long generation = 0;
+};
+
+static std::mutex g_cdpQueueMtx;
+static std::condition_variable g_cdpQueueCv;
+static std::deque<CdpTask> g_cdpQueue;
+
+static void HandleMessage(const std::string& line, bool fromCdpWorker = false);
+
+static void InvalidateCdpTasks() {
+    g_cdpGeneration.fetch_add(1);
+    std::lock_guard<std::mutex> lock(g_cdpQueueMtx);
+    g_cdpQueue.clear();
+}
+
+static void QueueCdpTask(const std::string& line, const std::string& type) {
+    const auto generation = g_cdpGeneration.load();
+    {
+        std::lock_guard<std::mutex> lock(g_cdpQueueMtx);
+        if (type == "state") {
+            for (const auto& pending : g_cdpQueue) {
+                if (pending.generation == generation && pending.type == "state")
+                    return;
+            }
+        }
+        g_cdpQueue.push_back({line, type, generation});
+    }
+    g_cdpQueueCv.notify_one();
+}
+
+static void CdpWorkerLoop() {
+    while (true) {
+        CdpTask task;
+        {
+            std::unique_lock<std::mutex> lock(g_cdpQueueMtx);
+            g_cdpQueueCv.wait(lock, [] { return !g_cdpQueue.empty(); });
+            task = std::move(g_cdpQueue.front());
+            g_cdpQueue.pop_front();
+        }
+        if (task.generation != g_cdpGeneration.load())
+            continue;
+        g_activeCdpGeneration = task.generation;
+        HandleMessage(task.line, true);
+        g_activeCdpGeneration = 0;
+    }
+}
+
+static bool IsCdpTask(const std::string& type) {
+    return type == "navigate" || type == "reload" || type == "back"
+        || type == "forward" || type == "eval" || type == "state"
+        || type == "cookies";
+}
+
+static void HandleMessage(const std::string& line, bool fromCdpWorker) {
     std::string type = jstr(line, "type");
+
+    if (!fromCdpWorker && IsCdpTask(type)
+        && !(type == "navigate" && !g_launched)) {
+        QueueCdpTask(line, type);
+        return;
+    }
     Log("[msg] " + line);
 
     if (type == "open") {
+        InvalidateCdpTasks();
         g_shellX = (int)jnum(line, "x");  // screen coords for the shell window
         g_shellY = (int)jnum(line, "y");
         g_x = 0;  // Brave fills shell at (0,0)
@@ -744,7 +810,7 @@ static void HandleMessage(const std::string& line) {
     }
     else if (type == "navigate") {
         std::string url = jstr(line, "url");
-        if (!g_launched) {
+        if (!fromCdpWorker && !g_launched) {
             SnapData sd; EnumWindows(SnapProc, reinterpret_cast<LPARAM>(&sd));
             std::vector<HWND> snap = sd.hwnds;
             if (LaunchBrave(url, snap)) {
@@ -793,8 +859,10 @@ static void HandleMessage(const std::string& line) {
             "JSON.stringify({url:location.href,title:document.title,readyState:document.readyState})";
         CdpReply page = CallCDP("Runtime.evaluate",
             "{\"expression\":\"" + JsonEscape(expression)
-                + "\",\"returnByValue\":true}");
-        CdpReply history = CallCDP("Page.getNavigationHistory");
+                + "\",\"returnByValue\":true}", true, 2500);
+        CdpReply history;
+        if (page.ok)
+            history = CallCDP("Page.getNavigationHistory", "{}", true, 1500);
         std::string value = jstr(page.json, "value");
         std::string url = jstr(value, "url");
         std::string title = jstr(value, "title");
@@ -826,12 +894,20 @@ static void HandleMessage(const std::string& line) {
                          SWP_NOZORDER | SWP_NOACTIVATE);
     }
     else if (type == "close") {
+        InvalidateCdpTasks();
         // Hide the shell first for instant visual feedback. KillBrave's
         // process-tree cleanup (renderers, GPU, etc.) can take a moment
         // and would otherwise delay the apparent panel dismissal.
         if (g_shell && IsWindow(g_shell)) ShowWindow(g_shell, SW_HIDE);
         KillBrave();
         DestroyShell();
+    }
+    else if (type == "quit") {
+        InvalidateCdpTasks();
+        if (g_shell && IsWindow(g_shell)) ShowWindow(g_shell, SW_HIDE);
+        KillBrave();
+        DestroyShell();
+        g_exitRequested = true;
     }
     else if (type == "round-corners") {
         HWND hwnd = (HWND)(uintptr_t)(unsigned long long)jnum(line, "hwnd");
@@ -859,6 +935,7 @@ static void HandleMessage(const std::string& line) {
         if (tray) ShowWindow(tray, SW_SHOW);
     }
     else if (type == "detach") {
+        InvalidateCdpTasks();
         if (g_brave && IsWindow(g_brave)) {
             LONG_PTR style = GetWindowLongPtrW(g_brave, GWL_STYLE);
             style &= ~WS_CHILD;
@@ -881,7 +958,7 @@ static void HandleMessage(const std::string& line) {
 
 static void ConnectLoop() {
     const int PORT = 47322;
-    while (true) {
+    while (!g_exitRequested.load()) {
         SOCKET s = socket(AF_INET, SOCK_STREAM, 0);
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
@@ -890,7 +967,10 @@ static void ConnectLoop() {
         if (connect(s, (sockaddr*)&addr, sizeof(addr)) != 0) {
             closesocket(s);
             // Pump messages while waiting to reconnect so the shell stays responsive
-            for (int i = 0; i < 50; i++) { PumpPending(); Sleep(20); }
+            for (int i = 0; i < 50 && !g_exitRequested.load(); i++) {
+                PumpPending();
+                Sleep(20);
+            }
             continue;
         }
         { std::lock_guard<std::mutex> lk(g_sockMtx); g_sock = s; }
@@ -898,7 +978,7 @@ static void ConnectLoop() {
         Send("{\"type\":\"ready\"}");
         std::string buf;
         char tmp[4096];
-        while (true) {
+        while (!g_exitRequested.load()) {
             // Pump window messages before waiting for socket data (non-blocking)
             PumpPending();
             // Wait up to 16 ms for socket data, keeping message latency low
@@ -919,9 +999,15 @@ static void ConnectLoop() {
             }
         }
         { std::lock_guard<std::mutex> lk(g_sockMtx); g_sock = INVALID_SOCKET; }
+        InvalidateCdpTasks();
         closesocket(s);
+        if (g_exitRequested.load())
+            return;
         Log("[tcp] disconnected — reconnecting");
-        for (int i = 0; i < 50; i++) { PumpPending(); Sleep(20); }
+        for (int i = 0; i < 50 && !g_exitRequested.load(); i++) {
+            PumpPending();
+            Sleep(20);
+        }
     }
 }
 
@@ -952,6 +1038,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
     }
 
     WSADATA wsa; WSAStartup(MAKEWORD(2,2), &wsa);
+    std::thread(CdpWorkerLoop).detach();
 
     // Main thread owns the shell window and pumps its messages via PumpPending()
     // interleaved with the IO loop — no separate pump thread needed.

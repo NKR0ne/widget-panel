@@ -52,7 +52,7 @@ PanelWindowController::PanelWindowController(SettingsStore* settings, HelperServ
         if (m_islandOpen && m_islandLoading)
             failIslandLoad(QStringLiteral("Timed out waiting for browser island"));
     });
-    m_islandStatePoll.setInterval(2500);
+    m_islandStatePoll.setInterval(5000);
     connect(&m_islandStatePoll, &QTimer::timeout, this, [this] {
         if (m_islandOpen && m_brave)
             m_brave->requestState();
@@ -387,6 +387,7 @@ void PanelWindowController::openIsland(const QString& url)
     if (!target.startsWith(QLatin1String("http"))
         && !target.startsWith(QLatin1String("data:")))
         target.prepend(QLatin1String("https://"));
+    const bool reuseExisting = m_islandOpen && m_brave->connected();
     const QRect wa = m_workArea.workArea();
     const qreal sf = m_window->devicePixelRatio();
     constexpr int kBraveMargin = 8;
@@ -431,11 +432,15 @@ void PanelWindowController::openIsland(const QString& url)
     if (!m_islandStatePoll.isActive())
         m_islandStatePoll.start();
 
-    m_brave->open(target,
-                  qRound((panelScreenRight + kBraveMargin) * sf),
-                  qRound((wa.y() + kPanelGap + kToolbarH) * sf),
-                  qRound((braveW - kBraveMargin * 2) * sf),
-                  qRound((height - kToolbarH - kBraveMargin) * sf));
+    if (reuseExisting) {
+        m_brave->navigate(target);
+    } else {
+        m_brave->open(target,
+                      qRound((panelScreenRight + kBraveMargin) * sf),
+                      qRound((wa.y() + kPanelGap + kToolbarH) * sf),
+                      qRound((braveW - kBraveMargin * 2) * sf),
+                      qRound((height - kToolbarH - kBraveMargin) * sf));
+    }
     m_brave->roundCorners(static_cast<qulonglong>(m_window->winId()));
     notifyHelperHwnds();
     qInfo() << "[island] opened" << target << "panelW=" << panelW << "braveW=" << braveW;

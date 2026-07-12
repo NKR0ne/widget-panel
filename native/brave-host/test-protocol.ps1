@@ -1,5 +1,6 @@
 param(
-    [int]$TimeoutSeconds = 35
+    [int]$TimeoutSeconds = 35,
+    [string]$StressUrl = ''
 )
 
 Set-StrictMode -Version Latest
@@ -60,6 +61,14 @@ try {
         throw "Unexpected initial state: $($state | ConvertTo-Json -Compress -Depth 8)"
     }
 
+    # Regression for PressReader/ezproxy redirects: state polling must be
+    # coalesced off the Win32 shell thread so a burst cannot trigger AppHangB1.
+    1..12 | ForEach-Object { Send-Message $writer @{ type = 'state' } }
+    $burstState = Read-Message $reader 'state' 12000
+    if (-not $burstState.payload.available -or $helper.HasExited) {
+        throw 'brave-host became unavailable during a state-poll burst.'
+    }
+
     Send-Message $writer @{
         type = 'eval'
         id = 'protocol-eval-1'
@@ -112,13 +121,30 @@ try {
         throw "Back navigation failed: $($back | ConvertTo-Json -Compress -Depth 8)"
     }
 
-    Send-Message $writer @{ type = 'close' }
+    if (-not [string]::IsNullOrWhiteSpace($StressUrl)) {
+        Send-Message $writer @{ type = 'navigate'; url = $StressUrl }
+        [void](Read-Message $reader 'ready' 20000)
+        Start-Sleep -Milliseconds 800
+        1..12 | ForEach-Object { Send-Message $writer @{ type = 'state' } }
+        [void](Read-Message $reader 'state' 15000)
+        Start-Sleep -Seconds 12
+        Send-Message $writer @{ type = 'state' }
+        [void](Read-Message $reader 'state' 15000)
+        if ($helper.HasExited -or -not $helper.Responding) {
+            throw 'brave-host became unresponsive on the stress URL.'
+        }
+    }
+
+    Send-Message $writer @{ type = 'quit' }
+    if (-not $helper.WaitForExit(5000)) {
+        throw 'brave-host did not exit cleanly after the protocol test.'
+    }
     Write-Host 'PASS brave-host protocol: state, correlated eval, cookies, navigate, and back.' -ForegroundColor Green
 } finally {
-    if ($writer) {
+    if ($writer -and $helper -and -not $helper.HasExited) {
         try {
-            Send-Message $writer @{ type = 'close' }
-            Start-Sleep -Milliseconds 500
+            Send-Message $writer @{ type = 'quit' }
+            [void]$helper.WaitForExit(5000)
         } catch {}
     }
     if ($client) { $client.Close() }

@@ -61,10 +61,15 @@ void BraveHostClient::spawnHelper()
     }
     m_helperProcess = new QProcess(this);
     m_helperProcess->setProgram(path);
-    connect(m_helperProcess, &QProcess::finished, this, [this](int code) {
-        qInfo() << "[brave] brave-host exited (" << code << ")";
+    connect(m_helperProcess, &QProcess::finished, this,
+            [this](int code, QProcess::ExitStatus status) {
+        qInfo() << "[brave] brave-host exited code=" << code
+                << "status=" << (status == QProcess::CrashExit ? "crash" : "normal");
+        m_stateRequestPending = false;
+        m_pendingEval = {};
         m_helperProcess->deleteLater();
         m_helperProcess = nullptr;
+        emit errorReceived(QStringLiteral("Browser island host stopped unexpectedly"));
     });
     m_helperProcess->start();
     qInfo() << "[brave] spawned" << path;
@@ -79,8 +84,10 @@ void BraveHostClient::onNewConnection()
         m_buffer.clear();
         connect(socket, &QTcpSocket::readyRead, this, &BraveHostClient::onReadyRead);
         connect(socket, &QTcpSocket::disconnected, this, [this, socket] {
-            if (m_socket == socket)
+            if (m_socket == socket) {
                 m_socket = nullptr;
+                m_stateRequestPending = false;
+            }
             socket->deleteLater();
         });
         qInfo() << "[brave] brave-host connected";
@@ -114,6 +121,7 @@ void BraveHostClient::onReadyRead()
         } else if (type == QLatin1String("cookies")) {
             emit cookiesReceived(msg.value(QLatin1String("payload")).toObject());
         } else if (type == QLatin1String("state")) {
+            m_stateRequestPending = false;
             emit stateReceived(msg.value(QLatin1String("payload")).toObject());
         } else if (type == QLatin1String("eval")) {
             const QString id = msg.value(QLatin1String("id")).toString();
@@ -127,6 +135,7 @@ void BraveHostClient::onReadyRead()
             }
             emit evaluationReceived(id, result, error);
         } else if (type == QLatin1String("error")) {
+            m_stateRequestPending = false;
             const QString error = msg.value(QLatin1String("msg")).toString();
             qWarning() << "[brave] error:" << error;
             emit errorReceived(error);
@@ -153,6 +162,7 @@ void BraveHostClient::open(const QString& url, int physX, int physY, int physW, 
         {QStringLiteral("w"), physW},
         {QStringLiteral("h"), physH},
     };
+    m_lastOpen = message;
     if (connected()) {
         sendJson(message);
     } else {
@@ -164,13 +174,25 @@ void BraveHostClient::open(const QString& url, int physX, int physY, int physW, 
 
 void BraveHostClient::navigate(const QString& url)
 {
-    sendJson({{QStringLiteral("type"), QStringLiteral("navigate")},
-              {QStringLiteral("url"), url}});
+    if (!m_lastOpen.isEmpty())
+        m_lastOpen.insert(QStringLiteral("url"), url);
+    if (connected()) {
+        sendJson({{QStringLiteral("type"), QStringLiteral("navigate")},
+                  {QStringLiteral("url"), url}});
+    } else if (!m_lastOpen.isEmpty()) {
+        m_pendingOpen = m_lastOpen;
+        spawnHelper();
+    }
 }
 
 void BraveHostClient::reload()
 {
-    sendJson({{QStringLiteral("type"), QStringLiteral("reload")}});
+    if (connected()) {
+        sendJson({{QStringLiteral("type"), QStringLiteral("reload")}});
+    } else if (!m_lastOpen.isEmpty()) {
+        m_pendingOpen = m_lastOpen;
+        spawnHelper();
+    }
 }
 
 void BraveHostClient::goBack()
@@ -201,6 +223,13 @@ QString BraveHostClient::evaluate(const QString& script)
 
 void BraveHostClient::requestState()
 {
+    if (!connected())
+        return;
+    if (m_stateRequestPending && m_stateRequestAge.isValid()
+        && m_stateRequestAge.elapsed() < 8000)
+        return;
+    m_stateRequestPending = true;
+    m_stateRequestAge.restart();
     sendJson({{QStringLiteral("type"), QStringLiteral("state")}});
 }
 
@@ -208,6 +237,8 @@ void BraveHostClient::closeShell()
 {
     m_pendingOpen = {};
     m_pendingEval = {};
+    m_lastOpen = {};
+    m_stateRequestPending = false;
     sendJson({{QStringLiteral("type"), QStringLiteral("close")}});
 }
 
