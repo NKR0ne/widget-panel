@@ -62,9 +62,24 @@ try {
 
     Send-Message $writer @{
         type = 'eval'
+        id = 'protocol-eval-1'
         script = "document.getElementById('probe').textContent='mutated'; document.title='CDP Mutated'; 'ok'"
     }
-    Start-Sleep -Milliseconds 500
+    $evaluation = Read-Message $reader 'eval' 12000
+    if ($evaluation.id -ne 'protocol-eval-1' -or -not $evaluation.ok -or
+        $evaluation.payload.result.result.value -ne 'ok') {
+        throw "Unexpected eval result: $($evaluation | ConvertTo-Json -Compress -Depth 12)"
+    }
+    Send-Message $writer @{
+        type = 'eval'
+        id = 'protocol-eval-error'
+        script = "throw new Error('expected protocol failure')"
+    }
+    $failedEvaluation = Read-Message $reader 'eval' 12000
+    if ($failedEvaluation.id -ne 'protocol-eval-error' -or $failedEvaluation.ok -or
+        $failedEvaluation.error -ne 'island script failed') {
+        throw "Unexpected eval failure: $($failedEvaluation | ConvertTo-Json -Compress -Depth 12)"
+    }
     Send-Message $writer @{ type = 'state' }
     $mutated = Read-Message $reader 'state' 12000
     if ($mutated.payload.title -ne 'CDP Mutated') {
@@ -98,7 +113,7 @@ try {
     }
 
     Send-Message $writer @{ type = 'close' }
-    Write-Host 'PASS brave-host protocol: state, eval, cookies, navigate, and back.' -ForegroundColor Green
+    Write-Host 'PASS brave-host protocol: state, correlated eval, cookies, navigate, and back.' -ForegroundColor Green
 } finally {
     if ($writer) {
         try {

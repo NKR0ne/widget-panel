@@ -61,6 +61,8 @@ PanelWindowController::PanelWindowController(SettingsStore* settings, HelperServ
                 this, &PanelWindowController::handleTradingViewCookies);
         connect(m_brave, &BraveHostClient::stateReceived,
                 this, &PanelWindowController::handleIslandState);
+        connect(m_brave, &BraveHostClient::evaluationReceived,
+                this, &PanelWindowController::islandScriptResult);
         connect(m_brave, &BraveHostClient::readyReceived,
                 this, [this] {
                     if (m_islandOpen && m_brave) {
@@ -484,11 +486,11 @@ void PanelWindowController::forwardIsland()
     m_brave->goForward();
 }
 
-void PanelWindowController::runIslandScript(const QString& script)
+QString PanelWindowController::runIslandScript(const QString& script)
 {
     if (!m_islandOpen || script.trimmed().isEmpty() || !m_brave)
-        return;
-    m_brave->evaluate(script);
+        return {};
+    return m_brave->evaluate(script);
 }
 
 void PanelWindowController::captureTradingViewSession()

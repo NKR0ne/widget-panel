@@ -775,12 +775,18 @@ static void HandleMessage(const std::string& line) {
         }
     }
     else if (type == "eval") {
+        std::string id = jstr(line, "id");
         std::string script = jstr(line, "script");
         CdpReply reply = CallCDP("Runtime.evaluate",
             "{\"expression\":\"" + JsonEscape(script)
                 + "\",\"awaitPromise\":true,\"returnByValue\":true,\"userGesture\":true}");
-        if (!reply.ok || reply.json.find("\"exceptionDetails\"") != std::string::npos)
-            Send("{\"type\":\"error\",\"msg\":\"island script failed\"}");
+        if (!reply.ok || reply.json.find("\"exceptionDetails\"") != std::string::npos) {
+            Send("{\"type\":\"eval\",\"id\":\"" + JsonEscape(id)
+                + "\",\"ok\":false,\"error\":\"island script failed\"}");
+        } else {
+            Send("{\"type\":\"eval\",\"id\":\"" + JsonEscape(id)
+                + "\",\"ok\":true,\"payload\":" + reply.json + "}");
+        }
     }
     else if (type == "state") {
         const std::string expression =

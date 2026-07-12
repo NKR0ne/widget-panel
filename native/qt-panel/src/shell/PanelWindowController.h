@@ -68,7 +68,7 @@ public:
     Q_INVOKABLE void reloadIsland();
     Q_INVOKABLE void backIsland();
     Q_INVOKABLE void forwardIsland();
-    Q_INVOKABLE void runIslandScript(const QString& script);
+    Q_INVOKABLE QString runIslandScript(const QString& script);
     Q_INVOKABLE void captureTradingViewSession();
     Q_INVOKABLE void closeIsland();
     // Settings surface (persists to the wp-* keys, applies live).
@@ -96,6 +96,8 @@ signals:
     void panelVisibleChanged();
     void graphicsApiNameChanged();
     void islandChanged();
+    void islandScriptResult(const QString& id, const QVariant& result,
+                            const QString& error);
     void tradingViewSessionCaptured();
     void slideInRequested();
     void slideOutRequested();

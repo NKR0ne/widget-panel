@@ -89,9 +89,8 @@ void BraveHostClient::onNewConnection()
             m_pendingOpen = {};
         }
         if (!m_pendingEval.isEmpty()) {
-            sendJson({{QStringLiteral("type"), QStringLiteral("eval")},
-                      {QStringLiteral("script"), m_pendingEval}});
-            m_pendingEval.clear();
+            sendJson(m_pendingEval);
+            m_pendingEval = {};
         }
     }
 }
@@ -116,6 +115,17 @@ void BraveHostClient::onReadyRead()
             emit cookiesReceived(msg.value(QLatin1String("payload")).toObject());
         } else if (type == QLatin1String("state")) {
             emit stateReceived(msg.value(QLatin1String("payload")).toObject());
+        } else if (type == QLatin1String("eval")) {
+            const QString id = msg.value(QLatin1String("id")).toString();
+            const QString error = msg.value(QLatin1String("error")).toString();
+            QVariant result;
+            if (msg.value(QLatin1String("ok")).toBool()) {
+                const QJsonObject payload = msg.value(QLatin1String("payload")).toObject();
+                const QJsonObject runtimeResult = payload.value(QLatin1String("result")).toObject()
+                                                      .value(QLatin1String("result")).toObject();
+                result = runtimeResult.value(QLatin1String("value")).toVariant();
+            }
+            emit evaluationReceived(id, result, error);
         } else if (type == QLatin1String("error")) {
             const QString error = msg.value(QLatin1String("msg")).toString();
             qWarning() << "[brave] error:" << error;
@@ -147,7 +157,7 @@ void BraveHostClient::open(const QString& url, int physX, int physY, int physW, 
         sendJson(message);
     } else {
         m_pendingOpen = message;
-        m_pendingEval.clear();
+        m_pendingEval = {};
         spawnHelper();
     }
 }
@@ -173,14 +183,20 @@ void BraveHostClient::goForward()
     sendJson({{QStringLiteral("type"), QStringLiteral("forward")}});
 }
 
-void BraveHostClient::evaluate(const QString& script)
+QString BraveHostClient::evaluate(const QString& script)
 {
+    const QString id = QStringLiteral("eval-%1").arg(++m_nextEvaluationId);
+    const QJsonObject message{
+        {QStringLiteral("type"), QStringLiteral("eval")},
+        {QStringLiteral("id"), id},
+        {QStringLiteral("script"), script},
+    };
     if (!m_socket || m_socket->state() != QAbstractSocket::ConnectedState) {
-        m_pendingEval = script;
-        return;
+        m_pendingEval = message;
+        return id;
     }
-    sendJson({{QStringLiteral("type"), QStringLiteral("eval")},
-              {QStringLiteral("script"), script}});
+    sendJson(message);
+    return id;
 }
 
 void BraveHostClient::requestState()
@@ -191,7 +207,7 @@ void BraveHostClient::requestState()
 void BraveHostClient::closeShell()
 {
     m_pendingOpen = {};
-    m_pendingEval.clear();
+    m_pendingEval = {};
     sendJson({{QStringLiteral("type"), QStringLiteral("close")}});
 }
 

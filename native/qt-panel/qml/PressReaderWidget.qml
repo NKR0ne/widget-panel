@@ -13,6 +13,8 @@ GlassCard {
         "https://www.pressreader.com.ezproxy.bibliothequedequebec.qc.ca/fr/catalog/featured"
     property string catalogUrl: fallbackCatalogUrl
     property bool hasSavedLogin: false
+    property string automationRequestId: ""
+    property string automationStatus: ""
     property int stateRev: 0
 
     function refreshState() {
@@ -50,12 +52,14 @@ GlassCard {
     }
     function clearGuardrail() {
         Store.set("wp-pressreader-guardrail", JSON.stringify({ blockedUntil: 0, reason: "" }))
+        automationStatus = ""
         refreshState()
     }
     function canAutomate() {
         return !guardrailBlocked()
     }
     function openCatalog() {
+        automationStatus = "Ouverture du catalogue"
         Panel.openIsland(catalogUrl)
         if (canAutomate()) {
             automationTimer.interval = 1800
@@ -63,16 +67,21 @@ GlassCard {
         }
     }
     function openManual() {
+        automationRequestTimeout.stop()
+        automationRequestId = ""
+        automationStatus = "Connexion manuelle"
         setGuardrail(30, "manual login session")
         Panel.openIsland(catalogUrl)
     }
     function runAutomation() {
-        if (!canAutomate() || !Panel.islandOpen)
+        if (!canAutomate() || !Panel.islandOpen || automationRequestId)
             return
         const current = String(Panel.islandUrl || "").toLowerCase()
         if (current.indexOf("pressreader") < 0 && current.indexOf("ezproxy") < 0)
             return
-        Panel.runIslandScript(automationScript())
+        automationRequestId = Panel.runIslandScript(automationScript())
+        if (automationRequestId)
+            automationRequestTimeout.restart()
     }
     function automationScript() {
         const user = JSON.stringify(Vault.get("pressreader-user"))
@@ -106,6 +115,19 @@ GlassCard {
             "    try { el.click(); return true; } catch { return false; }",
             "  };",
             "  const controls = () => [...document.querySelectorAll('button, input[type=\"submit\"], input[type=\"button\"], input[type=\"image\"], a, [role=\"button\"]')].filter(visible);",
+            "  const pageState = () => {",
+            "    const inputs = [...document.querySelectorAll('input')].filter(visible);",
+            "    const password = inputs.find(input => (input.type || '').toLowerCase() === 'password' || /pass|mot|pin|nip|secret|code/.test(attr(input)));",
+            "    const body = (document.body?.innerText || '').slice(0, 5200);",
+            "    const rejection = '(?:invalid|incorrect|rejected|refus(?:e|\\u00e9)?|erreur|failed|bloqu(?:e|\\u00e9)|locked|suspendu|too many|trop de|invalide|erron(?:e|\\u00e9)|non valide)';",
+            "    const credential = '(?:password|pass|pin|nip|login|connexion|usager|card|barcode|identifiant|mot de passe)';",
+            "    const authRejected = new RegExp(rejection + '.{0,120}' + credential + '|' + credential + '.{0,120}' + rejection, 'i').test(body);",
+            "    const hasStartReading = controls().some(el => /start reading|read now|commencer|lire maintenant|ouvrir la publication/i.test(label(el)));",
+            "    const hasAccount = controls().some(el => /deconnexion|sign out|logout|mon compte|my account/i.test(label(el)));",
+            "    const contentLinks = [...document.querySelectorAll('a[href]')].filter(visible).filter(el => /pressreader|catalog|publication|magazines|journaux/i.test(el.href || '')).length;",
+            "    const visibleImages = [...document.querySelectorAll('img')].filter(visible).length;",
+            "    return { authRejected, hasLogin: !!password, hasStartReading, hasSessionEvidence: hasStartReading || hasAccount || (!password && contentLinks >= 4 && visibleImages >= 4) };",
+            "  };",
             "  if (!window.__qtPressReaderInteractionTracker) {",
             "    window.__qtPressReaderInteractionTracker = true;",
             "    document.addEventListener('pointerdown', event => { if (event.isTrusted) window.__qtPressReaderUserClick = Date.now(); }, true);",
@@ -146,18 +168,19 @@ GlassCard {
             "    }, 180);",
             "    return true;",
             "  };",
-            "  if (window.__qtPressReaderAutomation) return { ok: true, active: true };",
+            "  if (window.__qtPressReaderAutomation) return Object.assign({ ok: true, active: true }, pageState());",
             "  let tries = 0;",
             "  const tick = () => {",
             "    tries += 1;",
             "    if (!/pressreader|ezproxy/i.test(location.href) && tries > 12) { clearInterval(window.__qtPressReaderAutomation); window.__qtPressReaderAutomation = null; return; }",
+            "    const state = pageState();",
             "    clickStartReading();",
-            "    attemptLogin();",
+            "    if (!state.authRejected) attemptLogin();",
             "    if (tries >= 30) { clearInterval(window.__qtPressReaderAutomation); window.__qtPressReaderAutomation = null; }",
             "  };",
             "  window.__qtPressReaderAutomation = setInterval(tick, 900);",
             "  tick();",
-            "  return { ok: true, installed: true };",
+            "  return Object.assign({ ok: true, installed: true }, pageState());",
             "})();"
         ].join("\n")
     }
@@ -169,6 +192,16 @@ GlassCard {
         interval: 1800
         repeat: false
         onTriggered: card.runAutomation()
+    }
+
+    Timer {
+        id: automationRequestTimeout
+        interval: 8000
+        repeat: false
+        onTriggered: {
+            card.automationRequestId = ""
+            card.automationStatus = "Automation sans reponse"
+        }
     }
 
     Timer {
@@ -185,8 +218,36 @@ GlassCard {
 
     Connections {
         target: Panel
+        function onIslandScriptResult(requestId, result, error) {
+            if (!card.automationRequestId || requestId !== card.automationRequestId)
+                return
+            automationRequestTimeout.stop()
+            card.automationRequestId = ""
+            if (error) {
+                card.automationStatus = "Automation indisponible"
+                return
+            }
+            const state = result || {}
+            if (state.authRejected && card.hasSavedLogin) {
+                card.automationStatus = "Identifiants rejetes - mise a jour requise"
+                card.setGuardrail(120, "saved login rejected")
+            } else if (state.hasStartReading) {
+                card.automationStatus = "Publication prete"
+            } else if (state.hasSessionEvidence) {
+                card.automationStatus = "Session PressReader active"
+            } else if (state.hasLogin) {
+                card.automationStatus = card.hasSavedLogin ? "Connexion automatique" : "Connexion requise"
+            } else {
+                card.automationStatus = "Session en preparation"
+            }
+        }
         function onIslandChanged() {
-            if (!Panel.islandOpen || Panel.islandLoading || !card.canAutomate())
+            if (!Panel.islandOpen || Panel.islandLoading) {
+                automationRequestTimeout.stop()
+                card.automationRequestId = ""
+                return
+            }
+            if (!card.canAutomate())
                 return
             const current = String(Panel.islandUrl || "").toLowerCase()
             if (current.indexOf("pressreader") < 0 && current.indexOf("ezproxy") < 0)
@@ -207,8 +268,10 @@ GlassCard {
     Connections {
         target: Vault
         function onChanged(key) {
-            if (key === "pressreader-user" || key === "pressreader-password")
+            if (key === "pressreader-user" || key === "pressreader-password") {
+                card.automationStatus = ""
                 card.refreshState()
+            }
         }
     }
 
@@ -249,6 +312,7 @@ GlassCard {
             Text {
                 width: parent.width - x
                 text: card.guardrailBlocked() ? card.guardrailMessage()
+                    : card.automationStatus ? card.automationStatus
                     : card.hasSavedLogin ? "Identifiants sauvegardes" : "Connexion manuelle si requise"
                 color: Theme.textSecondary
                 font.pixelSize: 10

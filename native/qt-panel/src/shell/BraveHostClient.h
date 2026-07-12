@@ -5,6 +5,7 @@
 #include <QPointer>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QVariant>
 
 class QProcess;
 
@@ -28,7 +29,7 @@ public:
     void reload();
     void goBack();
     void goForward();
-    void evaluate(const QString& script);
+    QString evaluate(const QString& script);
     void requestState();
     void closeShell();
     void roundCorners(qulonglong hwnd);
@@ -39,6 +40,8 @@ signals:
     void errorReceived(const QString& message);
     void cookiesReceived(const QJsonObject& payload);
     void stateReceived(const QJsonObject& payload);
+    void evaluationReceived(const QString& id, const QVariant& result,
+                            const QString& error);
 
 private:
     void spawnHelper();
@@ -52,7 +55,8 @@ private:
     QByteArray m_buffer;
     QProcess* m_helperProcess = nullptr;
     QJsonObject m_pendingOpen; // queued until brave-host connects
-    QString m_pendingEval;
+    QJsonObject m_pendingEval;
+    quint64 m_nextEvaluationId = 0;
 };
 
 } // namespace qtpanel
