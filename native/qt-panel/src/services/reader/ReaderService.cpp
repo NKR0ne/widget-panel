@@ -425,32 +425,78 @@ QVariantList extractTextParagraphs(const QString& html, const QString& title)
 
 QVariantList extractImages(const QString& html, const QString& baseUrl, const QString& hero)
 {
-    static const QRegularExpression imageRe(
-        QStringLiteral("<img[^>]+(src|data-src|data-original)\\s*=\\s*[\"']([^\"']+)[\"'][^>]*>"),
+    static const QRegularExpression imageTagRe(
+        QStringLiteral("<(img|source)\\b[^>]*>"),
         QRegularExpression::CaseInsensitiveOption);
     static const QRegularExpression skipImageRe(
-        QStringLiteral("logo|icon|avatar|sprite|tracking|pixel|spacer"),
+        QStringLiteral("logo|icon|avatar|sprite|tracking|pixel|spacer|transparent|placeholder|(?:^|[/_.-])blank(?:[/_.?-]|$)|(?:^|[/_.-])1x1(?:[/_.?-]|$)"),
         QRegularExpression::CaseInsensitiveOption);
+
+    auto attribute = [](const QString& tag, const QString& name) {
+        const QRegularExpression attributeRe(
+            QStringLiteral("\\s%1\\s*=\\s*[\"']([^\"']+)[\"']")
+                .arg(QRegularExpression::escape(name)),
+            QRegularExpression::CaseInsensitiveOption);
+        return attributeRe.match(tag).captured(1).trimmed();
+    };
+
+    auto bestSrcsetUrl = [](const QString& srcset) {
+        QString bestUrl;
+        double bestScore = -1.0;
+        const QStringList candidates = srcset.split(QLatin1Char(','), Qt::SkipEmptyParts);
+        static const QRegularExpression candidateRe(
+            QStringLiteral("^\\s*(\\S+)(?:\\s+(\\d+(?:\\.\\d+)?)\\s*([wx]))?\\s*$"),
+            QRegularExpression::CaseInsensitiveOption);
+        for (const QString& candidate : candidates) {
+            const QRegularExpressionMatch match = candidateRe.match(candidate);
+            if (!match.hasMatch())
+                continue;
+            bool ok = false;
+            const double descriptor = match.captured(2).toDouble(&ok);
+            const double score = ok ? descriptor : 0.0;
+            if (bestUrl.isEmpty() || score > bestScore) {
+                bestUrl = match.captured(1);
+                bestScore = score;
+            }
+        }
+        return bestUrl;
+    };
 
     QVariantList images;
     QSet<QString> seen;
     auto addImage = [&](const QString& raw) {
         const QString image = absolutizeUrl(raw, baseUrl);
         if (!image.startsWith(QLatin1String("http"), Qt::CaseInsensitive))
-            return;
+            return false;
         if (skipImageRe.match(image).hasMatch())
-            return;
+            return false;
         if (seen.contains(image))
-            return;
+            return false;
         seen.insert(image);
         images.append(image);
+        return true;
     };
 
     if (!hero.isEmpty())
         addImage(hero);
-    QRegularExpressionMatchIterator it = imageRe.globalMatch(html);
-    while (it.hasNext() && images.size() < 5)
-        addImage(it.next().captured(2));
+    QRegularExpressionMatchIterator it = imageTagRe.globalMatch(html);
+    while (it.hasNext() && images.size() < 5) {
+        const QString tag = it.next().captured(0);
+        const QStringList candidates = {
+            attribute(tag, QStringLiteral("data-lazy-src")),
+            attribute(tag, QStringLiteral("data-original")),
+            attribute(tag, QStringLiteral("data-original-src")),
+            attribute(tag, QStringLiteral("data-src")),
+            attribute(tag, QStringLiteral("data-image")),
+            bestSrcsetUrl(attribute(tag, QStringLiteral("data-srcset"))),
+            bestSrcsetUrl(attribute(tag, QStringLiteral("srcset"))),
+            attribute(tag, QStringLiteral("src")),
+        };
+        for (const QString& candidate : candidates) {
+            if (!candidate.isEmpty() && addImage(candidate))
+                break;
+        }
+    }
     return images;
 }
 

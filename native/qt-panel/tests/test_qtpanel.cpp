@@ -259,6 +259,37 @@ private slots:
         QCOMPARE(images.at(3).toString(), QStringLiteral("https://example.com/media/extra.jpg"));
     }
 
+    void readerSelectsLazyAndResponsiveImages()
+    {
+        const QString html = QStringLiteral(
+            "<html><head><meta property=\"og:title\" content=\"Responsive Story\">"
+            "<meta property=\"og:image\" content=\"/media/hero.jpg\"></head><body>"
+            "<article class=\"story-content\">"
+            "<p>The first responsive image paragraph is long enough to pass all reader"
+            " extraction thresholds and provide useful article context.</p>"
+            "<p>The second responsive image paragraph is similarly complete and ensures"
+            " this article region is selected by the scoring logic.</p>"
+            "<p>The third responsive image paragraph supplies enough body text for the"
+            " image assertions to exercise the primary extraction path.</p>"
+            "<img src=\"/images/placeholder.jpg\" data-lazy-src=\"/photos/lazy.jpg\">"
+            "<img src=\"/photos/small.jpg\" srcset=\"/photos/small.jpg 320w, /photos/large.jpg 1280w\">"
+            "<img data-srcset=\"//cdn.example.net/chart.jpg 1x, //cdn.example.net/chart@2x.jpg 2x\">"
+            "<picture><source srcset=\"/photos/wide-small.webp 640w, /photos/wide.webp 1600w\">"
+            "<img src=\"/photos/wide-fallback.jpg\"></picture>"
+            "</article></body></html>");
+
+        const QVariantMap article = ReaderService::extractArticleHtml(
+            html, QStringLiteral("https://example.com/news/story"));
+        const QVariantList images = article.value(QStringLiteral("images")).toList();
+
+        QCOMPARE(images.size(), 5);
+        QCOMPARE(images.at(0).toString(), QStringLiteral("https://example.com/media/hero.jpg"));
+        QCOMPARE(images.at(1).toString(), QStringLiteral("https://example.com/photos/lazy.jpg"));
+        QCOMPARE(images.at(2).toString(), QStringLiteral("https://example.com/photos/large.jpg"));
+        QCOMPARE(images.at(3).toString(), QStringLiteral("https://cdn.example.net/chart@2x.jpg"));
+        QCOMPARE(images.at(4).toString(), QStringLiteral("https://example.com/photos/wide.webp"));
+    }
+
     void liveFeedCatalogMatchesRendererSources()
     {
         HttpClient http;
