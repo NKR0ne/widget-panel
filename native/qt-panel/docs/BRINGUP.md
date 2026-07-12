@@ -32,6 +32,24 @@ The release executable is written to:
 build\nmake-release\qt-panel.exe
 ```
 
+## Browser island helper
+
+The shared Brave-host helper has its own bounded build and real-browser smoke
+test. Its build clears stale Qt/helper/compiler processes, selects the installed
+MSVC toolset, and writes `native\bin\brave-host.exe`.
+
+```powershell
+cd C:\Users\nicol\source\repos\widget-panel-qt
+powershell -ExecutionPolicy Bypass -File .\native\brave-host\build.ps1
+powershell -ExecutionPolicy Bypass -File .\native\brave-host\test-protocol.ps1
+```
+
+The smoke test uses a harmless data page and verifies CDP state, script
+evaluation, cookies, navigation history, Back, and process cleanup. Browser
+islands use `%LOCALAPPDATA%\WidgetPanel\BraveIsland` as a dedicated persistent
+profile so island sessions survive restarts without reparenting personal Brave
+windows.
+
 ## Isolated smoke run
 
 The smoke profile does not import or modify the Electron configuration. The

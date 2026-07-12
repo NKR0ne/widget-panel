@@ -364,16 +364,19 @@ Item {
             IconButton {
                 anchors.verticalCenter: parent.verticalCenter
                 glyph: ""   // ChevronLeft / Back
+                enabled: Panel.islandCanGoBack && !Panel.islandLoading
                 onClicked: Panel.backIsland()
             }
             IconButton {
                 anchors.verticalCenter: parent.verticalCenter
                 glyph: ""   // ChevronRight / Forward
+                enabled: Panel.islandCanGoForward && !Panel.islandLoading
                 onClicked: Panel.forwardIsland()
             }
             IconButton {
                 anchors.verticalCenter: parent.verticalCenter
                 glyph: ""   // Refresh
+                enabled: !Panel.islandLoading
                 onClicked: Panel.reloadIsland()
             }
             Rectangle {

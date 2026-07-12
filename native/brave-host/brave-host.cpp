@@ -55,6 +55,18 @@ static void Log(const std::string& msg) {
 }
 
 // ── JSON helpers ──────────────────────────────────────────────────────────────
+static void AppendUtf8(std::string& out, unsigned code) {
+    if (code <= 0x7f) out.push_back((char)code);
+    else if (code <= 0x7ff) {
+        out.push_back((char)(0xc0 | (code >> 6)));
+        out.push_back((char)(0x80 | (code & 0x3f)));
+    } else {
+        out.push_back((char)(0xe0 | (code >> 12)));
+        out.push_back((char)(0x80 | ((code >> 6) & 0x3f)));
+        out.push_back((char)(0x80 | (code & 0x3f)));
+    }
+}
+
 static std::string jstr(const std::string& j, const std::string& key) {
     std::string needle = "\"" + key + "\":";
     auto p = j.find(needle);
@@ -63,8 +75,31 @@ static std::string jstr(const std::string& j, const std::string& key) {
     while (p < j.size() && (j[p]==' '||j[p]=='\t'||j[p]=='\r'||j[p]=='\n')) p++;
     if (p >= j.size() || j[p] != '"') return "";
     p++;
-    auto e = j.find('"', p);
-    return e == std::string::npos ? "" : j.substr(p, e - p);
+    std::string out;
+    while (p < j.size()) {
+        char c = j[p++];
+        if (c == '"') return out;
+        if (c != '\\') { out.push_back(c); continue; }
+        if (p >= j.size()) return "";
+        char esc = j[p++];
+        if (esc == '"' || esc == '\\' || esc == '/') out.push_back(esc);
+        else if (esc == 'b') out.push_back('\b');
+        else if (esc == 'f') out.push_back('\f');
+        else if (esc == 'n') out.push_back('\n');
+        else if (esc == 'r') out.push_back('\r');
+        else if (esc == 't') out.push_back('\t');
+        else if (esc == 'u' && p + 4 <= j.size()) {
+            unsigned code = 0;
+            for (int i = 0; i < 4; ++i) {
+                char h = j[p++];
+                code = code * 16 + (h >= '0' && h <= '9' ? h - '0'
+                    : h >= 'a' && h <= 'f' ? h - 'a' + 10
+                    : h >= 'A' && h <= 'F' ? h - 'A' + 10 : 0);
+            }
+            AppendUtf8(out, code);
+        }
+    }
+    return "";
 }
 static long long jnum(const std::string& j, const std::string& key) {
     std::string needle = "\"" + key + "\":";
@@ -73,6 +108,24 @@ static long long jnum(const std::string& j, const std::string& key) {
     p += needle.size();
     while (p < j.size() && (j[p]==' '||j[p]=='\t'||j[p]=='\r'||j[p]=='\n')) p++;
     try { return std::stoll(j.substr(p)); } catch (...) { return 0; }
+}
+
+static std::string JsonEscape(const std::string& value) {
+    std::string out;
+    out.reserve(value.size() + 16);
+    for (unsigned char c : value) {
+        if (c == '"') out += "\\\"";
+        else if (c == '\\') out += "\\\\";
+        else if (c == '\n') out += "\\n";
+        else if (c == '\r') out += "\\r";
+        else if (c == '\t') out += "\\t";
+        else if (c < 0x20) {
+            char buf[7];
+            _snprintf_s(buf, sizeof(buf), "\\u%04x", c);
+            out += buf;
+        } else out.push_back((char)c);
+    }
+    return out;
 }
 
 // ── Brave path detection ──────────────────────────────────────────────────────
@@ -359,6 +412,89 @@ static bool NavigateViaCDP(const std::string& url) {
     return result == ERROR_SUCCESS;
 }
 
+struct CdpReply {
+    bool ok = false;
+    std::string json;
+};
+
+static CdpReply CallCDP(const std::string& method, const std::string& params = "{}",
+                        bool waitForReply = true, int timeoutMs = 10000) {
+    CdpReply reply;
+    std::string json = CdpGetJson(timeoutMs);
+    if (json.empty()) { Log("[cdp] /json timeout for " + method); return reply; }
+    std::string wsUrlFull = FindPageTarget(json);
+    auto pathPos = wsUrlFull.find("/devtools");
+    if (pathPos == std::string::npos) { Log("[cdp] no page target for " + method); return reply; }
+    std::string wsPath = wsUrlFull.substr(pathPos);
+    std::wstring wsPathW(wsPath.begin(), wsPath.end());
+
+    HINTERNET hSess = WinHttpOpen(L"wp", WINHTTP_ACCESS_TYPE_NO_PROXY, NULL, NULL, 0);
+    if (!hSess) return reply;
+    WinHttpSetTimeouts(hSess, timeoutMs, timeoutMs, timeoutMs, timeoutMs);
+    HINTERNET hConn = WinHttpConnect(hSess, L"localhost", CDP_PORT, 0);
+    HINTERNET hReq = hConn
+        ? WinHttpOpenRequest(hConn, L"GET", wsPathW.c_str(), NULL, NULL, NULL, 0) : NULL;
+    HINTERNET hWs = NULL;
+    if (hReq) {
+        WinHttpSetOption(hReq, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, NULL, 0);
+        if (WinHttpSendRequest(hReq, NULL, 0, NULL, 0, 0, 0)
+            && WinHttpReceiveResponse(hReq, NULL))
+            hWs = WinHttpWebSocketCompleteUpgrade(hReq, NULL);
+        WinHttpCloseHandle(hReq);
+    }
+    if (!hWs) {
+        if (hConn) WinHttpCloseHandle(hConn);
+        WinHttpCloseHandle(hSess);
+        Log("[cdp] websocket upgrade failed for " + method);
+        return reply;
+    }
+
+    const std::string message = "{\"id\":1,\"method\":\"" + JsonEscape(method)
+        + "\",\"params\":" + params + "}";
+    DWORD sendResult = WinHttpWebSocketSend(hWs, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
+                                             (PVOID)message.data(), (DWORD)message.size());
+    if (sendResult == ERROR_SUCCESS && waitForReply) {
+        std::vector<char> buffer(32768);
+        while (reply.json.size() < 2 * 1024 * 1024) {
+            DWORD bytes = 0;
+            WINHTTP_WEB_SOCKET_BUFFER_TYPE type = WINHTTP_WEB_SOCKET_UTF8_FRAGMENT_BUFFER_TYPE;
+            DWORD receiveResult = WinHttpWebSocketReceive(
+                hWs, buffer.data(), (DWORD)buffer.size(), &bytes, &type);
+            if (receiveResult != ERROR_SUCCESS) break;
+            reply.json.append(buffer.data(), bytes);
+            if (type == WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE) break;
+            if (type == WINHTTP_WEB_SOCKET_CLOSE_BUFFER_TYPE) break;
+        }
+    }
+    reply.ok = sendResult == ERROR_SUCCESS
+        && (!waitForReply || (!reply.json.empty()
+            && reply.json.find("\"error\"") == std::string::npos));
+    Log("[cdp] " + method + " ok=" + std::to_string(reply.ok)
+        + " bytes=" + std::to_string(reply.json.size()));
+    WinHttpWebSocketClose(hWs, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, NULL, 0);
+    WinHttpCloseHandle(hWs);
+    if (hConn) WinHttpCloseHandle(hConn);
+    WinHttpCloseHandle(hSess);
+    return reply;
+}
+
+static std::vector<long long> HistoryEntryIds(const std::string& json) {
+    std::vector<long long> ids;
+    size_t entries = json.find("\"entries\"");
+    size_t begin = entries == std::string::npos ? std::string::npos : json.find('[', entries);
+    size_t end = begin == std::string::npos ? std::string::npos : json.find(']', begin);
+    if (begin == std::string::npos || end == std::string::npos) return ids;
+    size_t pos = begin;
+    while ((pos = json.find('{', pos)) != std::string::npos && pos < end) {
+        size_t close = json.find('}', pos);
+        if (close == std::string::npos || close > end) break;
+        long long id = jnum(json.substr(pos, close - pos + 1), "id");
+        if (id > 0) ids.push_back(id);
+        pos = close + 1;
+    }
+    return ids;
+}
+
 // Forward declaration (g_brave defined in Global state section below)
 static HWND g_brave;
 
@@ -421,6 +557,7 @@ static void PumpPending() {
 
 // ── Global state ──────────────────────────────────────────────────────────────
 static PROCESS_INFORMATION g_pi     = {};
+static HANDLE              g_braveJob = NULL;
 // g_brave forward-declared above (used by ShellWndProc)
 static HWND                g_parent = NULL;
 static HWND                g_shell  = NULL;   // shell window we create
@@ -449,6 +586,10 @@ static void KillBrave() {
         CloseHandle(g_pi.hThread);
         g_pi = {};
     }
+    if (g_braveJob) {
+        CloseHandle(g_braveJob);
+        g_braveJob = NULL;
+    }
 }
 
 static bool LaunchBrave(const std::string& url, const std::vector<HWND>& snapBefore) {
@@ -456,13 +597,26 @@ static bool LaunchBrave(const std::string& url, const std::vector<HWND>& snapBef
     std::wstring wurl(url.begin(), url.end());
     std::wstring port = std::to_wstring(CDP_PORT);
 
-    // Reuse the user's main Brave profile so their installed extensions and
-    // logged-in sessions (PressReader account, library proxy, etc.) carry
-    // over into the embedded browser. If this causes the 'CDP not bound when
-    // Brave is already running' regression to come back, address it without
-    // forcing a separate user-data-dir.
+    wchar_t localAppData[MAX_PATH] = {};
+    if (FAILED(SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, localAppData))) {
+        Log("[brave] LOCALAPPDATA unavailable");
+        return false;
+    }
+    std::wstring profile = std::wstring(localAppData) + L"\\WidgetPanel\\BraveIsland";
+    int createResult = SHCreateDirectoryExW(NULL, profile.c_str(), NULL);
+    if (createResult != ERROR_SUCCESS && createResult != ERROR_FILE_EXISTS
+        && createResult != ERROR_ALREADY_EXISTS) {
+        Log("[brave] could not create island profile: " + std::to_string(createResult));
+        return false;
+    }
+
+    // A dedicated persistent profile prevents Chromium single-instance
+    // delegation into the user's normal browser, which would drop the CDP
+    // flags and could reparent an unrelated personal window. Island sessions
+    // and cookies still persist in this profile across panel launches.
     std::wstring args = L"\"" + g_bravePath + L"\""
         L" --app=" + wurl +
+        L" --user-data-dir=\"" + profile + L"\""
         L" --no-first-run"
         L" --no-default-browser-check"
         L" --force-dark-mode"
@@ -483,6 +637,15 @@ static bool LaunchBrave(const std::string& url, const std::vector<HWND>& snapBef
         return false;
     }
     Log("[brave] launched PID=" + std::to_string(g_pi.dwProcessId));
+    g_braveJob = CreateJobObjectW(NULL, NULL);
+    if (g_braveJob) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        SetInformationJobObject(g_braveJob, JobObjectExtendedLimitInformation,
+                                &limits, sizeof(limits));
+        if (!AssignProcessToJobObject(g_braveJob, g_pi.hProcess))
+            Log("[brave] AssignProcessToJobObject failed: " + std::to_string(GetLastError()));
+    }
     return true;
 }
 
@@ -591,6 +754,60 @@ static void HandleMessage(const std::string& line) {
             if (NavigateViaCDP(url)) Send("{\"type\":\"ready\"}");
             else                     Send("{\"type\":\"error\",\"msg\":\"cdp navigate failed\"}");
         }
+    }
+    else if (type == "reload") {
+        CdpReply reply = CallCDP("Page.reload", "{\"ignoreCache\":false}", false);
+        if (reply.ok) Send("{\"type\":\"ready\"}");
+        else Send("{\"type\":\"error\",\"msg\":\"cdp reload failed\"}");
+    }
+    else if (type == "back" || type == "forward") {
+        CdpReply history = CallCDP("Page.getNavigationHistory");
+        std::vector<long long> ids = HistoryEntryIds(history.json);
+        long long current = jnum(history.json, "currentIndex");
+        long long target = type == "back" ? current - 1 : current + 1;
+        if (history.ok && target >= 0 && target < (long long)ids.size()) {
+            CdpReply nav = CallCDP("Page.navigateToHistoryEntry",
+                "{\"entryId\":" + std::to_string(ids[(size_t)target]) + "}", false);
+            if (nav.ok) Send("{\"type\":\"ready\"}");
+            else Send("{\"type\":\"error\",\"msg\":\"history navigation failed\"}");
+        } else {
+            Send("{\"type\":\"ready\"}");
+        }
+    }
+    else if (type == "eval") {
+        std::string script = jstr(line, "script");
+        CdpReply reply = CallCDP("Runtime.evaluate",
+            "{\"expression\":\"" + JsonEscape(script)
+                + "\",\"awaitPromise\":true,\"returnByValue\":true,\"userGesture\":true}");
+        if (!reply.ok || reply.json.find("\"exceptionDetails\"") != std::string::npos)
+            Send("{\"type\":\"error\",\"msg\":\"island script failed\"}");
+    }
+    else if (type == "state") {
+        const std::string expression =
+            "JSON.stringify({url:location.href,title:document.title,readyState:document.readyState})";
+        CdpReply page = CallCDP("Runtime.evaluate",
+            "{\"expression\":\"" + JsonEscape(expression)
+                + "\",\"returnByValue\":true}");
+        CdpReply history = CallCDP("Page.getNavigationHistory");
+        std::string value = jstr(page.json, "value");
+        std::string url = jstr(value, "url");
+        std::string title = jstr(value, "title");
+        std::string readyState = jstr(value, "readyState");
+        long long current = jnum(history.json, "currentIndex");
+        std::vector<long long> ids = HistoryEntryIds(history.json);
+        bool canBack = history.ok && current > 0;
+        bool canForward = history.ok && current + 1 < (long long)ids.size();
+        std::string payload = "{\"available\":" + std::string(page.ok ? "true" : "false")
+            + ",\"url\":\"" + JsonEscape(url) + "\",\"title\":\"" + JsonEscape(title)
+            + "\",\"readyState\":\"" + JsonEscape(readyState)
+            + "\",\"canGoBack\":" + (canBack ? "true" : "false")
+            + ",\"canGoForward\":" + (canForward ? "true" : "false") + "}";
+        Send("{\"type\":\"state\",\"payload\":" + payload + "}");
+    }
+    else if (type == "cookies") {
+        CdpReply reply = CallCDP("Network.getAllCookies", "{}", true, 15000);
+        if (reply.ok) Send("{\"type\":\"cookies\",\"payload\":" + reply.json + "}");
+        else Send("{\"type\":\"error\",\"msg\":\"cookie capture failed\"}");
     }
     else if (type == "resize") {
         g_w = (int)jnum(line, "w");

@@ -61,12 +61,14 @@ PanelWindowController::PanelWindowController(SettingsStore* settings, HelperServ
                 this, &PanelWindowController::handleIslandState);
         connect(m_brave, &BraveHostClient::readyReceived,
                 this, [this] {
-                    finishIslandLoad();
-                    if (m_islandOpen && m_brave)
+                    if (m_islandOpen && m_brave) {
+                        m_islandStatus = QStringLiteral("Connected");
+                        emit islandChanged();
                         QTimer::singleShot(250, this, [this] {
                             if (m_islandOpen && m_brave)
                                 m_brave->requestState();
                         });
+                    }
                 });
         connect(m_brave, &BraveHostClient::errorReceived,
                 this, [this](const QString& error) { failIslandLoad(error); });
@@ -319,12 +321,41 @@ void PanelWindowController::handleIslandState(const QJsonObject& payload)
     bool changed = false;
     const QString url = payload.value(QLatin1String("url")).toString();
     const QString title = payload.value(QLatin1String("title")).toString();
+    const QString readyState = payload.value(QLatin1String("readyState")).toString();
+    const bool canGoBack = payload.value(QLatin1String("canGoBack")).toBool();
+    const bool canGoForward = payload.value(QLatin1String("canGoForward")).toBool();
     if (!url.isEmpty() && url != m_islandUrl) {
         m_islandUrl = url;
         changed = true;
     }
     if (title != m_islandTitle) {
         m_islandTitle = title;
+        changed = true;
+    }
+    if (canGoBack != m_islandCanGoBack) {
+        m_islandCanGoBack = canGoBack;
+        changed = true;
+    }
+    if (canGoForward != m_islandCanGoForward) {
+        m_islandCanGoForward = canGoForward;
+        changed = true;
+    }
+    if (!readyState.isEmpty() && readyState != m_islandReadyState) {
+        m_islandReadyState = readyState;
+        changed = true;
+    }
+    if (readyState == QLatin1String("complete") && m_islandLoading) {
+        m_islandReadyTimeout.stop();
+        m_islandLoading = false;
+        m_islandStatus = QStringLiteral("Ready");
+        m_islandError.clear();
+        changed = true;
+    } else if (!readyState.isEmpty() && readyState != QLatin1String("complete")
+               && !m_islandLoading) {
+        m_islandLoading = true;
+        m_islandStatus = QStringLiteral("Loading");
+        m_islandError.clear();
+        m_islandReadyTimeout.start();
         changed = true;
     }
     if (changed)
@@ -376,6 +407,9 @@ void PanelWindowController::openIsland(const QString& url)
     m_islandOpen = true;
     m_islandUrl = target;
     m_islandTitle.clear();
+    m_islandCanGoBack = false;
+    m_islandCanGoForward = false;
+    m_islandReadyState.clear();
     startIslandLoad(QStringLiteral("Opening"));
     if (!m_islandStatePoll.isActive())
         m_islandStatePoll.start();
@@ -403,6 +437,7 @@ void PanelWindowController::navigateIsland(const QString& url)
         target.prepend(QLatin1String("https://"));
     m_islandUrl = target;
     m_islandTitle.clear();
+    m_islandReadyState.clear();
     startIslandLoad(QStringLiteral("Navigating"));
     if (m_brave)
         m_brave->navigate(target);
@@ -412,22 +447,25 @@ void PanelWindowController::reloadIsland()
 {
     if (!m_islandOpen || !m_brave)
         return;
+    m_islandReadyState.clear();
     startIslandLoad(QStringLiteral("Reloading"));
     m_brave->reload();
 }
 
 void PanelWindowController::backIsland()
 {
-    if (!m_islandOpen || !m_brave)
+    if (!m_islandOpen || !m_brave || !m_islandCanGoBack)
         return;
+    m_islandReadyState.clear();
     startIslandLoad(QStringLiteral("Back"));
     m_brave->goBack();
 }
 
 void PanelWindowController::forwardIsland()
 {
-    if (!m_islandOpen || !m_brave)
+    if (!m_islandOpen || !m_brave || !m_islandCanGoForward)
         return;
+    m_islandReadyState.clear();
     startIslandLoad(QStringLiteral("Forward"));
     m_brave->goForward();
 }
@@ -517,6 +555,9 @@ void PanelWindowController::closeIsland()
     m_islandStatus.clear();
     m_islandError.clear();
     m_islandTitle.clear();
+    m_islandCanGoBack = false;
+    m_islandCanGoForward = false;
+    m_islandReadyState.clear();
     emit islandChanged();
     if (m_window) {
         const QRect wa = m_workArea.workArea();

@@ -34,6 +34,9 @@ class PanelWindowController : public QObject {
     Q_PROPERTY(QString islandStatus READ islandStatus NOTIFY islandChanged)
     Q_PROPERTY(QString islandError READ islandError NOTIFY islandChanged)
     Q_PROPERTY(QString islandTitle READ islandTitle NOTIFY islandChanged)
+    Q_PROPERTY(bool islandCanGoBack READ islandCanGoBack NOTIFY islandChanged)
+    Q_PROPERTY(bool islandCanGoForward READ islandCanGoForward NOTIFY islandChanged)
+    Q_PROPERTY(QString islandReadyState READ islandReadyState NOTIFY islandChanged)
 
 public:
     PanelWindowController(SettingsStore* settings, HelperServer* helper,
@@ -84,6 +87,9 @@ public:
     QString islandStatus() const { return m_islandStatus; }
     QString islandError() const { return m_islandError; }
     QString islandTitle() const { return m_islandTitle; }
+    bool islandCanGoBack() const { return m_islandCanGoBack; }
+    bool islandCanGoForward() const { return m_islandCanGoForward; }
+    QString islandReadyState() const { return m_islandReadyState; }
 
 signals:
     void pinnedChanged();
@@ -135,6 +141,9 @@ private:
     QString m_islandStatus;
     QString m_islandError;
     QString m_islandTitle;
+    bool m_islandCanGoBack = false;
+    bool m_islandCanGoForward = false;
+    QString m_islandReadyState;
     int m_islandPanelWidth = 0;
     int m_islandRestoreWidth = 0;
     qint64 m_geometryLockUntil = 0;
