@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QImage>
+#include <QMutex>
 #include <QNetworkAccessManager>
 #include <QObject>
 #include <QQuickImageProvider>
@@ -22,6 +23,7 @@ public:
     void setFrame(const QImage& frame);
 
 private:
+    mutable QMutex m_frameMutex;
     QImage m_frame;
 };
 
@@ -40,6 +42,7 @@ class CameraClient : public QObject {
 public:
     CameraClient(SettingsStore* settings, SecretVault* vault, CameraImageProvider* provider,
                  QObject* parent = nullptr);
+    ~CameraClient() override;
 
     QString status() const { return m_status; }
     QString error() const { return m_error; }
@@ -89,6 +92,7 @@ private:
     QString m_user;
     QString m_pass;
     QString m_loginType;
+    QString m_authenticatedLoginType;
     QStringList m_loginAttempts;
     int m_loginAttemptIndex = 0;
 
@@ -102,7 +106,9 @@ private:
     QVariantList m_cameras;
     QString m_discoveryStatus;
     int m_frameId = 0;
+    int m_sessionFrameCount = 0;
     bool m_streaming = false;
+    quint64 m_sessionGeneration = 0;
 
     QTimer m_frameTimer;
     QTimer m_liveMessageTimer;

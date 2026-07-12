@@ -390,7 +390,7 @@ Item {
                 text: "CAMÉRA"; color: Theme.textSecondary; font.pixelSize: 9
                 font.letterSpacing: 1; topPadding: 4
             }
-            Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-camera-url"; item.fallback = "https://securitycenter.local"; item.placeholder = "URL serveur XProtect" } }
+            Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-camera-url"; item.fallback = "https://securitycenter.local:8082"; item.placeholder = "URL serveur XProtect" } }
             Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-camera-direct-url"; item.fallback = "http://ipcam1.local/doc/page/preview.asp"; item.placeholder = "URL directe camera" } }
             Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-camera-id"; item.fallback = ""; item.placeholder = "GUID caméra par défaut" } }
             Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-camera-name-hint"; item.fallback = "HikVision"; item.placeholder = "Indice nom caméra" } }

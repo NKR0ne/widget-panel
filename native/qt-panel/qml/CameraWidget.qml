@@ -228,8 +228,8 @@ GlassCard {
             }
         }
 
-        // The login form never auto-submits and only appears after credentials
-        // are explicitly forgotten, avoiding repeated invalid-login attempts.
+        // The login form never auto-submits and appears after credentials are
+        // forgotten or rejected by the bounded authentication sequence.
         Column {
             visible: !Camera.configured
             width: parent.width

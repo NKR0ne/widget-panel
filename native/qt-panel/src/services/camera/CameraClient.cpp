@@ -8,6 +8,7 @@
 #include <QDateTime>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMutexLocker>
 #include <QNetworkReply>
 #include <QRegularExpression>
 #include <QSet>
@@ -21,7 +22,16 @@ const char kDefaultCameraId[] = "11ae9771-dcc4-430b-b47c-20caa6175566";
 const char kCommChannel[] = "/XProtectMobile/Communication";
 const char kVideoChannel[] = "/XProtectMobile/Video";
 constexpr int kFrameIntervalMs = 90; // ~11 fps pull cadence
+constexpr int kFirstFrameReconnectMs = 10000;
 constexpr int kStaleReconnectMs = 30000;
+
+bool isInvalidCredentialsError(const QString& error)
+{
+    static const QRegularExpression re(
+        QStringLiteral("(?:code\\s*15\\b|invalid\\s*credentials)"),
+        QRegularExpression::CaseInsensitiveOption);
+    return re.match(error).hasMatch();
+}
 
 QString xmlEscape(QString v) {
     v.replace(QLatin1Char('&'), QLatin1String("&amp;"));
@@ -108,6 +118,7 @@ QVariantList parseCameraItems(const QString& xml)
 QImage CameraImageProvider::requestImage(const QString& id, QSize* size, const QSize&)
 {
     Q_UNUSED(id)
+    QMutexLocker locker(&m_frameMutex);
     if (size)
         *size = m_frame.size();
     return m_frame;
@@ -115,6 +126,7 @@ QImage CameraImageProvider::requestImage(const QString& id, QSize* size, const Q
 
 void CameraImageProvider::setFrame(const QImage& frame)
 {
+    QMutexLocker locker(&m_frameMutex);
     m_frame = frame;
 }
 
@@ -139,6 +151,18 @@ CameraClient::CameraClient(SettingsStore* settings, SecretVault* vault,
 
     m_staleFrameTimer.setInterval(5000);
     connect(&m_staleFrameTimer, &QTimer::timeout, this, &CameraClient::checkStaleFrame);
+
+    m_nam.setTransferTimeout(30000);
+}
+
+CameraClient::~CameraClient()
+{
+    ++m_sessionGeneration;
+    const auto replies = m_nam.findChildren<QNetworkReply*>();
+    for (QNetworkReply* reply : replies)
+        reply->abort();
+    delete static_cast<XpCrypto*>(m_crypto);
+    m_crypto = nullptr;
 }
 
 bool CameraClient::configured() const
@@ -216,10 +240,15 @@ void CameraClient::start(const QString& user, const QString& pass, const QString
 
 void CameraClient::stop()
 {
+    ++m_sessionGeneration;
+    const auto replies = m_nam.findChildren<QNetworkReply*>();
+    for (QNetworkReply* reply : replies)
+        reply->abort();
     m_frameTimer.stop();
     m_liveMessageTimer.stop();
     m_staleFrameTimer.stop();
     m_streaming = false;
+    m_sessionFrameCount = 0;
     m_lastFrameAtMs = 0;
     if (!m_videoId.isEmpty())
         closeStream();
@@ -227,6 +256,7 @@ void CameraClient::stop()
     m_crypto = nullptr;
     m_connectionId.clear();
     m_videoId.clear();
+    m_authenticatedLoginType.clear();
 }
 
 void CameraClient::forgetCredentials()
@@ -270,6 +300,7 @@ void CameraClient::postCommand(const QString& name, const QMap<QString, QString>
 void CameraClient::postCommandRaw(const QString& name, const QMap<QString, QString>& params,
                                   std::function<void(const QString&, const QString&)> cb)
 {
+    const quint64 generation = m_sessionGeneration;
     QString body = QStringLiteral("<?xml version=\"1.0\" encoding=\"utf-8\"?>"
         "<Communication xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" "
         "xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">");
@@ -284,8 +315,10 @@ void CameraClient::postCommandRaw(const QString& name, const QMap<QString, QStri
     QNetworkReply* reply = m_nam.post(makeRequest(QLatin1String(kCommChannel)), body.toUtf8());
     connect(reply, &QNetworkReply::sslErrors, reply,
             [reply](const QList<QSslError>&) { reply->ignoreSslErrors(); });
-    connect(reply, &QNetworkReply::finished, this, [this, reply, name, cb] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, generation, cb] {
         reply->deleteLater();
+        if (generation != m_sessionGeneration)
+            return;
         if (reply->error() != QNetworkReply::NoError) {
             cb({}, reply->errorString());
             return;
@@ -348,27 +381,31 @@ void CameraClient::loginStep()
     postCommand(QStringLiteral("LogIn"), params,
                 [this](const QMap<QString, QString>&, const QString& error) {
         if (!error.isEmpty()) {
-            // Try the next login type, then reconnect (Connect must precede LogIn).
-            if (++m_loginAttemptIndex < m_loginAttempts.size()) {
+            const bool invalidCredentials = isInvalidCredentialsError(error);
+            // Probe alternate login types only for an explicit credential-type
+            // rejection. Network/server errors must not consume auth attempts.
+            if (invalidCredentials && ++m_loginAttemptIndex < m_loginAttempts.size()) {
                 qInfo() << "[camera] login retry as"
                         << (m_loginAttempts.value(m_loginAttemptIndex).isEmpty()
                                 ? QStringLiteral("default")
                                 : m_loginAttempts.value(m_loginAttemptIndex));
                 connectStep();
             } else {
+                if (invalidCredentials) {
+                    m_settings->remove(QStringLiteral("wp-camera-auth"));
+                    m_vault->remove(QStringLiteral("camera-password"));
+                    m_user.clear();
+                    m_pass.clear();
+                    m_loginType.clear();
+                    qWarning() << "[camera] rejected credentials cleared after bounded attempts";
+                }
                 setStatus(QStringLiteral("error"), error);
             }
             return;
         }
-        // Remember the login type that worked so the next start skips the
-        // Windows→Basic probing (saves ~30s of failed attempts).
-        const QString winning = m_loginAttempts.value(m_loginAttemptIndex);
-        const QJsonObject creds{
-            {QStringLiteral("u"), m_user},
-            {QStringLiteral("loginType"), winning},
-        };
-        m_settings->set(QStringLiteral("wp-camera-auth"),
-                        QString::fromUtf8(QJsonDocument(creds).toJson(QJsonDocument::Compact)));
+        // Persist the accepted login type only after RequestStream confirms
+        // that this session can access the selected camera.
+        m_authenticatedLoginType = m_loginAttempts.value(m_loginAttemptIndex);
         m_liveMessageTimer.start();
         discoverCamerasStep([this] { requestStreamStep(); });
     });
@@ -462,7 +499,14 @@ void CameraClient::requestStreamStep()
             setStatus(QStringLiteral("error"), QStringLiteral("No VideoId in stream response"));
             return;
         }
+        const QJsonObject creds{
+            {QStringLiteral("u"), m_user},
+            {QStringLiteral("loginType"), m_authenticatedLoginType},
+        };
+        m_settings->set(QStringLiteral("wp-camera-auth"),
+                        QString::fromUtf8(QJsonDocument(creds).toJson(QJsonDocument::Compact)));
         m_streaming = true;
+        m_sessionFrameCount = 0;
         m_lastFrameAtMs = QDateTime::currentMSecsSinceEpoch();
         m_staleFrameTimer.start();
         setStatus(QStringLiteral("streaming"));
@@ -474,13 +518,14 @@ void CameraClient::pullFrame()
 {
     if (!m_streaming || m_videoId.isEmpty())
         return;
+    const quint64 generation = m_sessionGeneration;
     const QString path = QStringLiteral("%1/%2/").arg(QLatin1String(kVideoChannel), m_videoId);
     QNetworkReply* reply = m_nam.post(makeRequest(path), QByteArray());
     connect(reply, &QNetworkReply::sslErrors, reply,
             [reply](const QList<QSslError>&) { reply->ignoreSslErrors(); });
-    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, generation] {
         reply->deleteLater();
-        if (!m_streaming)
+        if (generation != m_sessionGeneration || !m_streaming)
             return;
         if (reply->error() != QNetworkReply::NoError) {
             scheduleNextFrame(1000);
@@ -490,8 +535,9 @@ void CameraClient::pullFrame()
         // Frame header (ItemHeaderParser): dataSize @28 (u32 LE), headerSize @32 (u16 LE).
         if (data.size() >= 36) {
             const auto u = [&data](int o) { return static_cast<quint8>(data[o]); };
-            const quint32 dataSize = u(28) | (u(29) << 8) | (u(30) << 16) | (u(31) << 24);
-            const quint32 headerSize = u(32) | (u(33) << 8);
+            const quint32 dataSize = quint32(u(28)) | (quint32(u(29)) << 8)
+                | (quint32(u(30)) << 16) | (quint32(u(31)) << 24);
+            const quint32 headerSize = quint32(u(32)) | (quint32(u(33)) << 8);
             if (dataSize > 0 && headerSize + dataSize <= quint32(data.size())) {
                 const QByteArray jpeg = data.mid(static_cast<int>(headerSize),
                                                  static_cast<int>(dataSize));
@@ -499,6 +545,7 @@ void CameraClient::pullFrame()
                 if (img.loadFromData(jpeg, "JPEG")) {
                     m_provider->setFrame(img);
                     m_lastFrameAtMs = QDateTime::currentMSecsSinceEpoch();
+                    ++m_sessionFrameCount;
                     ++m_frameId;
                     if (m_frameId == 1 || m_frameId % 50 == 0)
                         qInfo() << "[camera] frame" << m_frameId << img.width() << "x" << img.height();
@@ -523,14 +570,18 @@ void CameraClient::checkStaleFrame()
     if (!m_streaming || m_lastFrameAtMs <= 0)
         return;
     const qint64 age = QDateTime::currentMSecsSinceEpoch() - m_lastFrameAtMs;
-    if (age < kStaleReconnectMs)
+    const qint64 deadline = m_sessionFrameCount == 0
+        ? kFirstFrameReconnectMs : kStaleReconnectMs;
+    if (age < deadline)
         return;
 
     qWarning() << "[camera] no frames for" << age << "ms; reconnecting";
     stop();
+    const quint64 generation = m_sessionGeneration;
     setStatus(QStringLiteral("connecting"));
-    QTimer::singleShot(5000, this, [this] {
-        if (m_status == QLatin1String("connecting"))
+    QTimer::singleShot(5000, this, [this, generation] {
+        if (generation == m_sessionGeneration
+            && m_status == QLatin1String("connecting"))
             start();
     });
 }
