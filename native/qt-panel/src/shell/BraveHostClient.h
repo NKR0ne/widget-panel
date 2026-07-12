@@ -6,6 +6,7 @@
 #include <QPointer>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QTimer>
 #include <QVariant>
 
 class QProcess;
@@ -62,6 +63,8 @@ private:
     QJsonObject m_lastOpen;
     bool m_stateRequestPending = false;
     QElapsedTimer m_stateRequestAge;
+    QTimer m_stableConnectionTimer;
+    int m_restartAttempts = 0;
     quint64 m_nextEvaluationId = 0;
 };
 

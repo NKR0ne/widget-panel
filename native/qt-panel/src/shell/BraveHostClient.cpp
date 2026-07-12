@@ -18,6 +18,12 @@ BraveHostClient::BraveHostClient(QObject* parent)
     : QObject(parent)
 {
     connect(&m_server, &QTcpServer::newConnection, this, &BraveHostClient::onNewConnection);
+    m_stableConnectionTimer.setSingleShot(true);
+    m_stableConnectionTimer.setInterval(15000);
+    connect(&m_stableConnectionTimer, &QTimer::timeout, this, [this] {
+        if (connected())
+            m_restartAttempts = 0;
+    });
 }
 
 void BraveHostClient::start()
@@ -65,11 +71,30 @@ void BraveHostClient::spawnHelper()
             [this](int code, QProcess::ExitStatus status) {
         qInfo() << "[brave] brave-host exited code=" << code
                 << "status=" << (status == QProcess::CrashExit ? "crash" : "normal");
+        const bool recover = !m_lastOpen.isEmpty() && !QCoreApplication::closingDown();
         m_stateRequestPending = false;
         m_pendingEval = {};
         m_helperProcess->deleteLater();
         m_helperProcess = nullptr;
-        emit errorReceived(QStringLiteral("Browser island host stopped unexpectedly"));
+        m_stableConnectionTimer.stop();
+        if (m_socket) {
+            QTcpSocket* socket = m_socket;
+            socket->abort();
+            if (m_socket == socket)
+                m_socket = nullptr;
+        }
+        if (recover && m_restartAttempts < 2) {
+            ++m_restartAttempts;
+            m_pendingOpen = m_lastOpen;
+            qWarning() << "[brave] restarting island host, attempt" << m_restartAttempts;
+            emit errorReceived(QStringLiteral("Browser island host stopped; restarting"));
+            QTimer::singleShot(600, this, [this] {
+                if (!m_lastOpen.isEmpty() && !connected() && !m_helperProcess)
+                    spawnHelper();
+            });
+        } else {
+            emit errorReceived(QStringLiteral("Browser island host stopped unexpectedly"));
+        }
     });
     m_helperProcess->start();
     qInfo() << "[brave] spawned" << path;
@@ -87,10 +112,12 @@ void BraveHostClient::onNewConnection()
             if (m_socket == socket) {
                 m_socket = nullptr;
                 m_stateRequestPending = false;
+                m_stableConnectionTimer.stop();
             }
             socket->deleteLater();
         });
         qInfo() << "[brave] brave-host connected";
+        m_stableConnectionTimer.start();
         if (!m_pendingOpen.isEmpty()) {
             sendJson(m_pendingOpen);
             m_pendingOpen = {};
@@ -153,6 +180,8 @@ void BraveHostClient::sendJson(const QJsonObject& message)
 void BraveHostClient::open(const QString& url, int physX, int physY, int physW, int physH)
 {
     start();
+    if (m_lastOpen.isEmpty())
+        m_restartAttempts = 0;
     const QJsonObject message{
         {QStringLiteral("type"), QStringLiteral("open")},
         {QStringLiteral("hwnd"), 0},
@@ -239,6 +268,8 @@ void BraveHostClient::closeShell()
     m_pendingEval = {};
     m_lastOpen = {};
     m_stateRequestPending = false;
+    m_stableConnectionTimer.stop();
+    m_restartAttempts = 0;
     sendJson({{QStringLiteral("type"), QStringLiteral("close")}});
 }
 
