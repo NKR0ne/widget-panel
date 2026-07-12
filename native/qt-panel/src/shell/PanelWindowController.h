@@ -96,6 +96,7 @@ signals:
     void panelVisibleChanged();
     void graphicsApiNameChanged();
     void islandChanged();
+    void tradingViewSessionCaptured();
     void slideInRequested();
     void slideOutRequested();
 

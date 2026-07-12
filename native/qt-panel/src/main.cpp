@@ -251,6 +251,8 @@ int main(int argc, char* argv[])
             || url.contains(QLatin1String("localhost:47340"), Qt::CaseInsensitive))
             controller.closeIsland();
     });
+    QObject::connect(&controller, &PanelWindowController::tradingViewSessionCaptured,
+                     &stocks, &StocksModel::refreshWatchlists);
 
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Panel", &controller);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Store", &settings);

@@ -11,6 +11,7 @@ GlassCard {
 
     // Tabs: one per watchlist + earnings + IPO + Heatmap.
     property int tab: 0   // 0..N-1 = lists, N = earnings, N+1 = IPO
+    property int knownListCount: 0
     readonly property int listCount: Stocks.listNames.length
     readonly property bool earningsTab: tab === listCount
     readonly property bool iposTab: tab === listCount + 1
@@ -128,17 +129,24 @@ GlassCard {
     function tradingViewStatus() {
         const revision = storeRevision
         const capture = Store.get("wp-tv-capture-status", "")
-        if (capture)
+        if (capture.indexOf("Capturing") === 0 || capture.indexOf("not found") >= 0
+                || capture.indexOf("unavailable") >= 0)
             return capture
         const user = tradingViewUser()
-        return user ? ("TV: " + user) : "TV non connecte"
+        if (user)
+            return "TV: " + user
+        const hasSession = !!Store.get("wp-tv-session", "")
+            || !!Store.get("wp-tv-cookies", "")
+        if (hasSession)
+            return "TV session active"
+        return capture || "TV non connecte"
     }
 
     function clearTradingView() {
         const keys = [
             "wp-tv-session", "wp-tv-cookies", "wp-tv-csrf", "wp-tv-user",
             "wp-tv-raw-lists", "wp-tv-watchlist-ids", "wp-tv-lists-cache",
-            "wp-tv-lists-cache-at", "wp-tv-capture-status"
+            "wp-tv-lists-cache-at", "wp-tv-list-id", "wp-tv-capture-status"
         ]
         for (const key of keys)
             Store.set(key, "")
@@ -193,6 +201,7 @@ GlassCard {
     }
 
     Component.onCompleted: {
+        knownListCount = listCount
         if (Stocks.currentList >= 0 && Stocks.currentList < listCount)
             tab = Stocks.currentList
     }
@@ -204,8 +213,15 @@ GlassCard {
                 card.tab = Stocks.currentList
         }
         function onListsChanged() {
-            if (card.tab >= Stocks.listNames.length + 3)
-                card.tab = Math.max(0, Stocks.listNames.length - 1)
+            const oldCount = card.knownListCount
+            const nextCount = Stocks.listNames.length
+            const specialOffset = oldCount > 0 && card.tab >= oldCount
+                ? card.tab - oldCount : -1
+            card.knownListCount = nextCount
+            if (specialOffset >= 0 && specialOffset <= 2)
+                card.tab = nextCount + specialOffset
+            else if (card.tab >= nextCount)
+                card.tab = Math.max(0, nextCount - 1)
         }
     }
     Connections {

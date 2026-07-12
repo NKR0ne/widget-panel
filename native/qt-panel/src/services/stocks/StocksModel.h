@@ -86,6 +86,7 @@ private:
         bool hasData = false;
     };
     struct List {
+        QString id;
         QString name;
         QList<Row> rows;
     };
@@ -95,12 +96,14 @@ private:
     void fetchFinnhubRow(int listIndex, int rowIndex);
     QString marketProvider() const;
     QStringList earningsSymbols() const;
+    bool hasTradingViewSession() const;
 
     SettingsStore* m_settings = nullptr;
     SecretVault* m_vault = nullptr;
     HttpClient* m_http = nullptr;
     QTimer m_pollTimer;
     QTimer m_eventsTimer;
+    QTimer m_watchlistsTimer;
     QList<List> m_lists;
     int m_current = 0;
     QVariantList m_earnings;

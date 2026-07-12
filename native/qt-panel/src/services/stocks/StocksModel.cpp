@@ -24,6 +24,7 @@ namespace qtpanel {
 
 namespace {
 constexpr int kPollMs = 60000;
+constexpr int kWatchlistsRefreshMs = 60000;
 constexpr int kEventsRefreshMs = 6 * 60 * 60 * 1000;
 
 const QStringList kEarningsColumns{
@@ -282,19 +283,32 @@ StocksModel::StocksModel(SettingsStore* settings, SecretVault* vault, HttpClient
         refreshIpos();
     });
     m_eventsTimer.start();
+    m_watchlistsTimer.setInterval(kWatchlistsRefreshMs);
+    connect(&m_watchlistsTimer, &QTimer::timeout, this, [this] {
+        if (hasTradingViewSession())
+            refreshWatchlists();
+    });
+    m_watchlistsTimer.start();
     refresh();
     refreshEarnings();
     refreshIpos();
+    QTimer::singleShot(1500, this, [this] {
+        if (hasTradingViewSession())
+            refreshWatchlists();
+    });
 }
 
 void StocksModel::loadLists()
 {
     const int previous = m_current;
+    const QString previousId = previous >= 0 && previous < m_lists.size()
+        ? m_lists.at(previous).id : QString();
     beginResetModel();
     m_lists.clear();
 
     // Built-in "Marchés" overview (explicit Yahoo tickers).
     List markets;
+    markets.id = QStringLiteral("markets");
     markets.name = QStringLiteral("Marchés");
     const struct { const char* tv; const char* y; const char* d; } overview[] = {
         {"SP:SPX", "^GSPC", "S&P 500"}, {"DJ:DJI", "^DJI", "Dow Jones"},
@@ -317,6 +331,9 @@ void StocksModel::loadLists()
         if (name.isEmpty() || name == QLatin1String("Liste de surveillance"))
             continue;
         List list;
+        list.id = lo.value(QLatin1String("id")).toVariant().toString().trimmed();
+        if (list.id.isEmpty())
+            list.id = QStringLiteral("name:") + normalizedListName(name);
         list.name = name;
         for (const QJsonValue& sv : lo.value(QLatin1String("symbols")).toArray()) {
             const QJsonObject so = sv.toObject();
@@ -336,8 +353,24 @@ void StocksModel::loadLists()
     if (m_lists.isEmpty()) {
         m_current = 0;
     } else {
-        const int saved = m_settings->getInt(QStringLiteral("wp-tv-list-idx"), previous);
-        m_current = std::clamp(saved, 0, static_cast<int>(m_lists.size()) - 1);
+        const QString savedId = m_settings->get(
+            QStringLiteral("wp-tv-list-id"), previousId).toString();
+        int selected = -1;
+        if (!savedId.isEmpty()) {
+            for (int i = 0; i < m_lists.size(); ++i) {
+                if (m_lists.at(i).id == savedId) {
+                    selected = i;
+                    break;
+                }
+            }
+        }
+        if (selected < 0) {
+            const int saved = m_settings->getInt(QStringLiteral("wp-tv-list-idx"), previous);
+            selected = std::clamp(saved, 0, static_cast<int>(m_lists.size()) - 1);
+        }
+        m_current = selected;
+        m_settings->set(QStringLiteral("wp-tv-list-id"), m_lists.at(m_current).id);
+        m_settings->set(QStringLiteral("wp-tv-list-idx"), m_current);
     }
 
     endResetModel();
@@ -388,6 +421,7 @@ void StocksModel::setList(int index)
     m_current = index;
     endResetModel();
     m_settings->set(QStringLiteral("wp-tv-list-idx"), index);
+    m_settings->set(QStringLiteral("wp-tv-list-id"), m_lists.at(index).id);
     emit currentListChanged();
     emit countChanged();
     refresh();
@@ -441,12 +475,18 @@ void StocksModel::refreshWatchlists()
         }
 
         const QString payload = QString::fromUtf8(QJsonDocument(state->lists).toJson(QJsonDocument::Compact));
-        m_settings->set(QStringLiteral("wp-tv-lists-cache"), payload);
+        const bool changed = m_settings->get(QStringLiteral("wp-tv-lists-cache")).toString()
+            != payload;
+        if (changed)
+            m_settings->set(QStringLiteral("wp-tv-lists-cache"), payload);
         m_settings->set(QStringLiteral("wp-tv-lists-cache-at"),
                         QString::number(QDateTime::currentMSecsSinceEpoch()));
-        m_watchlistsStatus = QStringLiteral("Updated %1 TradingView lists").arg(state->lists.size());
+        m_watchlistsStatus = changed
+            ? QStringLiteral("Updated %1 TradingView lists").arg(state->lists.size())
+            : QStringLiteral("%1 TradingView lists current").arg(state->lists.size());
         emit watchlistsRefreshChanged();
-        qInfo() << "[stocks] refreshed TradingView watchlists:" << state->lists.size();
+        qInfo() << "[stocks] TradingView watchlists:" << state->lists.size()
+                << (changed ? "updated" : "unchanged");
     };
 
     const auto requestListById = [this, state, headers, complete](const QString& id,
@@ -508,6 +548,12 @@ void StocksModel::refreshWatchlists()
                 complete();
             }, headers);
     }
+}
+
+bool StocksModel::hasTradingViewSession() const
+{
+    return !m_settings->get(QStringLiteral("wp-tv-cookies")).toString().trimmed().isEmpty()
+        || !m_settings->get(QStringLiteral("wp-tv-session")).toString().trimmed().isEmpty();
 }
 
 void StocksModel::refresh()

@@ -519,13 +519,15 @@ void PanelWindowController::handleTradingViewCookies(const QJsonObject& payload)
     QString username;
     for (const QJsonValue& value : cookies) {
         const QJsonObject c = value.toObject();
-        const QString domain = c.value(QLatin1String("domain")).toString();
+        QString domain = c.value(QLatin1String("domain")).toString().trimmed().toLower();
+        while (domain.startsWith(QLatin1Char('.')))
+            domain.remove(0, 1);
         const QString name = c.value(QLatin1String("name")).toString();
         const QString cookieValue = c.value(QLatin1String("value")).toString();
         if (name.isEmpty() || cookieValue.isEmpty())
             continue;
-        if (!domain.contains(QLatin1String("tradingview.com"), Qt::CaseInsensitive)
-            && name != QLatin1String("sessionid"))
+        if (domain != QLatin1String("tradingview.com")
+            && !domain.endsWith(QLatin1String(".tradingview.com")))
             continue;
         pairs << QStringLiteral("%1=%2").arg(name, cookieValue);
         if (name == QLatin1String("sessionid"))
@@ -551,6 +553,7 @@ void PanelWindowController::handleTradingViewCookies(const QJsonObject& payload)
                     username.isEmpty()
                         ? QStringLiteral("TradingView session captured")
                         : QStringLiteral("TradingView session captured: %1").arg(username));
+    emit tradingViewSessionCaptured();
     qInfo() << "[tv] captured TradingView session cookies; user=" << username
             << "cookies=" << pairs.size();
 }
