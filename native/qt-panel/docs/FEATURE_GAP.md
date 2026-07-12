@@ -113,7 +113,7 @@ but parity, controls, or runtime validation are incomplete.
 | Core zoom surface | Implemented | The native direction uses a Brave-host sidecar controlled by `PanelWindowController`, with reserved mode space, a dedicated persistent island profile, deterministic process cleanup, and CDP-backed URL/title/readiness/history/error state. | Site-specific authentication and playback remain runtime concerns; an Electron-style in-panel webview is intentionally not required. |
 | Toolbar/navigation | Implemented | Native QML supports state-aware Back/Forward, reload, address entry, external open, close, URL/title polling, readiness/error status, loading feedback, and timeout handling. Disabled history controls now reflect CDP navigation state. | Continue visual-density tuning from daily use. |
 | Launch affordances | Partial | Native cards open the island from traffic, reader articles, PressReader, normal/failed live feeds, stock/event/IPO rows, stock row `TV` buttons, the TradingView heatmap launcher, heatmap tiles, and the separate direct IP camera card. | Runtime validation still needs to prove every island launch path is reliable. |
-| Live detail | Implemented | Direct HLS uses the native full-stage detail surface. Restricted YouTube tiles remain visible with thumbnails/status and an explicit system-browser command; card-body clicks never open web content. | Apply the same native detail pattern to Markets, Camera, Station, and Traffic. |
+| Native detail workspaces | Implemented | Direct HLS retains its dedicated player. Markets/Stocks, Camera, Station graphs, and Traffic now open through a shared full-stage native workspace; browser launches remain explicit actions inside detail views. | Runtime validate state preservation, scrolling, camera ownership, and external escalation from every workspace. |
 | TradingView heatmap drilldown | Partial | Native opens chart and heatmap paths, accepts cookies only from exact TradingView domains, automatically syncs after capture, and refreshes existing-session watchlists every 60 seconds without resetting unchanged models. Existing-session refresh loaded two lists on 2026-07-12. | Runtime validation must still confirm a fresh TradingView sign-in/capture and real heatmap/chart drilldown. |
 | PressReader automation | Implemented | Native opens the catalog island, keeps credentials in Vault, injects/reinjects login and start-reading scripts through correlated CDP evaluation, submits once per page signature, pauses around trusted user interaction, detects session/login/rejection state, applies a two-hour rejection guardrail, bounds unanswered script requests, and exposes pause/resume/manual modes. | Live credential/session validation remains; dark-mode page recoloring is presentation rather than a functional parity blocker. |
 | Microsoft auth/browser | Implemented | Native Graph PKCE now opens inside the Brave island, validates OAuth `state`, closes the island after a successful callback, supports explicit cancellation, and surfaces token, callback-port, timeout, provider, and code-exchange errors in the Microsoft cards. Invalid refresh credentials are cleared so the user can recover through interactive sign-in. | Existing-token startup loaded agenda, mail, and To Do successfully on 2026-07-11. A fresh-account interactive sign-in still needs credentialed runtime validation without disturbing the working profile. |
@@ -144,10 +144,24 @@ but parity, controls, or runtime validation are incomplete.
 | Settings sheet | Implemented | Covers opacities, location, core keys, Graph client, Starvis model/TTS/base URL/workspace/execution, camera connection/discovery, PressReader credentials/URL, TradingView session actions, market provider, diagnostics, carousel, columns, sound, autostart. |
 | Advanced service settings | Implemented | Starvis, camera, PressReader, TradingView session, market provider, and runtime diagnostics controls are native. |
 
+## Native UI Improvement Program
+
+| Area | Status | Notes |
+|---|---|---|
+| Shared detail workspace | Implemented | Stocks, native heatmap preview, Camera, Station metrics, and Traffic reuse their native card models in flat full-stage detail surfaces. Source cards retain service ownership, so opening Camera detail does not create another authentication or stream lifecycle. |
+| Card interaction contract | Implemented | The obsolete overlay grip was removed. A larger reserved title zone handles drag, collapse is an explicit hover/focus button, and card controls remain outside the drag target. |
+| Column and layout editing | Implemented | Base columns have native edge resize handles with persisted widths. The widget manager can save, restore, and reset mode layout presets in addition to enable/disable controls. |
+| Adaptive command surface | Implemented | Renderer text moved out of the primary header, mode controls gained keyboard focus, service state has a dedicated drawer, and common commands have accessible tooltips. |
+| Operational feedback | Implemented | Shared semantic status banners, transient toasts, and a local-only service snapshot drawer cover refresh, layout, connection, and stale-state feedback. The normal status refresh performs no camera or network probes. |
+| Settings navigation | Implemented | The wider native settings sheet has category jump navigation plus density, high-contrast, and reduced-motion controls. |
+| Windows accessibility | Implemented | The native theme polls Windows high-contrast and client-animation settings; OS requests override app presentation preferences. Icon buttons and core mode/settings controls expose keyboard focus and accessible names. |
+| Visual/performance system | Implemented | Semantic status colors, 8px card radii, compact/comfortable spacing, flat detail cards, and hidden-panel shader suspension are centralized in shared tokens. |
+| Runtime UI validation | Partial | Build-time QML compilation remains authoritative for contracts. Interactive keyboard, screen-reader, high-contrast, drag-resize, and all four detail-workspace flows still require a screenshot/runtime pass. |
+
 ## Highest-Value Next Work
 
-1. Extend the native detail workspace pattern to Markets/Stocks, Camera, Station graphs, and Traffic before adding more browser-island behavior.
+1. Runtime validate the native Stocks, Camera, Station, and Traffic detail workspaces, including focus return and state preservation.
 2. Runtime test reader fallback ordering: direct parser, feed summary, publisher feed, Jina proxy, and archive CDX/replay on real blocked publishers.
 3. Runtime test camera gateway, PressReader, Starvis chat/TTS and staged actions, TradingView session capture, Finnhub quotes, and long-run live/audio behavior with real credentials/devices.
-4. Run shell screenshots/focus/z-order regression and card-by-card compact density checks.
+4. Run keyboard, high-contrast, column-resize, shell screenshot, focus/z-order, and card-by-card compact-density checks.
 5. Keep build and launch validation on the documented incremental NMake scripts with isolated profiles and bounded exits; use `-Reconfigure` only when required.

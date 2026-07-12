@@ -7,6 +7,8 @@ Item {
     id: modal
 
     property bool open: false
+    focus: open
+    Keys.onEscapePressed: dismiss()
 
     function show() {
         baseColumnsDraft = Number(Store.get("wp-base-columns", 3)) || 3
@@ -17,6 +19,15 @@ Item {
     function dismiss() {
         open = false
         Panel.setModalOpen(false)
+    }
+    function jumpTo(section) {
+        let target = generalSection
+        if (section === "services") target = starvisSection
+        else if (section === "accounts") target = pressSection
+        else if (section === "validation") target = validationSection
+        else if (section === "interface") target = interfaceSection
+        const point = target.mapToItem(sheet, 0, 0)
+        scroll.contentY = Math.max(0, Math.min(scroll.contentHeight - scroll.height, point.y - 8))
     }
     function parseJson(raw, fallback) {
         if (raw === undefined || raw === null || raw === "")
@@ -166,7 +177,7 @@ Item {
     Rectangle {
         id: panel
         anchors.centerIn: parent
-        width: Math.min(340, parent.width - 60)
+        width: Math.min(520, parent.width - 48)
         height: Math.min(parent.height - 48, sheet.implicitHeight + 36)
         radius: Theme.radiusPanel
         color: "#131722"
@@ -209,8 +220,55 @@ Item {
                     id: closeBtn
                     glyph: ""  // ChromeClose
                     onClicked: modal.dismiss()
+                    tooltip: "Fermer"
                 }
             }
+
+            Flickable {
+                width: parent.width
+                height: 26
+                contentWidth: settingsNav.width
+                clip: true
+                Row {
+                    id: settingsNav
+                    spacing: 4
+                    Repeater {
+                        model: [
+                            { id: "general", label: "G\u00e9n\u00e9ral" },
+                            { id: "services", label: "Services" },
+                            { id: "accounts", label: "Comptes" },
+                            { id: "validation", label: "Validation" },
+                            { id: "interface", label: "Interface" }
+                        ]
+                        delegate: Rectangle {
+                            required property var modelData
+                            width: navLabel.implicitWidth + 16
+                            height: 24
+                            radius: 6
+                            color: navMouse.containsMouse ? Theme.hover : Theme.cardFill
+                            border.color: Theme.cardStroke
+                            Accessible.role: Accessible.Button
+                            Accessible.name: modelData.label
+                            Text {
+                                id: navLabel
+                                anchors.centerIn: parent
+                                text: parent.modelData.label
+                                color: Theme.textSecondary
+                                font.pixelSize: 9
+                            }
+                            MouseArea {
+                                id: navMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: modal.jumpTo(parent.modelData.id)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Item { id: generalSection; width: 1; height: 1 }
 
             SettingsSlider {
                 width: parent.width
@@ -232,6 +290,31 @@ Item {
                 from: 0.05; to: 1.0
                 value: Panel.pinnedOpacityValue()
                 onMoved: value => Panel.setPinnedOpacity(value)
+            }
+
+            SettingsToggle {
+                width: parent.width
+                label: "R\u00e9duire les animations"
+                description: "D\u00e9sactive les transitions non essentielles"
+                checked: Ui.reducedMotion
+                onToggled: function(value) { Ui.reducedMotion = value; Ui.save() }
+            }
+            SettingsToggle {
+                width: parent.width
+                label: "Contraste renforc\u00e9"
+                description: "Augmente les contours et le contraste du texte"
+                checked: Ui.highContrast
+                onToggled: function(value) { Ui.highContrast = value; Ui.save() }
+            }
+            SettingsToggle {
+                width: parent.width
+                label: "Densit\u00e9 confortable"
+                description: "Ajoute de l'espace aux surfaces tactiles"
+                checked: Ui.density === "comfortable"
+                onToggled: function(value) {
+                    Ui.density = value ? "comfortable" : "compact"
+                    Ui.save()
+                }
             }
 
             // ── Location ──────────────────────────────────────────────
@@ -348,6 +431,7 @@ Item {
             }
 
             Text {
+                id: starvisSection
                 text: "STARVIS"; color: Theme.textSecondary; font.pixelSize: 9
                 font.letterSpacing: 1; topPadding: 4
             }
@@ -495,6 +579,7 @@ Item {
             }
 
             Text {
+                id: pressSection
                 text: "PRESSREADER"; color: Theme.textSecondary; font.pixelSize: 9
                 font.letterSpacing: 1; topPadding: 4
             }
@@ -652,6 +737,7 @@ Item {
 
             // Runtime validation
             Text {
+                id: validationSection
                 text: "VALIDATION"; color: Theme.textSecondary; font.pixelSize: 9
                 font.letterSpacing: 1; topPadding: 4
             }
@@ -739,6 +825,7 @@ Item {
                 width: parent.width
                 spacing: 8
                 Text {
+                    id: interfaceSection
                     text: "Carrousel des nouvelles"; color: Theme.textSecondary
                     font.pixelSize: Theme.fontSizeCaption
                     anchors.verticalCenter: parent.verticalCenter

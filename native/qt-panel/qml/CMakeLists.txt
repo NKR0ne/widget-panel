@@ -12,11 +12,17 @@ qt_add_qml_module(qtpanel_ui
         WidgetHost.qml
         GlassCard.qml
         IconButton.qml
+        CardHeader.qml
+        StatusBanner.qml
+        ToastOverlay.qml
+        DetailWorkspace.qml
+        ServiceStatusDrawer.qml
         Theme.qml
         Motion.qml
         Ui.qml
         SettingsModal.qml
         SettingsSlider.qml
+        SettingsToggle.qml
         ManageWidgetsModal.qml
         ClockWidget.qml
         CalendarWidget.qml

@@ -103,69 +103,16 @@ Item {
         }
     }
 
-    // Drag grip — top-right, fades in on hover (base mode only).
-    Rectangle {
-        id: grip
-        width: 22; height: 18
-        radius: 5
-        anchors.right: parent.right
-        anchors.top: parent.top
-        anchors.margins: 4
-        z: 2
-        visible: false
-        opacity: 0
-        color: host.dragging ? Theme.accent : Qt.rgba(0, 0, 0, 0.4)
-        border.color: Theme.cardStroke
-        Behavior on opacity { NumberAnimation { duration: Motion.fastMs } }
-        Behavior on color { ColorAnimation { duration: Motion.fastMs } }
-
-        // grip dots
-        Row {
-            anchors.centerIn: parent
-            spacing: 3
-            Repeater {
-                model: 2
-                Column {
-                    spacing: 2
-                    Repeater {
-                        model: 3
-                        Rectangle { width: 2; height: 2; radius: 1; color: Theme.textSecondary }
-                    }
-                }
-            }
-        }
-
-        HoverHandler { id: gripHover }
-
-        DragHandler {
-            id: unusedGripDragHandler
-            enabled: false
-            target: null               // we drive the transform manually
-            dragThreshold: 4
-            onActiveChanged: {
-                if (!active && host.columns)
-                    host.columns.dropWidget(host.widgetId,
-                                            dragHandler.centroid.scenePosition.x,
-                                            dragHandler.centroid.scenePosition.y)
-            }
-        }
-    }
-
     Item {
         id: titleDragZone
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.leftMargin: 10
         anchors.topMargin: 6
-        width: Math.min(parent.width * 0.34, 96)
+        width: Math.max(72, Math.min(parent.width * 0.55, parent.width - 112))
         height: 20
         visible: host.dragEnabled && host.titleDragEnabled
         z: 2
-
-        TapHandler {
-            enabled: titleDragZone.visible
-            onTapped: if (!host.dragging) host.toggleCollapsed()
-        }
 
         DragHandler {
             id: dragHandler
@@ -179,6 +126,23 @@ Item {
                                             dragHandler.centroid.scenePosition.y)
             }
         }
+    }
+
+    IconButton {
+        id: collapseButton
+        visible: titleDragZone.visible
+        opacity: hostHover.hovered || host.collapsed || activeFocus ? 1 : 0
+        anchors.left: titleDragZone.right
+        anchors.leftMargin: 2
+        anchors.top: parent.top
+        anchors.topMargin: 5
+        buttonSize: 20
+        z: 4
+        glyph: host.collapsed ? "\uE70D" : "\uE70E"
+        tooltip: host.collapsed ? "D\u00e9velopper" : "R\u00e9duire"
+        accessibleName: tooltip + " " + host.widgetId
+        onClicked: host.toggleCollapsed()
+        Behavior on opacity { NumberAnimation { duration: Motion.fastMs } }
     }
 
     HoverHandler { id: hostHover }

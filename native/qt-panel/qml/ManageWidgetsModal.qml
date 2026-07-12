@@ -165,6 +165,43 @@ Item {
         saveActiveIds(next, reloadNews)
     }
 
+    function resetLayout() {
+        const cfg = config()
+        cfg.columns = {}
+        Store.set("wp-config", JSON.stringify(cfg))
+        Store.set("wp-col-widths", "{}")
+        Store.set("wp-expanded", "{}")
+        Ui.notify("Disposition r\u00e9initialis\u00e9e", "success")
+    }
+
+    function saveLayoutPreset() {
+        let widths = {}
+        try { widths = JSON.parse(Store.get("wp-col-widths", "{}")) } catch (e) {}
+        const cfg = config()
+        Store.set("wp-layout-preset-" + selectedMode, JSON.stringify({
+            columns: cfg.columns || {},
+            widths: widths,
+            baseColumns: Number(Store.get("wp-base-columns", 3)) || 3
+        }))
+        Ui.notify("Disposition enregistr\u00e9e", "success")
+    }
+
+    function restoreLayoutPreset() {
+        let preset = null
+        try { preset = JSON.parse(Store.get("wp-layout-preset-" + selectedMode, "")) } catch (e) {}
+        if (!preset) {
+            Ui.notify("Aucune disposition enregistr\u00e9e", "warning")
+            return
+        }
+        const cfg = config()
+        cfg.columns = preset.columns || {}
+        Store.set("wp-config", JSON.stringify(cfg))
+        Store.set("wp-col-widths", JSON.stringify(preset.widths || {}))
+        if (selectedMode === "base" && preset.baseColumns)
+            Store.set("wp-base-columns", Math.max(3, Math.min(6, Number(preset.baseColumns))))
+        Ui.notify("Disposition restaur\u00e9e", "success")
+    }
+
     Behavior on opacity { NumberAnimation { duration: Motion.normalMs } }
 
     Connections {
@@ -206,7 +243,26 @@ Item {
                     font.pixelSize: Theme.fontSizeTitle
                     font.weight: Font.DemiBold
                 }
-                Item { width: parent.width - x - closeBtn.width; height: 1 }
+                Item { width: parent.width - x - saveButton.width - restoreButton.width
+                              - resetButton.width - closeBtn.width - 12; height: 1 }
+                IconButton {
+                    id: saveButton
+                    glyph: "\uE74E"
+                    tooltip: "Enregistrer cette disposition"
+                    onClicked: modal.saveLayoutPreset()
+                }
+                IconButton {
+                    id: restoreButton
+                    glyph: "\uE72C"
+                    tooltip: "Restaurer la disposition enregistr\u00e9e"
+                    onClicked: modal.restoreLayoutPreset()
+                }
+                IconButton {
+                    id: resetButton
+                    glyph: "\uE777"
+                    tooltip: "R\u00e9initialiser la disposition"
+                    onClicked: modal.resetLayout()
+                }
                 IconButton { id: closeBtn; glyph: ""; onClicked: modal.dismiss() }
             }
 

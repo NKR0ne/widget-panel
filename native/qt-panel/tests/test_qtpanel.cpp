@@ -7,6 +7,7 @@
 #include "services/reader/ReaderService.h"
 #include "services/live/LiveFeedService.h"
 #include "shell/FocusPolicy.h"
+#include "shell/SystemTheme.h"
 
 #include <QTemporaryDir>
 
@@ -165,6 +166,17 @@ private slots:
         QVERIFY(article.value(QStringLiteral("paywall")).toBool());
         QCOMPARE(paragraphs.size(), 2);
         QVERIFY(paragraphs.first().toString().startsWith(QStringLiteral("This first fallback")));
+    }
+
+    void systemAppearanceIsExposed()
+    {
+        SystemTheme theme;
+        QVERIFY(theme.accent().isValid());
+        QVERIFY(theme.accent().alpha() > 0);
+        const bool highContrast = theme.highContrast();
+        const bool animationsEnabled = theme.animationsEnabled();
+        QCOMPARE(theme.highContrast(), highContrast);
+        QCOMPARE(theme.animationsEnabled(), animationsEnabled);
     }
 
     void readerStripsHostileMarkupAndPreservesStructure()

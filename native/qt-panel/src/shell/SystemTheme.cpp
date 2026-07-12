@@ -3,6 +3,10 @@
 #include <QSettings>
 #include <QTimer>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 namespace qtpanel {
 
 SystemTheme::SystemTheme(QObject* parent)
@@ -18,6 +22,25 @@ SystemTheme::SystemTheme(QObject* parent)
 
 void SystemTheme::refresh()
 {
+#ifdef Q_OS_WIN
+    HIGHCONTRASTW contrast{};
+    contrast.cbSize = sizeof(contrast);
+    const bool highContrast = SystemParametersInfoW(
+        SPI_GETHIGHCONTRAST, sizeof(contrast), &contrast, 0)
+        && (contrast.dwFlags & HCF_HIGHCONTRASTON);
+
+    BOOL animationsEnabled = TRUE;
+    if (!SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animationsEnabled, 0))
+        animationsEnabled = TRUE;
+
+    if (m_highContrast != highContrast
+        || m_animationsEnabled != (animationsEnabled != FALSE)) {
+        m_highContrast = highContrast;
+        m_animationsEnabled = animationsEnabled != FALSE;
+        emit appearanceChanged();
+    }
+#endif
+
     // HKCU\Software\Microsoft\Windows\DWM\ColorizationColor is 0xAARRGGBB.
     QSettings dwm(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\DWM"),
                   QSettings::NativeFormat);

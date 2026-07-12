@@ -39,6 +39,7 @@ public:
     bool running() const { return m_running; }
 
     Q_INVOKABLE void runPreflight();
+    Q_INVOKABLE void refreshSnapshot();
     Q_INVOKABLE void probeMicrosoft();
     Q_INVOKABLE void probeLiveFeeds();
     Q_INVOKABLE void probeWorkstation();

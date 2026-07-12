@@ -7,9 +7,12 @@ GlassCard {
     id: card
     title: "Caméra"
     implicitHeight: body.implicitHeight + 24
+    property bool detailMode: false
+    flat: detailMode
+    interactive: !detailMode
 
-    Component.onCompleted: if (Camera.configured) Camera.start()
-    Component.onDestruction: Camera.stop()
+    Component.onCompleted: if (!detailMode && Camera.configured) Camera.start()
+    Component.onDestruction: if (!detailMode) Camera.stop()
 
     function forgetCredentials() {
         Camera.forgetCredentials()
@@ -26,34 +29,22 @@ GlassCard {
         anchors.margins: 12
         spacing: 8
 
-        Row {
+        CardHeader {
             width: parent.width
-            spacing: 6
-            Text {
-                text: card.title
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeCaption
-                font.capitalization: Font.AllUppercase
-                font.letterSpacing: 1.2
-            }
-            Rectangle {
-                width: 6; height: 6; radius: 3
-                anchors.verticalCenter: parent.verticalCenter
-                color: Camera.status === "streaming" ? "#34d399"
-                     : Camera.status === "error" ? "#f87171" : "#fbbf24"
-            }
-            Item { width: parent.width - x - camGear.width; height: 1 }
-            Text {
-                id: camGear
-                text: ""  // Settings gear
-                font.family: "Segoe Fluent Icons"; font.pixelSize: 11
-                color: camGearMouse.containsMouse ? Theme.accent : Theme.textSecondary
-                anchors.verticalCenter: parent.verticalCenter
-                MouseArea {
-                    id: camGearMouse; anchors.fill: parent; anchors.margins: -4
-                    hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                    onClicked: camIdRow.visible = !camIdRow.visible
-                }
+            title: card.title
+            subtitle: Store.get("wp-camera-name", "")
+            status: Camera.status === "streaming" ? "LIVE" : Camera.status.toUpperCase()
+            statusColor: Camera.status === "streaming" ? Theme.success
+                       : Camera.status === "error" ? Theme.danger : Theme.warning
+            expandable: !card.detailMode && Camera.status === "streaming"
+            onExpandRequested: Ui.openDetail("camera", "Cam\u00e9ra", {
+                subtitle: Store.get("wp-camera-name", "XProtect")
+            })
+            IconButton {
+                buttonSize: 22
+                glyph: "\uE713"
+                tooltip: "Configurer la cam\u00e9ra"
+                onClicked: camIdRow.visible = !camIdRow.visible
             }
         }
 
@@ -149,7 +140,8 @@ GlassCard {
         // Video frame
         Rectangle {
             width: parent.width
-            height: Math.round(width * 9 / 16)
+            height: card.detailMode ? Math.min(620, Math.max(320, width * 0.62))
+                                    : Math.round(width * 9 / 16)
             radius: 8
             color: "#0a0a0c"
             clip: true
@@ -157,7 +149,7 @@ GlassCard {
 
             Image {
                 anchors.fill: parent
-                fillMode: Image.PreserveAspectCrop
+                fillMode: card.detailMode ? Image.PreserveAspectFit : Image.PreserveAspectCrop
                 cache: false
                 asynchronous: true
                 source: Camera.frameId > 0

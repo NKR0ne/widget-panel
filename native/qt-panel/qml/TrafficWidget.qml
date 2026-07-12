@@ -7,6 +7,9 @@ GlassCard {
     id: card
     title: "Circulation"
     implicitHeight: body.implicitHeight + 24
+    property bool detailMode: false
+    flat: detailMode
+    interactive: !detailMode
 
     property int vaultRev: 0
     property int storeRev: 0
@@ -140,21 +143,16 @@ GlassCard {
         anchors.margins: 12
         spacing: 8
 
-        Row {
+        CardHeader {
             width: parent.width
-            spacing: 6
-
-            Text {
-                text: card.title
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeCaption
-                font.capitalization: Font.AllUppercase
-                font.letterSpacing: 1.2
-            }
-            Item {
-                width: Math.max(0, parent.width - x - themeRow.width)
-                height: 1
-            }
+            title: card.title
+            subtitle: card.location.name ? String(card.location.name).split(",")[0] : ""
+            status: card.apiKey === "" ? "CARTE" : "TRAFIC"
+            statusColor: card.apiKey === "" ? Theme.warning : Theme.success
+            expandable: !card.detailMode
+            onExpandRequested: Ui.openDetail("traffic", "Circulation", {
+                subtitle: card.location.name || ""
+            })
             Row {
                 id: themeRow
                 spacing: 2
@@ -193,12 +191,22 @@ GlassCard {
                     }
                 }
             }
+            IconButton {
+                visible: card.detailMode
+                buttonSize: 20
+                glyph: "\uE774"
+                tooltip: "Ouvrir Google Maps"
+                onClicked: Panel.openExternal("https://www.google.com/maps/@"
+                    + card.centerLat + "," + card.centerLon + ","
+                    + card.zoom + "z/data=!5m1!1e1")
+            }
         }
 
         Rectangle {
             id: mapFrame
             width: parent.width
-            height: Math.round(width * 0.66)
+            height: card.detailMode ? Math.min(650, Math.max(360, width * 0.62))
+                                    : Math.round(width * 0.66)
             radius: 8
             color: card.effectiveTheme === "day-plan"
                    || card.effectiveTheme === "day-satellite" ? "#eef3fb" : "#050914"
@@ -331,10 +339,18 @@ GlassCard {
                 }
                 onReleased: {
                     if (!moved) {
-                        Panel.openIsland("https://www.google.com/maps/@"
-                            + card.centerLat + "," + card.centerLon + ","
-                            + card.zoom + "z/data=!5m1!1e1")
+                        if (!card.detailMode)
+                            Ui.openDetail("traffic", "Circulation", {
+                                subtitle: card.location.name || ""
+                            })
                     }
+                }
+            }
+
+            WheelHandler {
+                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                onWheel: function(event) {
+                    card.setZoom(card.zoom + (event.angleDelta.y > 0 ? 1 : -1))
                 }
             }
         }

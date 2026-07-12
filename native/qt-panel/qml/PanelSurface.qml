@@ -8,6 +8,13 @@ import QtPanel.Native
 Item {
     id: surface
 
+    Shortcut { sequence: "Ctrl+1"; onActivated: surface.switchMode("base") }
+    Shortcut { sequence: "Ctrl+2"; onActivated: surface.switchMode("news") }
+    Shortcut { sequence: "Ctrl+3"; onActivated: surface.switchMode("monitor") }
+    Shortcut { sequence: "Ctrl+4"; onActivated: surface.switchMode("live") }
+    Shortcut { sequence: "Ctrl+R"; onActivated: surface.refreshData() }
+    Shortcut { sequence: "Ctrl+Comma"; onActivated: settingsModal.show() }
+
     // base | news | monitor | live — drives both window width (Panel.fitMode)
     // and the column arrangement (PanelColumns).
     property string panelMode: StartupMode
@@ -37,6 +44,8 @@ Item {
         if (panelMode === targetMode)
             return
         const previousMode = panelMode
+        if (Ui.detailOpen)
+            Ui.closeDetail()
         if (Live.detailOpen)
             Live.closeDetail()
         if (Panel.islandOpen)
@@ -59,6 +68,7 @@ Item {
     }
 
     function refreshData() {
+        Ui.notify("Actualisation en cours", "info")
         Weather.refresh()
         Stocks.refresh()
         Stocks.refreshEarnings()
@@ -137,6 +147,7 @@ Item {
             property real cursorOn: 0
             fragmentShader: "effects/panel_depth.frag.qsb"
             NumberAnimation on time {
+                running: Panel.panelVisible && Motion.enabled
                 from: 0; to: 100000; duration: 100000000; loops: Animation.Infinite
             }
             Behavior on cursorOn { NumberAnimation { duration: Motion.normalMs } }
@@ -170,6 +181,7 @@ Item {
                     font.weight: Font.DemiBold
                 }
                 Rectangle {
+                    visible: false
                     width: apiLabel.implicitWidth + 12
                     height: apiLabel.implicitHeight + 6
                     radius: height / 2
@@ -202,6 +214,11 @@ Item {
                             radius: 5
                             color: surface.panelMode === modelData.id ? Theme.activeFill
                                  : modeMouse.containsMouse ? Theme.hover : "transparent"
+                            border.width: activeFocus ? 1 : 0
+                            border.color: Theme.accent
+                            activeFocusOnTab: true
+                            Accessible.role: Accessible.Button
+                            Accessible.name: "Mode " + modelData.label
                             Behavior on color { ColorAnimation { duration: Motion.fastMs } }
 
                             Text {
@@ -219,6 +236,9 @@ Item {
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: surface.switchMode(parent.modelData.id)
                             }
+                            Keys.onReturnPressed: surface.switchMode(modelData.id)
+                            Keys.onEnterPressed: surface.switchMode(modelData.id)
+                            Keys.onSpacePressed: surface.switchMode(modelData.id)
                         }
                     }
                 }
@@ -286,25 +306,35 @@ Item {
 
                 Item { Layout.fillWidth: true }
                 IconButton {
+                    glyph: "\uE9D9"
+                    onClicked: Ui.openStatus()
+                    tooltip: "\u00c9tat des services"
+                }
+                IconButton {
                     glyph: "\uE72C"
                     onClicked: surface.refreshData()
+                    tooltip: "Actualiser les donn\u00e9es"
                 }
                 IconButton {
                     glyph: ""   // GridView: manage widgets
                     onClicked: manageModal.show(surface.panelMode)
+                    tooltip: "G\u00e9rer les widgets"
                 }
                 IconButton {
                     glyph: ""   // Settings gear
                     onClicked: settingsModal.show()
+                    tooltip: "R\u00e9glages"
                 }
                 IconButton {
                     glyph: ""   // Segoe Fluent Icons: Pin
                     active: Panel.pinned
                     onClicked: Panel.togglePin()
+                    tooltip: Panel.pinned ? "D\u00e9s\u00e9pingler" : "\u00c9pingler"
                 }
                 IconButton {
                     glyph: ""   // ChevronLeft: slide the panel away
                     onClicked: Panel.hidePanel(false)
+                    tooltip: "Masquer le panneau"
                 }
             }
 
@@ -326,6 +356,11 @@ Item {
             fragmentShader: "effects/spotlight.frag.qsb"
             blending: true
         }
+    }
+
+    DetailWorkspace {
+        anchors.fill: parent
+        z: 68
     }
 
     LiveDetailView {
@@ -351,6 +386,16 @@ Item {
         anchors.fill: parent
     }
 
+    ServiceStatusDrawer {
+        anchors.fill: parent
+        z: 90
+    }
+
+    ToastOverlay {
+        anchors.fill: parent
+        z: 200
+    }
+
     // Web island toolbar: occupies the area beside the panel while the
     // brave-host shell (a native HWND above us) shows the page below it.
     Rectangle {
@@ -373,18 +418,21 @@ Item {
                 glyph: ""   // ChevronLeft / Back
                 enabled: Panel.islandCanGoBack && !Panel.islandLoading
                 onClicked: Panel.backIsland()
+                tooltip: "Retour"
             }
             IconButton {
                 anchors.verticalCenter: parent.verticalCenter
                 glyph: ""   // ChevronRight / Forward
                 enabled: Panel.islandCanGoForward && !Panel.islandLoading
                 onClicked: Panel.forwardIsland()
+                tooltip: "Suivant"
             }
             IconButton {
                 anchors.verticalCenter: parent.verticalCenter
                 glyph: ""   // Refresh
                 enabled: !Panel.islandLoading
                 onClicked: Panel.reloadIsland()
+                tooltip: "Actualiser"
             }
             Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
@@ -437,11 +485,13 @@ Item {
                     Panel.openExternal(Panel.islandUrl)
                     Panel.closeIsland()
                 }
+                tooltip: "Ouvrir dans le navigateur"
             }
             IconButton {
                 anchors.verticalCenter: parent.verticalCenter
                 glyph: ""  // ChromeClose
                 onClicked: Panel.closeIsland()
+                tooltip: "Fermer"
             }
         }
 

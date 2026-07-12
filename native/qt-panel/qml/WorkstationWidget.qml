@@ -10,9 +10,12 @@ GlassCard {
     property string kind: "cpu"
     property string tab: "graphs"
     property int snapRev: 0
+    property bool detailMode: false
 
     title: ({ cpu: "CPU", gpu: "GPU", ram: "RAM", disk: "Disque", network: "Reseau" })[kind] || kind
     implicitHeight: body.implicitHeight + 24
+    flat: detailMode
+    interactive: !detailMode
     opacity: Workstation.connected && !Workstation.stale ? 1.0 : 0.45
 
     Behavior on opacity { NumberAnimation { duration: Motion.normalMs } }
@@ -333,33 +336,17 @@ GlassCard {
         anchors.margins: 12
         spacing: 8
 
-        Row {
+        CardHeader {
             width: parent.width
-            spacing: 6
-
-            Text {
-                text: card.title
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeCaption
-                font.capitalization: Font.AllUppercase
-                font.letterSpacing: 1.2
-            }
-            Text {
-                width: Math.max(40, parent.width - x - liveDot.width - 8)
-                text: card.subline
-                color: Qt.rgba(1, 1, 1, 0.36)
-                font.pixelSize: 9
-                elide: Text.ElideRight
-                anchors.verticalCenter: parent.verticalCenter
-            }
-            Rectangle {
-                id: liveDot
-                width: 7
-                height: 7
-                radius: 3.5
-                color: card.live ? Theme.accent : Qt.rgba(1, 1, 1, 0.28)
-                anchors.verticalCenter: parent.verticalCenter
-            }
+            title: card.title
+            subtitle: card.subline
+            status: card.live ? "LIVE" : "STALE"
+            statusColor: card.live ? Theme.success : Theme.warning
+            expandable: !card.detailMode
+            onExpandRequested: Ui.openDetail("station", card.title, {
+                kind: card.kind,
+                subtitle: card.subline
+            })
         }
 
         Row {

@@ -5,6 +5,9 @@ GlassCard {
     id: card
     title: "Marchés"
     implicitHeight: body.implicitHeight + 24
+    property bool detailMode: false
+    flat: detailMode
+    interactive: !detailMode
 
     readonly property color upColor: "#34d399"
     readonly property color downColor: "#f87171"
@@ -63,8 +66,17 @@ GlassCard {
 
     function openSymbol(symbol) {
         const url = chartUrl(symbol)
-        if (url)
+        if (!url)
+            return
+        if (!detailMode) {
+            Ui.openDetail("stocks", "March\u00e9s", {
+                symbol: symbol,
+                subtitle: symbol,
+                tab: "quotes"
+            })
+        } else {
             Panel.openIsland(url)
+        }
     }
 
     function openMarketEvent(item) {
@@ -82,15 +94,32 @@ GlassCard {
             return
         }
         const query = item.name || item.desc || ticker
-        if (query)
+        if (!query)
+            return
+        if (!detailMode) {
+            Ui.openDetail("stocks", "March\u00e9s", {
+                subtitle: query,
+                tab: "events"
+            })
+        } else {
             Panel.openIsland("https://www.tradingview.com/search/?query="
                              + encodeURIComponent(query))
+        }
     }
 
     function openHeatmap(period) {
         heatmapPeriod = period || "change"
         Store.set("wp-heatmap-period", heatmapPeriod)
-        Panel.openIsland(Stocks.heatmapUrl(heatmapPeriod, "width-scroll"))
+        if (!detailMode) {
+            tab = listCount + 2
+            Ui.openDetail("stocks", "Carte des march\u00e9s", {
+                tab: "heatmap",
+                period: heatmapPeriod,
+                subtitle: "Performance " + heatmapLabel()
+            })
+        } else {
+            Panel.openIsland(Stocks.heatmapUrl(heatmapPeriod, "width-scroll"))
+        }
     }
 
     function heatmapLabel() {
@@ -202,8 +231,14 @@ GlassCard {
 
     Component.onCompleted: {
         knownListCount = listCount
-        if (Stocks.currentList >= 0 && Stocks.currentList < listCount)
+        if (detailMode && Ui.detailPayload && Ui.detailPayload.tab === "heatmap") {
+            heatmapPeriod = Ui.detailPayload.period || heatmapPeriod
+            tab = listCount + 2
+            Stocks.setList(0)
+            Stocks.refresh()
+        } else if (Stocks.currentList >= 0 && Stocks.currentList < listCount) {
             tab = Stocks.currentList
+        }
     }
 
     Connections {
@@ -240,42 +275,18 @@ GlassCard {
         anchors.margins: 12
         spacing: 6
 
-        Row {
+        CardHeader {
             width: parent.width
-            height: 20
-            spacing: 6
-
-            Text {
-                text: card.title
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeCaption
-                font.capitalization: Font.AllUppercase
-                font.letterSpacing: 1.2
-                anchors.verticalCenter: parent.verticalCenter
+            title: card.title
+            subtitle: card.detailMode && Ui.detailPayload && Ui.detailPayload.subtitle
+                      ? Ui.detailPayload.subtitle : ""
+            status: {
+                card.storeRevision
+                return String(Store.get("wp-market-provider", "auto")).toUpperCase()
             }
-            Item {
-                width: Math.max(0, parent.width - x - providerLabel.implicitWidth
-                    - providerDot.width - 10)
-                height: 1
-            }
-            Rectangle {
-                id: providerDot
-                width: 6
-                height: 6
-                radius: 3
-                color: Stocks.count > 0 ? "#34d399" : Qt.rgba(1, 1, 1, 0.24)
-                anchors.verticalCenter: parent.verticalCenter
-            }
-            Text {
-                id: providerLabel
-                text: {
-                    card.storeRevision
-                    return String(Store.get("wp-market-provider", "auto")).toUpperCase()
-                }
-                color: Theme.textSecondary
-                font.pixelSize: 8
-                anchors.verticalCenter: parent.verticalCenter
-            }
+            statusColor: Stocks.count > 0 ? Theme.success : Theme.warning
+            expandable: !card.detailMode
+            onExpandRequested: Ui.openDetail("stocks", "March\u00e9s", { tab: "quotes" })
         }
 
         // Tab bar (horizontally scrollable)

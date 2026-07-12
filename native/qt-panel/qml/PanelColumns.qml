@@ -281,6 +281,13 @@ Item {
         source: "MonitorStage.qml"
     }
 
+    function setColumnWidth(name, width) {
+        const next = parseStored("wp-col-widths", {})
+        next[name] = Math.round(Math.max(160, Math.min(520, width)))
+        Store.set("wp-col-widths", JSON.stringify(next))
+        Panel.fitMode("base", baseColumnCount, next)
+    }
+
     Loader {
         anchors.fill: parent
         active: root.mode === "news"
@@ -313,6 +320,7 @@ Item {
                 // Tags for the drag hit-test (columnAt walks rowLayout.children).
                 property bool isColumn: true
                 property string colName: modelData
+                property real manualWidth: 0
 
                 function beforeIdAt(sceneY, draggedId) {
                     const p = columnContent.mapFromItem(null, 0, sceneY)
@@ -328,7 +336,8 @@ Item {
 
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                Layout.preferredWidth: Number(root.savedColWidths[modelData]) || 240
+                Layout.preferredWidth: manualWidth > 0 ? manualWidth
+                    : (Number(root.savedColWidths[modelData]) || 240)
 
                 // Disable clipping while dragging so a card can visibly cross
                 // column boundaries; interaction is frozen mid-drag.
@@ -375,6 +384,41 @@ Item {
                             dragEnabled: root.mode === "base"
                             titleDragEnabled: modelData.titleDrag !== false
                             resizable: modelData.resize === true
+                        }
+                    }
+                }
+
+                Rectangle {
+                    id: columnResizeHandle
+                    visible: columnFlick.index < root.visibleColumns.length - 1
+                    width: 5
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    anchors.right: parent.right
+                    color: columnResize.active || columnResizeHover.hovered
+                           ? Theme.accent : "transparent"
+                    opacity: columnResize.active ? 0.8 : 0.35
+                    z: 20
+                    HoverHandler { id: columnResizeHover; cursorShape: Qt.SizeHorCursor }
+                    DragHandler {
+                        id: columnResize
+                        target: null
+                        xAxis.enabled: true
+                        yAxis.enabled: false
+                        property real startWidth: 0
+                        onActiveChanged: {
+                            if (active) {
+                                startWidth = columnFlick.width
+                                columnFlick.manualWidth = startWidth
+                            } else if (columnFlick.manualWidth > 0) {
+                                root.setColumnWidth(columnFlick.modelData, columnFlick.manualWidth)
+                                columnFlick.manualWidth = 0
+                            }
+                        }
+                        onActiveTranslationChanged: {
+                            if (active)
+                                columnFlick.manualWidth = Math.max(160,
+                                    Math.min(520, startWidth + activeTranslation.x))
                         }
                     }
                 }

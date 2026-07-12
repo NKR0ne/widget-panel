@@ -139,6 +139,21 @@ void DiagnosticsService::runPreflight()
     });
 }
 
+void DiagnosticsService::refreshSnapshot()
+{
+    m_rows.clear();
+    emit rowsChanged();
+    updateShellRow();
+    updateMicrosoftRow();
+    updateWorkstationRow();
+    updateCameraRow();
+    updateStarvisRow();
+    updatePressReaderRow();
+    updateStocksRow();
+    updateLiveRow();
+    setStatusText(QStringLiteral("Status refreshed without network probes"));
+}
+
 void DiagnosticsService::probeMicrosoft()
 {
     updateMicrosoftRow();

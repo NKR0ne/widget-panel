@@ -11,18 +11,25 @@ namespace qtpanel {
 class SystemTheme : public QObject {
     Q_OBJECT
     Q_PROPERTY(QColor accent READ accent NOTIFY accentChanged)
+    Q_PROPERTY(bool highContrast READ highContrast NOTIFY appearanceChanged)
+    Q_PROPERTY(bool animationsEnabled READ animationsEnabled NOTIFY appearanceChanged)
 
 public:
     explicit SystemTheme(QObject* parent = nullptr);
 
     QColor accent() const { return m_accent; }
+    bool highContrast() const { return m_highContrast; }
+    bool animationsEnabled() const { return m_animationsEnabled; }
 
 signals:
     void accentChanged();
+    void appearanceChanged();
 
 private:
     void refresh();
     QColor m_accent;
+    bool m_highContrast = false;
+    bool m_animationsEnabled = true;
 };
 
 } // namespace qtpanel

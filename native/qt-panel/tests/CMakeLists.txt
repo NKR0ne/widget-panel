@@ -1,4 +1,4 @@
-find_package(Qt6 6.8 REQUIRED COMPONENTS Test Network Xml)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Test Network Xml Gui)
 
 qt_add_executable(qt-panel-tests
     test_qtpanel.cpp
@@ -6,6 +6,7 @@ qt_add_executable(qt-panel-tests
     ${CMAKE_SOURCE_DIR}/src/core/SettingsStore.cpp
     ${CMAKE_SOURCE_DIR}/src/core/HttpClient.cpp
     ${CMAKE_SOURCE_DIR}/src/shell/FocusPolicy.cpp
+    ${CMAKE_SOURCE_DIR}/src/shell/SystemTheme.cpp
     ${CMAKE_SOURCE_DIR}/src/services/news/NewsService.cpp
     ${CMAKE_SOURCE_DIR}/src/services/reader/ReaderService.cpp
     ${CMAKE_SOURCE_DIR}/src/services/live/LiveFeedService.cpp
@@ -17,6 +18,7 @@ target_link_libraries(qt-panel-tests PRIVATE
     Qt6::Test
     Qt6::Network
     Qt6::Xml
+    Qt6::Gui
 )
 
 add_test(NAME qt-panel-tests COMMAND qt-panel-tests)

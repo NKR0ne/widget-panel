@@ -6,14 +6,72 @@ import QtPanel.Native
 // Theme tokens). cardOpacity scales every GlassCard fill.
 QtObject {
     property real cardOpacity: 1.0
+    property bool detailOpen: false
+    property string detailKind: ""
+    property string detailTitle: ""
+    property var detailPayload: ({})
+    property bool statusOpen: false
+
+    property string toastText: ""
+    property string toastTone: "info"
+    property int toastRevision: 0
+
+    property bool reducedMotion: false
+    property bool highContrast: false
+    property string density: "compact"
+
+    function openDetail(kind, title, payload) {
+        detailKind = kind || ""
+        detailTitle = title || "D\u00e9tail"
+        detailPayload = payload || ({})
+        detailOpen = detailKind !== ""
+        if (detailOpen)
+            Panel.setModalOpen(true)
+    }
+
+    function closeDetail() {
+        if (!detailOpen)
+            return
+        detailOpen = false
+        detailKind = ""
+        detailTitle = ""
+        detailPayload = ({})
+        Panel.setModalOpen(false)
+    }
+
+    function openStatus() {
+        Diagnostics.refreshSnapshot()
+        statusOpen = true
+        Panel.setModalOpen(true)
+    }
+
+    function closeStatus() {
+        if (!statusOpen)
+            return
+        statusOpen = false
+        Panel.setModalOpen(false)
+    }
+
+    function notify(message, tone) {
+        toastText = message || ""
+        toastTone = tone || "info"
+        toastRevision++
+    }
 
     function save() {
         Store.set("wp-card-opacity", String(cardOpacity))
+        Store.set("wp-reduced-motion", reducedMotion ? "true" : "false")
+        Store.set("wp-high-contrast", highContrast ? "true" : "false")
+        Store.set("wp-density", density)
     }
 
     Component.onCompleted: {
         const stored = Number(Store.get("wp-card-opacity", 1))
         if (isFinite(stored) && stored > 0)
             cardOpacity = Math.min(2, Math.max(0.2, stored))
+        reducedMotion = Store.get("wp-reduced-motion", "false") === "true"
+        highContrast = Store.get("wp-high-contrast", "false") === "true"
+        const storedDensity = Store.get("wp-density", "compact")
+        density = storedDensity === "comfortable" ? "comfortable" : "compact"
     }
 }
