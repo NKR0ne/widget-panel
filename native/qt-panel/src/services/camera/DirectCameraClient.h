@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMediaPlayer>
+#include <QJsonObject>
 #include <QObject>
 #include <QPointer>
 #include <QTimer>
@@ -41,6 +42,7 @@ public:
     Q_INVOKABLE void startIfVerified();
     Q_INVOKABLE void stop();
     Q_INVOKABLE void forgetCredentials();
+    Q_INVOKABLE void resetAttemptGuard();
     Q_INVOKABLE void attachVideoSink(QVideoSink* sink);
     Q_INVOKABLE void detachVideoSink(QVideoSink* sink);
 
@@ -54,7 +56,11 @@ private:
     QUrl resolvedEndpoint() const;
     QUrl normalizeEndpoint(const QString& value) const;
     QByteArray configurationFingerprint() const;
+    QString configurationFingerprintId() const;
+    QJsonObject attemptHistory() const;
     int protectedAttempts() const;
+    void writeProtectedAttempts(int attempts);
+    void migrateLegacyAttemptState();
     void handleConfigurationChange();
     void handleFrame(const QVideoFrame& frame);
     void handlePlayerError(QMediaPlayer::Error error, const QString& detail);

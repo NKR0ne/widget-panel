@@ -11,6 +11,7 @@ GlassCard {
 
     property bool configOpen: !DirectCamera.configured
     property int vaultRevision: 0
+    property bool resetArmed: false
     readonly property bool busy: DirectCamera.status === "connecting"
     readonly property bool live: DirectCamera.status === "streaming"
 
@@ -43,6 +44,23 @@ GlassCard {
     function submit() {
         DirectCamera.configureAndStart(userInput.text, passInput.text, endpointInput.text)
         passInput.text = ""
+    }
+
+    function requestGuardReset() {
+        if (!resetArmed) {
+            resetArmed = true
+            resetTimer.restart()
+            return
+        }
+        resetTimer.stop()
+        resetArmed = false
+        DirectCamera.resetAttemptGuard()
+    }
+
+    Timer {
+        id: resetTimer
+        interval: 6000
+        onTriggered: card.resetArmed = false
     }
 
     Component.onCompleted: {
@@ -212,6 +230,42 @@ GlassCard {
             color: DirectCamera.authAttemptsRemaining === 0 ? Theme.danger : Theme.textSecondary
             font.pixelSize: 8
             elide: Text.ElideRight
+        }
+
+        Row {
+            visible: DirectCamera.status === "blocked"
+            width: parent.width
+            spacing: 6
+            Text {
+                width: Math.max(1, parent.width - resetButton.width - 6)
+                anchors.verticalCenter: parent.verticalCenter
+                text: "R\u00e9armez uniquement apr\u00e8s avoir confirm\u00e9 les identifiants et la fin du verrouillage de la cam\u00e9ra."
+                color: Theme.warning
+                font.pixelSize: 8
+                wrapMode: Text.WordWrap
+            }
+            Rectangle {
+                id: resetButton
+                width: resetLabel.implicitWidth + 16
+                height: 25
+                radius: 6
+                color: resetMouse.containsMouse ? Qt.rgba(0.97, 0.45, 0.45, 0.20) : Theme.cardFill
+                border.color: card.resetArmed ? Theme.danger : Theme.cardStroke
+                Text {
+                    id: resetLabel
+                    anchors.centerIn: parent
+                    text: card.resetArmed ? "Confirmer" : "R\u00e9armer"
+                    color: card.resetArmed ? Theme.danger : Theme.textSecondary
+                    font.pixelSize: 9
+                }
+                MouseArea {
+                    id: resetMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: card.requestGuardReset()
+                }
+            }
         }
 
         Column {

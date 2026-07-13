@@ -1,11 +1,13 @@
 #include "DirectCameraClient.h"
 
+#include "core/Log.h"
 #include "core/SecretVault.h"
 #include "core/SettingsStore.h"
 
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
+#include <QJsonDocument>
 #include <QPlaybackOptions>
 #include <QRegularExpression>
 #include <QUrl>
@@ -22,6 +24,7 @@ constexpr auto kStreamKey = "wp-camera-direct-stream-url";
 constexpr auto kUserKey = "wp-camera-direct-user";
 constexpr auto kVerifiedKey = "wp-camera-direct-verified";
 constexpr auto kAttemptsKey = "wp-camera-direct-auth-failures";
+constexpr auto kAttemptHistoryKey = "wp-camera-direct-attempt-history";
 constexpr auto kPasswordKey = "camera-direct-password";
 constexpr auto kDefaultPage = "http://ipcam1.local/doc/page/preview.asp";
 constexpr auto kDefaultPath = "/ISAPI/Streaming/channels/102";
@@ -90,6 +93,7 @@ DirectCameraClient::DirectCameraClient(SettingsStore* settings, SecretVault* vau
     }
 
     m_configFingerprint = configurationFingerprint();
+    migrateLegacyAttemptState();
     if (!configured())
         m_status = QStringLiteral("setup");
     else if (!verified() && protectedAttempts() >= kProtectedAttemptLimit)
@@ -126,6 +130,14 @@ bool DirectCameraClient::verified() const
 int DirectCameraClient::protectedAttempts() const
 {
     if (!m_settings)
+        return 0;
+    const QJsonObject history = attemptHistory();
+    const QJsonObject entry = history.value(configurationFingerprintId()).toObject();
+    if (entry.contains(QLatin1String("attempts"))) {
+        return std::clamp(entry.value(QLatin1String("attempts")).toInt(),
+                          0, kProtectedAttemptLimit);
+    }
+    if (!history.isEmpty())
         return 0;
     return std::clamp(m_settings->getInt(QLatin1String(kAttemptsKey), 0),
                       0, kProtectedAttemptLimit);
@@ -195,6 +207,63 @@ QByteArray DirectCameraClient::configurationFingerprint() const
     return hash.result();
 }
 
+QString DirectCameraClient::configurationFingerprintId() const
+{
+    return QString::fromLatin1(configurationFingerprint().toHex());
+}
+
+QJsonObject DirectCameraClient::attemptHistory() const
+{
+    if (!m_settings)
+        return {};
+    const QVariant stored = m_settings->get(QLatin1String(kAttemptHistoryKey));
+    if (stored.metaType().id() == QMetaType::QString) {
+        const QJsonDocument document = QJsonDocument::fromJson(stored.toString().toUtf8());
+        return document.isObject() ? document.object() : QJsonObject{};
+    }
+    return QJsonObject::fromVariantMap(stored.toMap());
+}
+
+void DirectCameraClient::writeProtectedAttempts(int attempts)
+{
+    if (!m_settings)
+        return;
+    attempts = std::clamp(attempts, 0, kProtectedAttemptLimit);
+    QJsonObject history = attemptHistory();
+    const QString fingerprint = configurationFingerprintId();
+    if (!fingerprint.isEmpty()) {
+        if (attempts == 0) {
+            history.remove(fingerprint);
+        } else {
+            QJsonObject entry;
+            entry.insert(QStringLiteral("attempts"), attempts);
+            entry.insert(QStringLiteral("updatedAt"),
+                         QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+            history.insert(fingerprint, entry);
+        }
+    }
+
+    const bool wasSuppressed = m_suppressConfigurationChange;
+    m_suppressConfigurationChange = true;
+    m_settings->set(QLatin1String(kAttemptHistoryKey),
+                    QString::fromUtf8(QJsonDocument(history).toJson(QJsonDocument::Compact)));
+    m_settings->set(QLatin1String(kAttemptsKey), attempts);
+    m_suppressConfigurationChange = wasSuppressed;
+}
+
+void DirectCameraClient::migrateLegacyAttemptState()
+{
+    if (!m_settings || !configured())
+        return;
+    const int legacyAttempts = std::clamp(
+        m_settings->getInt(QLatin1String(kAttemptsKey), 0), 0, kProtectedAttemptLimit);
+    const QString fingerprint = configurationFingerprintId();
+    if (legacyAttempts == 0 || attemptHistory().contains(fingerprint))
+        return;
+    writeProtectedAttempts(legacyAttempts);
+    qInfo() << "[camera-direct] migrated protected-attempt state for current credentials";
+}
+
 void DirectCameraClient::configureAndStart(const QString& user, const QString& password,
                                            const QString& streamEndpoint)
 {
@@ -229,7 +298,7 @@ void DirectCameraClient::configureAndStart(const QString& user, const QString& p
 
     m_configFingerprint = configurationFingerprint();
     if (m_configFingerprint != before)
-        setVerificationState(false, 0);
+        setVerificationState(false, protectedAttempts());
     emit configurationChanged();
     start();
 }
@@ -288,12 +357,21 @@ void DirectCameraClient::forgetCredentials()
     m_suppressConfigurationChange = true;
     m_settings->remove(QLatin1String(kUserKey));
     m_settings->remove(QLatin1String(kVerifiedKey));
-    m_settings->remove(QLatin1String(kAttemptsKey));
+    m_settings->set(QLatin1String(kAttemptsKey), 0);
     m_vault->remove(QLatin1String(kPasswordKey));
     m_suppressConfigurationChange = false;
     m_configFingerprint = configurationFingerprint();
     setStatus(QStringLiteral("setup"));
     emit configurationChanged();
+}
+
+void DirectCameraClient::resetAttemptGuard()
+{
+    if (!configured())
+        return;
+    setVerificationState(false, 0);
+    setStatus(QStringLiteral("ready"),
+              QStringLiteral("Attempt guard reset. No camera connection was made."));
 }
 
 void DirectCameraClient::attachVideoSink(QVideoSink* sink)
@@ -326,7 +404,7 @@ void DirectCameraClient::handleConfigurationChange()
 
     clearPlayer();
     m_configFingerprint = fingerprint;
-    setVerificationState(false, 0);
+    setVerificationState(false, protectedAttempts());
     setStatus(configured() ? QStringLiteral("ready") : QStringLiteral("setup"));
     emit configurationChanged();
 }
@@ -354,6 +432,25 @@ void DirectCameraClient::handlePlayerError(QMediaPlayer::Error error, const QStr
 {
     if (m_ignorePlayerSignals || !m_attemptActive || error == QMediaPlayer::NoError)
         return;
+    const QString backendDetail = recentFfmpegError();
+    const QString combined = detail + QLatin1Char(' ') + backendDetail;
+    const bool authenticationRejected = error == QMediaPlayer::AccessDeniedError
+        || combined.contains(QLatin1String("401 Unauthorized"), Qt::CaseInsensitive)
+        || combined.contains(QLatin1String("authorization failed"), Qt::CaseInsensitive);
+    qWarning() << "[camera-direct] player error" << error
+               << "backend detail" << sanitizedError(backendDetail);
+    if (authenticationRejected) {
+        fail(QStringLiteral("Camera authentication rejected (401 Unauthorized). Verify the direct-camera username and password before rearming."));
+        return;
+    }
+    if (!backendDetail.isEmpty()) {
+        QString backendError = backendDetail;
+        const qsizetype separator = backendError.indexOf(QLatin1String("FFmpeg error description:"));
+        if (separator >= 0)
+            backendError = backendError.mid(separator + 25).trimmed();
+        fail(sanitizedError(backendError));
+        return;
+    }
     fail(sanitizedError(detail));
 }
 
@@ -372,8 +469,7 @@ void DirectCameraClient::setVerificationState(bool isVerified, int attempts)
         return;
     m_suppressConfigurationChange = true;
     m_settings->set(QLatin1String(kVerifiedKey), isVerified);
-    m_settings->set(QLatin1String(kAttemptsKey),
-                    std::clamp(attempts, 0, kProtectedAttemptLimit));
+    writeProtectedAttempts(attempts);
     m_suppressConfigurationChange = false;
     emit configurationChanged();
 }

@@ -65,7 +65,9 @@ are written to `%APPDATA%\qt-panel\startup-launch.log`.
   endpoint remains editable. Direct-camera credentials are distinct from
   XProtect and the password is stored in Windows Credential Manager. New
   credentials require an explicit connection and have a two-attempt protected
-  budget; only a configuration verified by a video frame reconnects on startup.
+  budget; rejected credential fingerprints remain blocked across `Forget`.
+  Rearming requires a two-step confirmation and never starts a connection by
+  itself. Only a configuration verified by a video frame reconnects on startup.
 - Renderer: Vulkan when available, else D3D11 — shown as a badge in the header.
 - **Helper integration**: listens on TCP 127.0.0.1:47321 for `taskbar-btn.exe`
   (the Explorer AppBar pill). If the Electron app is running it owns that port;
