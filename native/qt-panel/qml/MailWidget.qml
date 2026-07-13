@@ -6,6 +6,10 @@ GlassCard {
     title: "Outlook Mail"
     implicitHeight: 420
 
+    function oneLine(value) {
+        return String(value || "").replace(/\s+/g, " ").trim()
+    }
+
     component ActionButton: Rectangle {
         id: actionButton
         property string glyph: ""
@@ -153,6 +157,7 @@ GlassCard {
                     required property var modelData
                     width: mailColumn.width
                     height: 58
+                    clip: true
 
                     Rectangle {
                         anchors.fill: parent
@@ -191,15 +196,20 @@ GlassCard {
                             spacing: 6
                             Text {
                                 width: parent.width - receivedLabel.implicitWidth - 6
-                                text: messageRow.modelData.from || "Inconnu"
+                                height: 13
+                                text: card.oneLine(messageRow.modelData.from) || "Inconnu"
                                 color: Theme.textPrimary
                                 font.pixelSize: 10
                                 font.weight: messageRow.modelData.isRead
                                     ? Font.Normal : Font.DemiBold
                                 elide: Text.ElideRight
+                                maximumLineCount: 1
+                                wrapMode: Text.NoWrap
+                                clip: true
                             }
                             Text {
                                 id: receivedLabel
+                                height: 12
                                 text: messageRow.modelData.time
                                 color: Theme.textSecondary
                                 font.family: "Consolas"
@@ -208,20 +218,28 @@ GlassCard {
                         }
                         Text {
                             width: parent.width
-                            text: messageRow.modelData.subject || "(Sans objet)"
+                            height: 13
+                            text: card.oneLine(messageRow.modelData.subject) || "(Sans objet)"
                             color: messageRow.modelData.isRead
                                 ? Theme.textSecondary : Theme.textPrimary
                             font.pixelSize: 10
                             font.weight: messageRow.modelData.isRead
                                 ? Font.Normal : Font.Medium
                             elide: Text.ElideRight
+                            maximumLineCount: 1
+                            wrapMode: Text.NoWrap
+                            clip: true
                         }
                         Text {
                             width: parent.width
-                            text: messageRow.modelData.preview
+                            height: 12
+                            text: card.oneLine(messageRow.modelData.preview)
                             color: Qt.rgba(0.82, 0.82, 0.90, 0.58)
                             font.pixelSize: 9
                             elide: Text.ElideRight
+                            maximumLineCount: 1
+                            wrapMode: Text.NoWrap
+                            clip: true
                         }
                     }
 

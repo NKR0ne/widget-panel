@@ -15,7 +15,8 @@ Item {
     property string widgetId: ""
     property bool dragEnabled: false
     property bool titleDragEnabled: true
-    property bool resizable: false  // media widgets opt in to manual height
+    property bool resizable: false
+    property real minimumUserHeight: 120
     readonly property bool dragging: dragHandler.active
     property int expandedRevision: 0
     readonly property bool collapsed: {
@@ -147,9 +148,11 @@ Item {
 
     HoverHandler { id: hostHover }
 
-    // Bottom resize handle (media widgets). Drag to set a fixed card height.
+    // Bottom resize handle. Scene coordinates keep the delta stable while the
+    // handle itself moves as the card changes height.
     Rectangle {
-        visible: host.resizable && (hostHover.hovered || resizeArea.pressed)
+        visible: host.resizable && !host.collapsed
+        opacity: resizeArea.pressed || resizeArea.containsMouse ? 1 : 0.42
         width: 54
         height: 4
         radius: 2
@@ -159,20 +162,26 @@ Item {
         color: resizeArea.pressed ? Theme.accent : Qt.rgba(1, 1, 1, 0.25)
         z: 3
 
+        Behavior on opacity { NumberAnimation { duration: Motion.fastMs } }
+
         MouseArea {
             id: resizeArea
             anchors.fill: parent
             anchors.margins: -3
+            hoverEnabled: true
             cursorShape: Qt.SizeVerCursor
-            property real startY: 0
+            property real startSceneY: 0
             property real startH: 0
             onPressed: function(mouse) {
-                startY = mouse.y
+                startSceneY = resizeArea.mapToItem(null, mouse.x, mouse.y).y
                 startH = host.height
+                host.userHeight = host.height
             }
             onPositionChanged: function(mouse) {
                 if (!pressed) return
-                host.userHeight = Math.max(120, startH + (mouse.y - startY))
+                const sceneY = resizeArea.mapToItem(null, mouse.x, mouse.y).y
+                host.userHeight = Math.max(host.minimumUserHeight,
+                                           startH + sceneY - startSceneY)
             }
             onReleased: Store.set("wp-" + host.widgetId + "-height", Math.round(host.userHeight))
         }

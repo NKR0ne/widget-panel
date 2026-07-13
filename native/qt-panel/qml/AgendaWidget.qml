@@ -8,6 +8,10 @@ GlassCard {
 
     property bool showCalendars: false
 
+    function oneLine(value) {
+        return String(value || "").replace(/\s+/g, " ").trim()
+    }
+
     function durationLabel(minutes) {
         const value = Number(minutes)
         if (!isFinite(value) || value <= 0)
@@ -189,6 +193,7 @@ GlassCard {
                     required property int index
                     width: eventsColumn.width
                     spacing: 2
+                    clip: true
 
                     Text {
                         visible: eventDelegate.modelData.showDayHeader
@@ -226,18 +231,26 @@ GlassCard {
 
                             Text {
                                 width: parent.width
-                                text: eventDelegate.modelData.subject
+                                height: 14
+                                text: card.oneLine(eventDelegate.modelData.subject)
                                 color: Theme.textPrimary
                                 font.pixelSize: 11
                                 elide: Text.ElideRight
+                                maximumLineCount: 1
+                                wrapMode: Text.NoWrap
+                                clip: true
                             }
                             Text {
                                 visible: eventDelegate.modelData.location !== ""
                                 width: parent.width
-                                text: eventDelegate.modelData.location
+                                height: visible ? 12 : 0
+                                text: card.oneLine(eventDelegate.modelData.location)
                                 color: Theme.textSecondary
                                 font.pixelSize: 9
                                 elide: Text.ElideRight
+                                maximumLineCount: 1
+                                wrapMode: Text.NoWrap
+                                clip: true
                             }
                         }
                         Column {
