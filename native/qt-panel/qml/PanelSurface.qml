@@ -396,11 +396,11 @@ Item {
         z: 200
     }
 
-    // Web island toolbar: occupies the area beside the panel while the
-    // brave-host shell (a native HWND above us) shows the page below it.
+    // Retained only as a non-instantiated layout reference while WebIsland
+    // owns the active Qt WebEngine surface below.
     Rectangle {
         id: islandChrome
-        visible: Panel.islandOpen
+        visible: false
         x: Panel.islandX
         width: parent.width - Panel.islandX
         height: parent.height
@@ -510,7 +510,7 @@ Item {
                 radius: 1
                 color: Theme.accent
                 NumberAnimation on x {
-                    running: Panel.islandLoading
+                    running: false
                     loops: Animation.Infinite
                     from: -islandLoadPulse.width
                     to: islandChrome.width
@@ -519,6 +519,12 @@ Item {
                 }
             }
         }
+    }
+
+    WebIsland {
+        x: Panel.islandX
+        width: parent.width - Panel.islandX
+        height: parent.height
     }
 
     // Right-edge resize handle; the controller polls the cursor globally so

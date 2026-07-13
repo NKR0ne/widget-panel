@@ -126,7 +126,7 @@ Item {
                 }
                 IconButton {
                     id: openIsland
-                    glyph: ""  // Globe: open beside the panel in Brave
+                    glyph: ""  // Globe: open beside the panel.
                     onClicked: {
                         const url = Reader.article.url
                         overlay.dismiss()

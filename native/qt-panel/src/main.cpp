@@ -11,8 +11,12 @@
 #include <QQuickWindow>
 #include <QRegularExpression>
 #include <QSGRendererInterface>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QtQml>
+#include <QtWebEngineQuick/QQuickWebEngineDownloadRequest>
+#include <QtWebEngineQuick/QQuickWebEngineProfile>
+#include <QtWebEngineQuick/qtwebenginequickglobal.h>
 
 #include "core/HttpClient.h"
 #include "core/Log.h"
@@ -31,7 +35,6 @@
 #include "services/stocks/StocksModel.h"
 #include "services/weather/WeatherService.h"
 #include "services/workstation/WorkstationClient.h"
-#include "shell/BraveHostClient.h"
 #include "shell/HelperServer.h"
 #include "shell/PanelWindowController.h"
 
@@ -51,6 +54,8 @@ QString safeProfileName(QString value)
 
 int main(int argc, char* argv[])
 {
+    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+    QtWebEngineQuick::initialize();
     QGuiApplication::setApplicationName(QStringLiteral("qt-panel"));
     QGuiApplication::setOrganizationName(QStringLiteral("qt-panel"));
     QGuiApplication app(argc, argv);
@@ -82,15 +87,21 @@ int main(int argc, char* argv[])
         QStringLiteral("Open directly in base, news, monitor, or live mode."),
         QStringLiteral("mode"),
         QStringLiteral("base"));
+    const QCommandLineOption diagIslandUrlOption(
+        QStringLiteral("diag-island-url"),
+        QStringLiteral("Open a URL in the embedded web island for bounded diagnostics."),
+        QStringLiteral("url"));
     parser.addOption(noHelperOption);
     parser.addOption(profileOption);
     parser.addOption(exitAfterOption);
     parser.addOption(diagFitModeOption);
     parser.addOption(rendererOption);
     parser.addOption(startModeOption);
+    parser.addOption(diagIslandUrlOption);
     parser.process(app);
 
     const QString startMode = parser.value(startModeOption).trimmed().toLower();
+    const QString diagIslandUrl = parser.value(diagIslandUrlOption).trimmed();
     const QStringList validModes = {
         QStringLiteral("base"), QStringLiteral("news"),
         QStringLiteral("monitor"), QStringLiteral("live")
@@ -219,9 +230,30 @@ int main(int argc, char* argv[])
             vault.set(QStringLiteral("finnhub-key"), finnhub);
     }
 
+    QQuickWebEngineProfile webProfile(QStringLiteral("qt-panel-island"), &app);
+    const QString webDataDir = dataDir + QStringLiteral("/webengine");
+    const QString webCacheDir = dataDir + QStringLiteral("/webengine-cache");
+    QDir().mkpath(webDataDir);
+    QDir().mkpath(webCacheDir);
+    webProfile.setOffTheRecord(false);
+    webProfile.setPersistentStoragePath(webDataDir);
+    webProfile.setCachePath(webCacheDir);
+    webProfile.setHttpCacheType(QQuickWebEngineProfile::DiskHttpCache);
+    webProfile.setPersistentCookiesPolicy(QQuickWebEngineProfile::ForcePersistentCookies);
+    webProfile.setPersistentPermissionsPolicy(
+        QQuickWebEngineProfile::PersistentPermissionsPolicy::AskEveryTime);
+    webProfile.setHttpAcceptLanguage(QStringLiteral("fr-CA,fr;q=0.9,en-CA;q=0.8,en;q=0.7"));
+    webProfile.setDownloadPath(QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
+    QObject::connect(&webProfile, &QQuickWebEngineProfile::downloadRequested,
+                     [](QQuickWebEngineDownloadRequest* request) {
+        if (request)
+            request->accept();
+    });
+    qInfo() << "[web] persistent Qt WebEngine profile at"
+            << QDir::toNativeSeparators(webDataDir);
+
     HelperServer helper;
-    BraveHostClient brave;
-    PanelWindowController controller(&settings, &helper, &brave);
+    PanelWindowController controller(&settings, &helper, &webProfile);
 
     HttpClient http;
     WeatherService weather(&settings, &http);
@@ -275,6 +307,7 @@ int main(int argc, char* argv[])
 
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("StartupMode"), startMode);
+    engine.rootContext()->setContextProperty(QStringLiteral("WebProfile"), &webProfile);
     QmlNetworkFactory netFactory;
     engine.setNetworkAccessManagerFactory(&netFactory);
     engine.addImageProvider(QStringLiteral("camera"), cameraProvider);
@@ -310,7 +343,12 @@ int main(int argc, char* argv[])
 
     // Temporary diagnostic: reproduce the settings-stepper column change and
     // dump scene grabs before/after to verify rendering survives the resize.
-    if (parser.isSet(diagFitModeOption) && startMode == QStringLiteral("base")) {
+    if (parser.isSet(diagFitModeOption) && !diagIslandUrl.isEmpty()) {
+        QTimer::singleShot(8000, window, [window, &dataDir] {
+            window->grabWindow().save(dataDir + QStringLiteral("/diag-web-island.png"));
+            qInfo() << "[diag] web island grab saved, window" << window->geometry();
+        });
+    } else if (parser.isSet(diagFitModeOption) && startMode == QStringLiteral("base")) {
         QTimer::singleShot(5000, window, [window, &dataDir] {
             window->grabWindow().save(dataDir + QStringLiteral("/diag-before.png"));
             qInfo() << "[diag] before grab saved, window" << window->geometry();
@@ -344,6 +382,10 @@ int main(int argc, char* argv[])
     controller.showPanel();
     if (startMode != QStringLiteral("base"))
         controller.fitMode(startMode, 3, {});
+    if (!diagIslandUrl.isEmpty()) {
+        QTimer::singleShot(350, &controller,
+                           [&controller, diagIslandUrl] { controller.openIsland(diagIslandUrl); });
+    }
     qInfo() << "[startup] ready";
     if (exitAfterOk) {
         qInfo() << "[startup] bounded run; exiting after" << exitAfterMs << "ms";

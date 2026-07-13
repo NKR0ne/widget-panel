@@ -502,7 +502,7 @@ GlassCard {
             }
         }
 
-        // Heatmap controls; the actual TradingView widget opens in the Brave island.
+        // Heatmap controls; the full TradingView widget opens in Qt WebEngine.
         Column {
             visible: card.heatmapTab
             width: parent.width

@@ -1,5 +1,13 @@
 # qt-panel — Native Rewrite Architecture
 
+> Current implementation note (2026-07-12): the original migration proposal
+> below used an external `brave-host` island to avoid QtWebEngine. Runtime
+> evidence showed that reparented Brave was less reliable for PressReader and
+> TradingView. The implemented architecture now embeds `QtWebEngineQuick` in the
+> Qt scene, uses one persistent profile per qt-panel profile, and keeps browser
+> state, scripts, and cookies behind `PanelWindowController`. This note and the
+> implementation override remaining historical Brave references in diagrams.
+
 Target: rewrite the Electron `widget-panel` as a native C++20 Windows app using
 **Qt 6 Quick/QML on the Qt RHI with Vulkan preferred (D3D11 fallback)**, built with
 **CMake + Ninja + MSVC**, dependencies via **vcpkg**, living in `native/qt-panel/`
@@ -30,7 +38,7 @@ alongside the Electron app (which remains the behavioral reference until parity)
   drag works past the window edge; persists `wp-width`.
 - Disables Windows native widgets/taskbar widgets via registry on startup.
 
-### 1.2 Native helpers (already C++; keep both)
+### 1.2 Native helper
 - **`taskbar-btn.exe` + `taskbar-hook.dll`** (injected into Explorer): registers a
   left-edge **AppBar** strip (18px) with a pill toggle button; layered color-key
   transparency; a mouse hook detects click-outside and reports it. IPC with the
@@ -38,9 +46,6 @@ alongside the Electron app (which remains the behavioral reference until parity)
   app→helper `{type:"badge"|"state"|"hwnd"}`, helper→app
   `{type:"ready"|"toggle"|"clickoutside"}`. Cold-start: the button can launch the
   app (reads `panel.path`).
-- **`brave-host.exe`**: launches Brave, reparents it into a Win32 shell window
-  beside the panel, navigates via CDP. JSON-lines protocol
-  (`open/navigate/resize/close/detach/round-corners/z-top/z-bottom/taskbar-*`).
 
 ### 1.3 Widgets (renderer, React — `App.jsx` is a 443KB monolith plus per-widget modules)
 | Widget | Data source | Notes |
@@ -83,14 +88,14 @@ alongside the Electron app (which remains the behavioral reference until parity)
 └──────┬──────────────┬──────────────────┬───────────────────┘
        │ TCP 47321    │ \\.\pipe\Work…   │ stdio JSON-lines
 ┌──────▼─────┐ ┌──────▼──────────┐ ┌─────▼────────┐
-│taskbar-btn │ │WorkstationMonitor│ │ brave-host   │
-│ + hook.dll │ │ (existing C#)    │ │ (existing)   │
+│taskbar-btn │ │WorkstationMonitor│
+│ + hook.dll │ │ (existing C#)    │
 └────────────┘ └──────────────────┘ └──────────────┘
 ```
 
-Both helper protocols are **kept verbatim** — zero changes to `taskbar-btn` and
-`brave-host`; the Qt app simply speaks the same JSON-lines dialects. This removes
-two whole subsystems from the rewrite's risk budget.
+The taskbar helper protocol remains verbatim. Browser content is part of the Qt
+process model through `QtWebEngineQuick`; Chromium renderers remain sandboxed
+child processes managed by Qt.
 
 ### 2.2 Module layout
 
@@ -107,7 +112,7 @@ native/qt-panel/
 │   │   ├── WinShellIntegration     # DWM backdrop (acrylic/mica), rounded corners,
 │   │   │                           # WS_EX_TOOLWINDOW (skip taskbar), topmost, DPI
 │   │   ├── HelperClient            # TCP 47321 client (toggle/badge/state/hwnd)
-│   │   ├── BraveHostClient         # brave-host JSON-lines client
+│   │   ├── PanelWindowController   # WebEngine island state and geometry
 │   │   ├── WorkAreaWatcher         # monitor/work-area/DPI change tracking
 │   │   └── FocusPolicy             # blur-to-hide heuristics (port of main.js rules)
 │   ├── core/
@@ -196,14 +201,13 @@ native/qt-panel/
 |---|---|---|
 | Direct HLS (Euronews, LCN/TVA, others) | hls.js in Chromium | **Qt Multimedia (FFmpeg backend)** → `MediaPlayer` + `VideoOutput`; zero-copy into the scenegraph. FFmpeg via Qt's bundled backend |
 | YouTube live (Bloomberg, France 24, CBC…) | main.js extracts HLS manifest from player response | Port extractor to `services/live`; play resulting HLS via Qt Multimedia. Keep the existing per-feed header/cookie session tricks in `HttpClient` |
-| Feeds that only work as web embeds | `<webview>` with CSS surgery | **Do not embed Chromium for this.** Route through `brave-host` (already supports reparent + CDP) as a "web island" beside/over the panel; same UX as today's browser pane |
+| Feeds that only work as web embeds | `<webview>` with CSS surgery | Use the embedded `WebEngineView` only as an explicit fallback; direct feeds remain native Qt Multimedia |
 | Camera (Milestone XProtect) | XPMobileSDK push connection, JPEG frames | C++ client in `services/camera`: login + RequestStream over HTTPS, parse push multipart/frame headers, feed `QVideoSink` (effectively MJPEG). The current code already avoids the WebSocket path, which makes the C++ port *simpler* than the JS workaround |
 
-QtWebEngine is explicitly **out** of the default build (it would re-import
-Chromium); web content = brave-host islands. Reader mode stays fully native: the
-existing `reader-fetch` HTML extraction/cleanup ports to C++ (libxml2/gumbo via
-vcpkg) and renders in a rich `TextArea`/custom QML reader with the same
-launch-ghost animation.
+QtWebEngine is included for authenticated and site-dependent content. Reader
+mode stays fully native; the browser island is an escalation path rather than
+the default article renderer. The persistent profile provides cookie continuity
+without sharing or reparenting a personal browser window.
 
 ### 2.5 Threading model
 
@@ -211,7 +215,7 @@ launch-ghost animation.
 - Each service lives on a worker `QThread` (or uses `QtConcurrent` for parse
   jobs); results cross to models via queued signals carrying value types
   (structs registered with the meta-type system).
-- Pipe/TCP clients (`workstation`, helpers, brave-host) are event-driven on
+- Pipe/TCP clients (`workstation`, helper) are event-driven on
   their own thread with the shared `JsonRpcLineChannel` framing.
 - Starvis SSE streaming: incremental tokens emitted as signals → QML appends;
   TTS audio via `QAudioSink` on the audio thread.
@@ -293,8 +297,8 @@ OAuth round-trips without embedded browser.*
 
 **Phase 3 — Live video**
 Qt Multimedia HLS for direct feeds + Euronews; YouTube HLS extractor port;
-live grid with audio policy (one unmuted feed); brave-host web islands for
-embed-only feeds and TradingView heatmap/watchlist login.
+live grid with audio policy (one unmuted feed); embedded Qt WebEngine island for
+explicit site fallbacks and TradingView heatmap/watchlist login.
 *Accept: 5 live cards playing simultaneously with lower CPU than Electron
 (measure both).*
 
@@ -319,18 +323,19 @@ box; cold start < 1s to first frame.*
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| HLS feeds that depend on Chromium-only header/cookie behavior | High | Per-feed session config already documented in `main.js` (`configureLiveFeedSessions`); port verbatim; brave-host island as escape hatch per feed |
+| HLS feeds that depend on Chromium-only header/cookie behavior | High | Keep direct playback native; expose an explicit embedded-browser fallback only where site behavior requires it |
 | XProtect camera protocol subtleties | High | The JS code documents the working path (push VideoConnection, no WS); implement against the same Milestone mobile gateway; phase-4 so nothing blocks on it |
 | Vulkan driver quirks on user GPUs | Medium | RHI fallback to D3D11 is one line; shaders are qsb multi-target |
 | Acrylic behavior differences (DWM vs Electron's backgroundMaterial) | Medium | Same underlying API (`DWMWA_SYSTEMBACKDROP_TYPE`); Phase 0 acceptance is a visual A/B |
-| TradingView watchlist "browser login" flow | Medium | Already brokered through a real browser today; keep brave-host flow |
+| TradingView watchlist "browser login" flow | Medium | Use the persistent Qt WebEngine profile and capture exact-domain cookies directly from its cookie store |
 | Reader-mode extraction parity | Medium | Port the existing cleanup heuristics + `scripts/test-reader-cleanup.cjs` corpus as C++ unit tests |
 | Scope creep from the 443KB `App.jsx` | High | The widget registry table (§2.7) is the parity checklist; anything not in it is explicitly post-parity |
 
 ## 6. Explicit non-goals (v1)
 
-- No QtWebEngine. No cross-platform support (Win32 integration is the point).
+- No cross-platform support (Win32 integration is the point).
 - No plugin ABI for third-party widgets yet — the contract is internal until
   the registry stabilizes.
-- PressReader integration stays brave-host-based.
+- PressReader integration uses the persistent Qt WebEngine profile; credentials
+  remain in the Windows vault and automation remains bounded.
 - The Electron app is not modified; it is retired only after Phase 5 parity.

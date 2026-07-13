@@ -24,6 +24,7 @@ param(
     [ValidateSet('base', 'news', 'monitor', 'live')]
     [string]$StartMode = 'base',
     [switch]$DiagFitMode,
+    [string]$DiagIslandUrl = '',
     [switch]$Tests,
     [switch]$Reconfigure,
     [switch]$SkipKill
@@ -302,6 +303,9 @@ if ($Run) {
         $launchArgs += @('-ExitAfterMs', $ExitAfterMs)
     }
     if ($DiagFitMode) { $launchArgs += '-DiagFitMode' }
+    if (-not [string]::IsNullOrWhiteSpace($DiagIslandUrl)) {
+        $launchArgs += @('-DiagIslandUrl', $DiagIslandUrl)
+    }
     & powershell.exe @launchArgs
     if ($LASTEXITCODE -ne 0) { Write-Error 'qt-panel launch failed' }
 }

@@ -3,7 +3,7 @@ import QtPanel.Native
 
 // Shared auth-state strip for the Microsoft widgets: silent while "ok",
 // explains itself in every other state. Interactive sign-in opens in the
-// native Brave island (PKCE + loopback callback).
+// embedded Qt WebEngine island (PKCE + loopback callback).
 Column {
     id: pane
     spacing: 4

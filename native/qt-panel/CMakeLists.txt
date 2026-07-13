@@ -4,7 +4,7 @@ project(qtpanel VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Quick QuickControls2 QuickEffects Quick3D Network Xml Multimedia ShaderTools)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Quick QuickControls2 QuickEffects Quick3D Network Xml Multimedia ShaderTools WebEngineQuick)
 qt_standard_project_setup(REQUIRES 6.8)
 
 add_subdirectory(qml)
@@ -35,7 +35,6 @@ qt_add_executable(qt-panel WIN32
     src/services/stocks/StocksModel.h src/services/stocks/StocksModel.cpp
     src/services/weather/WeatherService.h src/services/weather/WeatherService.cpp
     src/services/workstation/WorkstationClient.h src/services/workstation/WorkstationClient.cpp
-    src/shell/BraveHostClient.h src/shell/BraveHostClient.cpp
     src/shell/FocusPolicy.h src/shell/FocusPolicy.cpp
     src/shell/HelperServer.h src/shell/HelperServer.cpp
     src/shell/PanelWindowController.h src/shell/PanelWindowController.cpp
@@ -54,6 +53,7 @@ target_link_libraries(qt-panel PRIVATE
     Qt6::Network
     Qt6::Xml
     Qt6::Multimedia
+    Qt6::WebEngineQuick
     qtpanel_uiplugin
     dwmapi
     user32

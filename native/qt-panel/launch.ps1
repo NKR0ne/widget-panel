@@ -14,6 +14,7 @@ param(
     [ValidateSet('base', 'news', 'monitor', 'live')]
     [string]$StartMode = 'base',
     [switch]$DiagFitMode,
+    [string]$DiagIslandUrl = '',
     [int]$StartupCheckSeconds = 4
 )
 
@@ -34,6 +35,45 @@ if ([string]::IsNullOrEmpty($pathValue)) {
 }
 [System.Environment]::SetEnvironmentVariable('PATH', $null, 'Process')
 [System.Environment]::SetEnvironmentVariable('Path', "$QtDir\bin;$pathValue", 'Process')
+$qmlImportPath = [System.Environment]::GetEnvironmentVariable('QML2_IMPORT_PATH', 'Process')
+$sdkQmlPath = Join-Path $QtDir 'qml'
+if ([string]::IsNullOrEmpty($qmlImportPath)) {
+    [System.Environment]::SetEnvironmentVariable('QML2_IMPORT_PATH', $sdkQmlPath, 'Process')
+} else {
+    [System.Environment]::SetEnvironmentVariable(
+        'QML2_IMPORT_PATH', "$sdkQmlPath;$qmlImportPath", 'Process')
+}
+
+# WebEngine resolves its sandboxed subprocess relative to the application by
+# default, not from PATH. Point undeployed development builds at the Qt SDK;
+# windeployqt places the same executable beside deployed builds.
+$deployedWebEngineProcess = Join-Path (Split-Path $exe) 'QtWebEngineProcess.exe'
+$sdkWebEngineProcess = Join-Path $QtDir 'bin\QtWebEngineProcess.exe'
+if (Test-Path $deployedWebEngineProcess) {
+    [System.Environment]::SetEnvironmentVariable(
+        'QTWEBENGINEPROCESS_PATH', $deployedWebEngineProcess, 'Process')
+} elseif (Test-Path $sdkWebEngineProcess) {
+    [System.Environment]::SetEnvironmentVariable(
+        'QTWEBENGINEPROCESS_PATH', $sdkWebEngineProcess, 'Process')
+} else {
+    Write-Error "QtWebEngineProcess.exe not found beside the app or below: $QtDir"
+}
+
+$deployedResources = Join-Path (Split-Path $exe) 'resources'
+$sdkResources = Join-Path $QtDir 'resources'
+$webEngineResources = if (Test-Path (Join-Path $deployedResources 'qtwebengine_resources.pak')) {
+    $deployedResources
+} else {
+    $sdkResources
+}
+[System.Environment]::SetEnvironmentVariable(
+    'QTWEBENGINE_RESOURCES_PATH', $webEngineResources, 'Process')
+
+$deployedLocales = Join-Path (Split-Path $exe) 'translations\qtwebengine_locales'
+$sdkLocales = Join-Path $QtDir 'translations\qtwebengine_locales'
+$webEngineLocales = if (Test-Path $deployedLocales) { $deployedLocales } else { $sdkLocales }
+[System.Environment]::SetEnvironmentVariable(
+    'QTWEBENGINE_LOCALES_PATH', $webEngineLocales, 'Process')
 
 $args = @()
 if ($NoHelper) {
@@ -49,6 +89,9 @@ $args += @('--renderer', $Renderer)
 $args += @('--start-mode', $StartMode)
 if ($DiagFitMode) {
     $args += '--diag-fitmode'
+}
+if (-not [string]::IsNullOrWhiteSpace($DiagIslandUrl)) {
+    $args += @('--diag-island-url', $DiagIslandUrl)
 }
 
 if ($args.Count -gt 0) {
@@ -76,4 +119,7 @@ if ($live) {
     exit 0
 }
 
-Write-Error "qt-panel exited during startup. Check %APPDATA%\qt-panel\qt-panel.log"
+$proc.WaitForExit()
+$startupError = ("qt-panel exited during startup with code {0}. Check " +
+    "%APPDATA%\qt-panel\qt-panel.log") -f $proc.ExitCode
+Write-Error $startupError

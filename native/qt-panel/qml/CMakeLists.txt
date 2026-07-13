@@ -32,6 +32,7 @@ qt_add_qml_module(qtpanel_ui
         PowerGauge.qml
         TemperatureBar.qml
         WorkstationWidget.qml
+        WebIsland.qml
         MonitorStage.qml
         LiveFeedWidget.qml
         LiveDetailView.qml

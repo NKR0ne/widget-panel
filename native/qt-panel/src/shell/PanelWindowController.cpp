@@ -1,6 +1,5 @@
 #include "PanelWindowController.h"
 
-#include "BraveHostClient.h"
 #include "HelperServer.h"
 #include "WinShellIntegration.h"
 #include "core/SettingsStore.h"
@@ -13,22 +12,34 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QHash>
-#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QSettings>
 #include <QStandardPaths>
+#include <QtWebEngineCore/QWebEngineCookieStore>
+#include <QtWebEngineQuick/QQuickWebEngineProfile>
+
+#include <utility>
 
 namespace qtpanel {
 
+namespace {
+QString cookieKey(const QNetworkCookie& cookie)
+{
+    return cookie.domain() + QLatin1Char('|')
+        + cookie.path() + QLatin1Char('|')
+        + QString::fromUtf8(cookie.name());
+}
+} // namespace
+
 PanelWindowController::PanelWindowController(SettingsStore* settings, HelperServer* helper,
-                                             BraveHostClient* brave, QObject* parent)
+                                             QQuickWebEngineProfile* webProfile, QObject* parent)
     : QObject(parent)
     , m_settings(settings)
     , m_helper(helper)
-    , m_brave(brave)
+    , m_webProfile(webProfile)
 {
     m_hideFallback.setSingleShot(true);
     connect(&m_hideFallback, &QTimer::timeout, this, &PanelWindowController::completeHide);
@@ -52,31 +63,17 @@ PanelWindowController::PanelWindowController(SettingsStore* settings, HelperServ
         if (m_islandOpen && m_islandLoading)
             failIslandLoad(QStringLiteral("Timed out waiting for browser island"));
     });
-    m_islandStatePoll.setInterval(5000);
-    connect(&m_islandStatePoll, &QTimer::timeout, this, [this] {
-        if (m_islandOpen && m_brave)
-            m_brave->requestState();
-    });
-    if (m_brave) {
-        connect(m_brave, &BraveHostClient::cookiesReceived,
-                this, &PanelWindowController::handleTradingViewCookies);
-        connect(m_brave, &BraveHostClient::stateReceived,
-                this, &PanelWindowController::handleIslandState);
-        connect(m_brave, &BraveHostClient::evaluationReceived,
-                this, &PanelWindowController::islandScriptResult);
-        connect(m_brave, &BraveHostClient::readyReceived,
-                this, [this] {
-                    if (m_islandOpen && m_brave) {
-                        m_islandStatus = QStringLiteral("Connected");
-                        emit islandChanged();
-                        QTimer::singleShot(250, this, [this] {
-                            if (m_islandOpen && m_brave)
-                                m_brave->requestState();
-                        });
-                    }
-                });
-        connect(m_brave, &BraveHostClient::errorReceived,
-                this, [this](const QString& error) { failIslandLoad(error); });
+    if (m_webProfile && m_webProfile->cookieStore()) {
+        QWebEngineCookieStore* cookies = m_webProfile->cookieStore();
+        connect(cookies, &QWebEngineCookieStore::cookieAdded, this,
+                [this](const QNetworkCookie& cookie) {
+            m_webCookies.insert(cookieKey(cookie), cookie);
+        });
+        connect(cookies, &QWebEngineCookieStore::cookieRemoved, this,
+                [this](const QNetworkCookie& cookie) {
+            m_webCookies.remove(cookieKey(cookie));
+        });
+        cookies->loadAllCookies();
     }
 
     // Development builds need launch.ps1 to put the Qt runtime on PATH.
@@ -306,17 +303,6 @@ void PanelWindowController::startIslandLoad(const QString& status)
     emit islandChanged();
 }
 
-void PanelWindowController::finishIslandLoad(const QString& status)
-{
-    if (!m_islandOpen)
-        return;
-    m_islandReadyTimeout.stop();
-    m_islandLoading = false;
-    m_islandStatus = status;
-    m_islandError.clear();
-    emit islandChanged();
-}
-
 void PanelWindowController::failIslandLoad(const QString& error)
 {
     if (!m_islandOpen)
@@ -328,19 +314,14 @@ void PanelWindowController::failIslandLoad(const QString& error)
     emit islandChanged();
 }
 
-void PanelWindowController::handleIslandState(const QJsonObject& payload)
+void PanelWindowController::reportIslandState(const QString& url, const QString& title,
+                                              bool loading, bool canGoBack,
+                                              bool canGoForward, const QString& error)
 {
     if (!m_islandOpen)
         return;
-    if (!payload.value(QLatin1String("available")).toBool())
-        return;
 
     bool changed = false;
-    const QString url = payload.value(QLatin1String("url")).toString();
-    const QString title = payload.value(QLatin1String("title")).toString();
-    const QString readyState = payload.value(QLatin1String("readyState")).toString();
-    const bool canGoBack = payload.value(QLatin1String("canGoBack")).toBool();
-    const bool canGoForward = payload.value(QLatin1String("canGoForward")).toBool();
     if (!url.isEmpty() && url != m_islandUrl) {
         m_islandUrl = url;
         changed = true;
@@ -357,22 +338,29 @@ void PanelWindowController::handleIslandState(const QJsonObject& payload)
         m_islandCanGoForward = canGoForward;
         changed = true;
     }
-    if (!readyState.isEmpty() && readyState != m_islandReadyState) {
+    const QString readyState = loading ? QStringLiteral("loading") : QStringLiteral("complete");
+    if (readyState != m_islandReadyState) {
         m_islandReadyState = readyState;
         changed = true;
     }
-    if (readyState == QLatin1String("complete") && m_islandLoading) {
+    if (!error.isEmpty()) {
         m_islandReadyTimeout.stop();
         m_islandLoading = false;
-        m_islandStatus = QStringLiteral("Ready");
-        m_islandError.clear();
+        m_islandStatus = QStringLiteral("Error");
+        m_islandError = error;
         changed = true;
-    } else if (!readyState.isEmpty() && readyState != QLatin1String("complete")
-               && !m_islandLoading) {
+    } else if (loading && !m_islandLoading) {
         m_islandLoading = true;
         m_islandStatus = QStringLiteral("Loading");
         m_islandError.clear();
         m_islandReadyTimeout.start();
+        changed = true;
+    } else if (!loading && (m_islandLoading || !m_islandError.isEmpty()
+                            || m_islandStatus != QLatin1String("Ready"))) {
+        m_islandReadyTimeout.stop();
+        m_islandLoading = false;
+        m_islandStatus = QStringLiteral("Ready");
+        m_islandError.clear();
         changed = true;
     }
     if (changed)
@@ -381,22 +369,18 @@ void PanelWindowController::handleIslandState(const QJsonObject& payload)
 
 void PanelWindowController::openIsland(const QString& url)
 {
-    if (!m_window || url.trimmed().isEmpty() || !m_brave)
+    if (!m_window || url.trimmed().isEmpty() || !m_webProfile)
         return;
     QString target = url.trimmed();
     if (!target.startsWith(QLatin1String("http"))
         && !target.startsWith(QLatin1String("data:")))
         target.prepend(QLatin1String("https://"));
-    const bool reuseExisting = m_islandOpen && m_brave->connected();
     const QRect wa = m_workArea.workArea();
-    const qreal sf = m_window->devicePixelRatio();
-    constexpr int kBraveMargin = 8;
-    constexpr int kToolbarH = 42; // matches the in-panel island toolbar height
-    constexpr int kMinBraveW = 240;
+    constexpr int kMinWebW = 240;
 
     const int availableW = qMax(0, wa.width() - kPanelGap * 2);
     const int desiredPanelW = m_islandOpen ? m_islandPanelWidth : m_window->width();
-    const int maxPanelW = availableW - kMinBraveW;
+    const int maxPanelW = availableW - kMinWebW;
     if (maxPanelW < kMinPanelWidth) {
         qWarning() << "[island] not enough room for panel and browser island ("
                    << availableW << "px available )";
@@ -404,10 +388,9 @@ void PanelWindowController::openIsland(const QString& url)
     }
 
     const int panelW = qBound(kMinPanelWidth, desiredPanelW, maxPanelW);
-    const int panelScreenRight = wa.x() + kPanelGap + panelW;
-    const int braveW = availableW - panelW;
-    if (braveW < kMinBraveW) {
-        qWarning() << "[island] not enough room beside the panel (" << braveW << "px )";
+    const int webW = availableW - panelW;
+    if (webW < kMinWebW) {
+        qWarning() << "[island] not enough room beside the panel (" << webW << "px )";
         return;
     }
     if (!m_islandOpen)
@@ -417,10 +400,7 @@ void PanelWindowController::openIsland(const QString& url)
 
     m_focus.noteBrowserOpened();
     m_geometryLockUntil = QDateTime::currentMSecsSinceEpoch() + 700;
-    m_window->setGeometry(wa.x() + kPanelGap, wa.y() + kPanelGap, panelW + braveW, height);
-    // Drop topmost while embedded: the brave shell sets itself HWND_TOPMOST
-    // after the reparent and must win z-order over the panel.
-    m_window->setFlag(Qt::WindowStaysOnTopHint, false);
+    m_window->setGeometry(wa.x() + kPanelGap, wa.y() + kPanelGap, panelW + webW, height);
 
     m_islandOpen = true;
     m_islandUrl = target;
@@ -429,21 +409,9 @@ void PanelWindowController::openIsland(const QString& url)
     m_islandCanGoForward = false;
     m_islandReadyState.clear();
     startIslandLoad(QStringLiteral("Opening"));
-    if (!m_islandStatePoll.isActive())
-        m_islandStatePoll.start();
-
-    if (reuseExisting) {
-        m_brave->navigate(target);
-    } else {
-        m_brave->open(target,
-                      qRound((panelScreenRight + kBraveMargin) * sf),
-                      qRound((wa.y() + kPanelGap + kToolbarH) * sf),
-                      qRound((braveW - kBraveMargin * 2) * sf),
-                      qRound((height - kToolbarH - kBraveMargin) * sf));
-    }
-    m_brave->roundCorners(static_cast<qulonglong>(m_window->winId()));
+    emit islandOpenRequested(target);
     notifyHelperHwnds();
-    qInfo() << "[island] opened" << target << "panelW=" << panelW << "braveW=" << braveW;
+    qInfo() << "[web] island opened" << target << "panelW=" << panelW << "webW=" << webW;
 }
 
 void PanelWindowController::navigateIsland(const QString& url)
@@ -461,42 +429,60 @@ void PanelWindowController::navigateIsland(const QString& url)
     m_islandTitle.clear();
     m_islandReadyState.clear();
     startIslandLoad(QStringLiteral("Navigating"));
-    if (m_brave)
-        m_brave->navigate(target);
+    emit islandNavigateRequested(target);
 }
 
 void PanelWindowController::reloadIsland()
 {
-    if (!m_islandOpen || !m_brave)
+    if (!m_islandOpen)
         return;
     m_islandReadyState.clear();
     startIslandLoad(QStringLiteral("Reloading"));
-    m_brave->reload();
+    emit islandReloadRequested();
 }
 
 void PanelWindowController::backIsland()
 {
-    if (!m_islandOpen || !m_brave || !m_islandCanGoBack)
+    if (!m_islandOpen || !m_islandCanGoBack)
         return;
     m_islandReadyState.clear();
     startIslandLoad(QStringLiteral("Back"));
-    m_brave->goBack();
+    emit islandBackRequested();
 }
 
 void PanelWindowController::forwardIsland()
 {
-    if (!m_islandOpen || !m_brave || !m_islandCanGoForward)
+    if (!m_islandOpen || !m_islandCanGoForward)
         return;
     m_islandReadyState.clear();
     startIslandLoad(QStringLiteral("Forward"));
-    m_brave->goForward();
+    emit islandForwardRequested();
 }
 
 QString PanelWindowController::runIslandScript(const QString& script)
 {
-    if (!m_islandOpen || script.trimmed().isEmpty() || !m_brave)
+    if (!m_islandOpen || script.trimmed().isEmpty())
         return {};
-    return m_brave->evaluate(script);
+    const QString id = QStringLiteral("web-eval-%1").arg(++m_nextIslandScriptId);
+    emit islandScriptRequested(id, script);
+    return id;
+}
+
+void PanelWindowController::completeIslandScript(const QString& id, const QVariant& result,
+                                                 const QString& error)
+{
+    if (!id.isEmpty())
+        emit islandScriptResult(id, result, error);
+}
+
+void PanelWindowController::reportIslandRenderTerminated(int status, int exitCode)
+{
+    if (!m_islandOpen)
+        return;
+    const QString error = QStringLiteral("Web renderer stopped (%1, code %2)")
+                              .arg(status).arg(exitCode);
+    qWarning() << "[web]" << error;
+    failIslandLoad(error);
 }
 
 bool PanelWindowController::openExternal(const QString& url)
@@ -515,9 +501,9 @@ bool PanelWindowController::openExternal(const QString& url)
 
 void PanelWindowController::captureTradingViewSession()
 {
-    if (!m_brave) {
+    if (!m_webProfile || !m_webProfile->cookieStore()) {
         m_settings->set(QStringLiteral("wp-tv-capture-status"),
-                        QStringLiteral("Web island helper unavailable"));
+                        QStringLiteral("Qt WebEngine profile unavailable"));
         return;
     }
     if (!m_islandOpen) {
@@ -528,24 +514,22 @@ void PanelWindowController::captureTradingViewSession()
     }
     m_settings->set(QStringLiteral("wp-tv-capture-status"),
                     QStringLiteral("Capturing TradingView cookies"));
-    m_brave->requestCookies();
+    m_webProfile->cookieStore()->loadAllCookies();
+    QTimer::singleShot(350, this, &PanelWindowController::captureTradingViewCookies);
 }
 
-void PanelWindowController::handleTradingViewCookies(const QJsonObject& payload)
+void PanelWindowController::captureTradingViewCookies()
 {
-    const QJsonArray cookies = payload.value(QLatin1String("result")).toObject()
-                                   .value(QLatin1String("cookies")).toArray();
     QStringList pairs;
     QString sessionId;
     QString csrf;
     QString username;
-    for (const QJsonValue& value : cookies) {
-        const QJsonObject c = value.toObject();
-        QString domain = c.value(QLatin1String("domain")).toString().trimmed().toLower();
+    for (const QNetworkCookie& cookie : std::as_const(m_webCookies)) {
+        QString domain = cookie.domain().trimmed().toLower();
         while (domain.startsWith(QLatin1Char('.')))
             domain.remove(0, 1);
-        const QString name = c.value(QLatin1String("name")).toString();
-        const QString cookieValue = c.value(QLatin1String("value")).toString();
+        const QString name = QString::fromUtf8(cookie.name());
+        const QString cookieValue = QString::fromUtf8(cookie.value());
         if (name.isEmpty() || cookieValue.isEmpty())
             continue;
         if (domain != QLatin1String("tradingview.com")
@@ -584,10 +568,8 @@ void PanelWindowController::closeIsland()
 {
     if (!m_islandOpen)
         return;
-    if (m_brave)
-        m_brave->closeShell();
+    emit islandCloseRequested();
     m_islandReadyTimeout.stop();
-    m_islandStatePoll.stop();
     m_islandOpen = false;
     m_islandLoading = false;
     m_islandUrl.clear();
@@ -606,13 +588,11 @@ void PanelWindowController::closeIsland()
                                    : m_islandPanelWidth);
         m_window->setGeometry(wa.x() + kPanelGap, wa.y() + kPanelGap,
                               width, wa.height() - kPanelGap * 2);
-        if (!m_pinned)
-            m_window->setFlag(Qt::WindowStaysOnTopHint, true);
     }
     m_islandPanelWidth = 0;
     m_islandRestoreWidth = 0;
     notifyHelperHwnds();
-    qInfo() << "[island] closed";
+    qInfo() << "[web] island closed";
 }
 
 double PanelWindowController::windowOpacity() const

@@ -2,8 +2,7 @@ import QtQuick
 import QtPanel.Native
 
 // PressReader stays web-based (library ezproxy auth); the card opens the
-// catalog in a brave-host island beside the panel, matching the plan's
-// "web island" approach for auth-heavy sites.
+// catalog in the persistent Qt WebEngine island beside the panel.
 GlassCard {
     id: card
     title: "PressReader"

@@ -32,23 +32,19 @@ The release executable is written to:
 build\nmake-release\qt-panel.exe
 ```
 
-## Browser island helper
+## Embedded browser island
 
-The shared Brave-host helper has its own bounded build and real-browser smoke
-test. Its build clears stale Qt/helper/compiler processes, selects the installed
-MSVC toolset, and writes `native\bin\brave-host.exe`.
+The Qt rewrite uses `QtWebEngineQuick` directly. It does not launch or reparent
+Brave. The disk-backed browser profile is stored below the selected qt-panel
+profile as `webengine` and `webengine-cache`, so authenticated sessions survive
+restarts while remaining isolated from personal browsers.
 
-```powershell
-cd C:\Users\nicol\source\repos\widget-panel-qt
-powershell -ExecutionPolicy Bypass -File .\native\brave-host\build.ps1
-powershell -ExecutionPolicy Bypass -File .\native\brave-host\test-protocol.ps1
-```
-
-The smoke test uses a harmless data page and verifies CDP state, script
-evaluation, cookies, navigation history, Back, and process cleanup. Browser
-islands use `%LOCALAPPDATA%\WidgetPanel\BraveIsland` as a dedicated persistent
-profile so island sessions survive restarts without reparenting personal Brave
-windows.
+For an undeployed build, always use `launch.ps1`. It points WebEngine at the Qt
+SDK subprocess, resources, locales, QML modules, and DLLs. `build.ps1 -Deploy`
+copies those dependencies beside the executable for startup and direct launch.
+The embedded surface provides native navigation controls, persistent cookies,
+forced dark mode, same-view popup handling, script callbacks, and bounded
+renderer-process recovery.
 
 ## Isolated smoke run
 
@@ -72,6 +68,15 @@ A successful smoke run contains `[startup] QML root attached`,
 creation error.
 Successful bounded runs also print `EXIT_CODE=0` and log
 `[startup] exiting cleanly`.
+
+An embedded-page diagnostic can reserve the full browser area and save
+`diag-web-island.png` below the isolated profile:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\launch.ps1 `
+  -NoHelper -Profile web-smoke -DiagFitMode `
+  -DiagIslandUrl https://example.com -ExitAfterMs 12000
+```
 
 Renderer selection defaults to `auto`, which selects the reliable Windows
 D3D11 RHI backend. Use `-Renderer vulkan` only for an intentional Vulkan test

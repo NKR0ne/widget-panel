@@ -2,7 +2,8 @@
 
 #include <QObject>
 #include <QPointer>
-#include <QJsonObject>
+#include <QHash>
+#include <QNetworkCookie>
 #include <QString>
 #include <QTimer>
 #include <QVariantMap>
@@ -11,10 +12,10 @@
 #include "WorkAreaWatcher.h"
 
 class QQuickWindow;
+class QQuickWebEngineProfile;
 
 namespace qtpanel {
 
-class BraveHostClient;
 class HelperServer;
 class SettingsStore;
 
@@ -40,7 +41,7 @@ class PanelWindowController : public QObject {
 
 public:
     PanelWindowController(SettingsStore* settings, HelperServer* helper,
-                          BraveHostClient* brave, QObject* parent = nullptr);
+                          QQuickWebEngineProfile* webProfile, QObject* parent = nullptr);
 
     void attach(QQuickWindow* window);
 
@@ -61,14 +62,20 @@ public:
     // Port of the panel-fit-mode IPC: 'base' sizes to the visible columns,
     // stage modes (news/monitor/live) expand to the full work area.
     Q_INVOKABLE bool fitMode(const QString& mode, int baseColumnCount, const QVariantMap& colWidths);
-    // Web island: widens the window and parks the brave-host shell beside the
-    // panel (port of openBraveInPanel / closeBraveInPanel).
+    // Web island: widens the native window and reveals the embedded Qt
+    // WebEngine surface beside the panel.
     Q_INVOKABLE void openIsland(const QString& url);
     Q_INVOKABLE void navigateIsland(const QString& url);
     Q_INVOKABLE void reloadIsland();
     Q_INVOKABLE void backIsland();
     Q_INVOKABLE void forwardIsland();
     Q_INVOKABLE QString runIslandScript(const QString& script);
+    Q_INVOKABLE void reportIslandState(const QString& url, const QString& title,
+                                       bool loading, bool canGoBack,
+                                       bool canGoForward, const QString& error = {});
+    Q_INVOKABLE void completeIslandScript(const QString& id, const QVariant& result,
+                                          const QString& error = {});
+    Q_INVOKABLE void reportIslandRenderTerminated(int status, int exitCode);
     Q_INVOKABLE bool openExternal(const QString& url);
     Q_INVOKABLE void captureTradingViewSession();
     Q_INVOKABLE void closeIsland();
@@ -99,6 +106,13 @@ signals:
     void islandChanged();
     void islandScriptResult(const QString& id, const QVariant& result,
                             const QString& error);
+    void islandOpenRequested(const QString& url);
+    void islandNavigateRequested(const QString& url);
+    void islandReloadRequested();
+    void islandBackRequested();
+    void islandForwardRequested();
+    void islandCloseRequested();
+    void islandScriptRequested(const QString& id, const QString& script);
     void tradingViewSessionCaptured();
     void slideInRequested();
     void slideOutRequested();
@@ -110,10 +124,8 @@ private:
     void onResizeTick();
     void applyWorkArea();
     void notifyHelperHwnds();
-    void handleTradingViewCookies(const QJsonObject& payload);
-    void handleIslandState(const QJsonObject& payload);
+    void captureTradingViewCookies();
     void startIslandLoad(const QString& status);
-    void finishIslandLoad(const QString& status = QStringLiteral("Ready"));
     void failIslandLoad(const QString& error);
     void setPanelVisibleState(bool visible);
     void resolveGraphicsApiName();
@@ -131,7 +143,8 @@ private:
 
     SettingsStore* m_settings = nullptr;
     HelperServer* m_helper = nullptr;
-    BraveHostClient* m_brave = nullptr;
+    QQuickWebEngineProfile* m_webProfile = nullptr;
+    QHash<QString, QNetworkCookie> m_webCookies;
     QPointer<QQuickWindow> m_window;
     WorkAreaWatcher m_workArea;
     FocusPolicy m_focus;
@@ -158,7 +171,7 @@ private:
     QTimer m_resizeTimer;
     QTimer m_helperStateDelay;
     QTimer m_islandReadyTimeout;
-    QTimer m_islandStatePoll;
+    quint64 m_nextIslandScriptId = 0;
     int m_resizeStartX = 0;
     int m_resizeStartW = 0;
 };
