@@ -101,7 +101,7 @@ Item {
             property real aspect: width / Math.max(1, height)
             property real cursorX: 0.5
             property real cursorY: 0.3
-            property real cursorOn: 0
+            property real cursorOn: Ui.mouseHalo && panelHover.hovered ? 1 : 0
             fragmentShader: "effects/panel_depth.frag.qsb"
             NumberAnimation on time {
                 running: Panel.panelVisible && Motion.enabled
@@ -115,11 +115,11 @@ Item {
 
         HoverHandler {
             id: panelHover
+            enabled: Ui.mouseHalo
             onPointChanged: {
                 depthFx.cursorX = point.position.x / Math.max(1, chrome.width)
                 depthFx.cursorY = point.position.y / Math.max(1, chrome.height)
             }
-            onHoveredChanged: depthFx.cursorOn = hovered ? 1 : 0
         }
 
         ColumnLayout {
@@ -306,6 +306,7 @@ Item {
         ShaderEffect {
             anchors.fill: parent
             z: 50
+            visible: Ui.mouseHalo
             property real aspect: width / Math.max(1, height)
             property real cursorX: depthFx.cursorX
             property real cursorY: depthFx.cursorY

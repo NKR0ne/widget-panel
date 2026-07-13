@@ -18,6 +18,7 @@ QtObject {
 
     property bool reducedMotion: false
     property bool highContrast: false
+    property bool mouseHalo: true
     property string density: "compact"
 
     function openDetail(kind, title, payload) {
@@ -62,6 +63,7 @@ QtObject {
         Store.set("wp-card-opacity", String(cardOpacity))
         Store.set("wp-reduced-motion", reducedMotion ? "true" : "false")
         Store.set("wp-high-contrast", highContrast ? "true" : "false")
+        Store.set("wp-mouse-halo", mouseHalo ? "true" : "false")
         Store.set("wp-density", density)
     }
 
@@ -71,6 +73,7 @@ QtObject {
             cardOpacity = Math.min(2, Math.max(0.2, stored))
         reducedMotion = Store.get("wp-reduced-motion", "false") === "true"
         highContrast = Store.get("wp-high-contrast", "false") === "true"
+        mouseHalo = Store.get("wp-mouse-halo", "true") === "true"
         const storedDensity = Store.get("wp-density", "compact")
         density = storedDensity === "comfortable" ? "comfortable" : "compact"
     }

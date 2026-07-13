@@ -301,6 +301,13 @@ Item {
             }
             SettingsToggle {
                 width: parent.width
+                label: "Halo du pointeur"
+                description: "Illumine la surface autour du pointeur"
+                checked: Ui.mouseHalo
+                onToggled: function(value) { Ui.mouseHalo = value; Ui.save() }
+            }
+            SettingsToggle {
+                width: parent.width
                 label: "Contraste renforc\u00e9"
                 description: "Augmente les contours et le contraste du texte"
                 checked: Ui.highContrast
