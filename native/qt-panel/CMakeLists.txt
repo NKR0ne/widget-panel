@@ -25,6 +25,7 @@ qt_add_executable(qt-panel WIN32
     src/core/SoundFx.h src/core/SoundFx.cpp
     src/core/TextFix.h src/core/TextFix.cpp
     src/services/camera/CameraClient.h src/services/camera/CameraClient.cpp
+    src/services/camera/DirectCameraClient.h src/services/camera/DirectCameraClient.cpp
     src/services/camera/XpCrypto.h src/services/camera/XpCrypto.cpp
     src/services/diagnostics/DiagnosticsService.h src/services/diagnostics/DiagnosticsService.cpp
     src/services/live/LiveFeedService.h src/services/live/LiveFeedService.cpp

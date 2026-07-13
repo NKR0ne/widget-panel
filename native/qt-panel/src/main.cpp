@@ -26,6 +26,7 @@
 #include "core/SoundFx.h"
 #include "shell/SystemTheme.h"
 #include "services/camera/CameraClient.h"
+#include "services/camera/DirectCameraClient.h"
 #include "services/diagnostics/DiagnosticsService.h"
 #include "services/live/LiveFeedService.h"
 #include "services/msgraph/MsGraphService.h"
@@ -266,8 +267,9 @@ int main(int argc, char* argv[])
     StarvisService starvis(&settings, &vault, &http, &weather, &stocks, &news, &workstation);
     auto* cameraProvider = new CameraImageProvider(); // engine takes ownership
     CameraClient camera(&settings, &vault, cameraProvider);
+    DirectCameraClient directCamera(&settings, &vault);
     DiagnosticsService diagnostics(&settings, &vault, &controller, &msGraph, &live,
-                                   &workstation, &camera, &starvis, &stocks);
+                                   &workstation, &camera, &directCamera, &starvis, &stocks);
 
     // Outlook unread count → AppBar pill badge (and any future overlay).
     QObject::connect(&msGraph, &MsGraphService::unreadCountChanged, &helper,
@@ -297,6 +299,7 @@ int main(int argc, char* argv[])
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Reader", &reader);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Starvis", &starvis);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Camera", &camera);
+    qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "DirectCamera", &directCamera);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Diagnostics", &diagnostics);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Vault", &vault);
 

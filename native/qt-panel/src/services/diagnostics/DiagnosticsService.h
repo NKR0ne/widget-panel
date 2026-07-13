@@ -9,6 +9,7 @@
 namespace qtpanel {
 
 class CameraClient;
+class DirectCameraClient;
 class LiveFeedService;
 class MsGraphService;
 class PanelWindowController;
@@ -31,7 +32,8 @@ public:
     DiagnosticsService(SettingsStore* settings, SecretVault* vault,
                        PanelWindowController* panel, MsGraphService* graph,
                        LiveFeedService* live, WorkstationClient* workstation,
-                       CameraClient* camera, StarvisService* starvis,
+                       CameraClient* camera, DirectCameraClient* directCamera,
+                       StarvisService* starvis,
                        StocksModel* stocks, QObject* parent = nullptr);
 
     QVariantList rows() const { return m_rows; }
@@ -76,6 +78,7 @@ private:
     LiveFeedService* m_live = nullptr;
     WorkstationClient* m_workstation = nullptr;
     CameraClient* m_camera = nullptr;
+    DirectCameraClient* m_directCamera = nullptr;
     StarvisService* m_starvis = nullptr;
     StocksModel* m_stocks = nullptr;
 

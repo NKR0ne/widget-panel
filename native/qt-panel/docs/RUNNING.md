@@ -59,6 +59,13 @@ are written to `%APPDATA%\qt-panel\startup-launch.log`.
 - Authenticated and site-dependent pages use an embedded Qt WebEngine surface
   with persistent cookies/cache, native navigation chrome, forced dark mode,
   same-view popups, bounded renderer recovery, and explicit external-open.
+- The separate direct-camera card decodes RTSP natively instead of opening the
+  vendor preview page. Its default endpoint is the Hikvision channel-1
+  substream at `rtsp://ipcam1.local:554/ISAPI/Streaming/channels/102`; the
+  endpoint remains editable. Direct-camera credentials are distinct from
+  XProtect and the password is stored in Windows Credential Manager. New
+  credentials require an explicit connection and have a two-attempt protected
+  budget; only a configuration verified by a video frame reconnects on startup.
 - Renderer: Vulkan when available, else D3D11 — shown as a badge in the header.
 - **Helper integration**: listens on TCP 127.0.0.1:47321 for `taskbar-btn.exe`
   (the Explorer AppBar pill). If the Electron app is running it owns that port;

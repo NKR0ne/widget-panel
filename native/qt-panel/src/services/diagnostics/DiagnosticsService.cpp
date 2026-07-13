@@ -3,6 +3,7 @@
 #include "core/SecretVault.h"
 #include "core/SettingsStore.h"
 #include "services/camera/CameraClient.h"
+#include "services/camera/DirectCameraClient.h"
 #include "services/live/LiveFeedService.h"
 #include "services/msgraph/MsGraphService.h"
 #include "services/starvis/StarvisService.h"
@@ -21,7 +22,8 @@ namespace qtpanel {
 DiagnosticsService::DiagnosticsService(SettingsStore* settings, SecretVault* vault,
                                        PanelWindowController* panel, MsGraphService* graph,
                                        LiveFeedService* live, WorkstationClient* workstation,
-                                       CameraClient* camera, StarvisService* starvis,
+                                       CameraClient* camera, DirectCameraClient* directCamera,
+                                       StarvisService* starvis,
                                        StocksModel* stocks, QObject* parent)
     : QObject(parent)
     , m_settings(settings)
@@ -31,6 +33,7 @@ DiagnosticsService::DiagnosticsService(SettingsStore* settings, SecretVault* vau
     , m_live(live)
     , m_workstation(workstation)
     , m_camera(camera)
+    , m_directCamera(directCamera)
     , m_starvis(starvis)
     , m_stocks(stocks)
 {
@@ -73,6 +76,12 @@ DiagnosticsService::DiagnosticsService(SettingsStore* settings, SecretVault* vau
         connect(m_camera, &CameraClient::camerasChanged, this,
                 &DiagnosticsService::updateCameraRow);
     }
+    if (m_directCamera) {
+        connect(m_directCamera, &DirectCameraClient::statusChanged, this,
+                &DiagnosticsService::updateCameraRow);
+        connect(m_directCamera, &DirectCameraClient::configurationChanged, this,
+                &DiagnosticsService::updateCameraRow);
+    }
     if (m_starvis) {
         connect(m_starvis, &StarvisService::configuredChanged, this,
                 &DiagnosticsService::updateStarvisRow);
@@ -106,6 +115,8 @@ DiagnosticsService::DiagnosticsService(SettingsStore* settings, SecretVault* vau
             if (key == QLatin1String("starvis-openai-key"))
                 updateStarvisRow();
             if (key == QLatin1String("camera-password"))
+                updateCameraRow();
+            if (key == QLatin1String("camera-direct-password"))
                 updateCameraRow();
         });
     }
@@ -228,21 +239,12 @@ void DiagnosticsService::openPressReader()
 
 void DiagnosticsService::openDirectCamera()
 {
-    if (!m_panel || !m_settings)
+    if (!m_directCamera)
         return;
-    const QString raw = m_settings->get(
-        QStringLiteral("wp-camera-direct-url"),
-        QStringLiteral("http://ipcam1.local/doc/page/preview.asp")).toString().trimmed();
-    QUrl parsed(raw);
-    const QString target = parsed.isValid()
-        ? parsed.toString(QUrl::RemoveUserInfo)
-        : raw;
-    if (target.isEmpty())
-        return;
-    m_panel->openIsland(target);
+    m_directCamera->start();
     upsertRow(QStringLiteral("camera-direct"), QStringLiteral("Direct camera"),
               QStringLiteral("checking"),
-              QStringLiteral("Opened direct camera page; manual auth only"));
+              QStringLiteral("Starting the native RTSP stream"));
 }
 
 void DiagnosticsService::probeShellIsland()
@@ -335,16 +337,29 @@ void DiagnosticsService::updateWorkstationRow()
 
 void DiagnosticsService::updateCameraRow()
 {
-    if (m_settings) {
-        const QString direct = m_settings->get(
-            QStringLiteral("wp-camera-direct-url"),
-            QStringLiteral("http://ipcam1.local/doc/page/preview.asp")).toString();
-        const QUrl directUrl(direct);
+    if (!m_directCamera) {
         upsertRow(QStringLiteral("camera-direct"), QStringLiteral("Direct camera"),
-                  directUrl.isValid() && !directUrl.host().isEmpty()
-                      ? QStringLiteral("ok") : QStringLiteral("setup"),
-                  QStringLiteral("%1; manual browser auth; no credential retries")
-                      .arg(directUrl.host().isEmpty() ? direct : directUrl.host()));
+                  QStringLiteral("error"), QStringLiteral("Direct camera service missing"));
+    } else {
+        QString state = QStringLiteral("setup");
+        if (m_directCamera->status() == QLatin1String("connecting"))
+            state = QStringLiteral("checking");
+        else if (m_directCamera->status() == QLatin1String("streaming"))
+            state = QStringLiteral("ok");
+        else if (m_directCamera->status() == QLatin1String("error")
+                 || m_directCamera->status() == QLatin1String("blocked"))
+            state = QStringLiteral("error");
+        else if (m_directCamera->configured())
+            state = QStringLiteral("ok");
+
+        QString detail = QStringLiteral("%1; %2; %3 protected attempts remaining")
+                             .arg(m_directCamera->endpoint(), m_directCamera->status())
+                             .arg(m_directCamera->authAttemptsRemaining());
+        if (m_directCamera->verified())
+            detail += QStringLiteral("; verified");
+        if (!m_directCamera->error().isEmpty())
+            detail += QStringLiteral("; %1").arg(m_directCamera->error());
+        upsertRow(QStringLiteral("camera-direct"), QStringLiteral("Direct camera"), state, detail);
     }
     if (!m_camera) {
         upsertRow(QStringLiteral("camera"), QStringLiteral("Camera"),

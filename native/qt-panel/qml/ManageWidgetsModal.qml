@@ -33,7 +33,7 @@ Item {
         { id: "todo", label: "Microsoft To-Do", note: "Microsoft Graph", color: "#2564cf", modes: ["base"] },
         { id: "starvis", label: "Starvis", note: "AI assistant", color: "#62e6ff", modes: ["base"] },
         { id: "camera", label: "Camera", note: "XProtect", color: "#5e8af5", modes: ["base"] },
-        { id: "camera-direct", label: "Camera directe", note: "IP camera", color: "#60a5fa", modes: ["base"] },
+        { id: "camera-direct", label: "Camera directe", note: "RTSP natif", color: "#60a5fa", modes: ["base"] },
         { id: "pressreader", label: "PressReader", note: "Qt WebEngine", color: "#f7a64f", modes: ["base"] },
         { id: "news-3d", label: "Manchettes 3D", note: "News stage", color: "#4ff7c8", modes: ["base"] },
         { id: "euronews", label: "Euronews", note: "HLS", color: "#1e4ba8", modes: ["base", "live"] },

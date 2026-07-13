@@ -478,11 +478,10 @@ Item {
             }
 
             Text {
-                text: "CAMÉRA"; color: Theme.textSecondary; font.pixelSize: 9
+                text: "CAMÉRA XPROTECT"; color: Theme.textSecondary; font.pixelSize: 9
                 font.letterSpacing: 1; topPadding: 4
             }
             Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-camera-url"; item.fallback = "https://securitycenter.local:8082"; item.placeholder = "URL serveur XProtect" } }
-            Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-camera-direct-url"; item.fallback = "http://ipcam1.local/doc/page/preview.asp"; item.placeholder = "URL directe camera" } }
             Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-camera-id"; item.fallback = ""; item.placeholder = "GUID caméra par défaut" } }
             Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-camera-name-hint"; item.fallback = "HikVision"; item.placeholder = "Indice nom caméra" } }
             Text {
@@ -572,15 +571,60 @@ Item {
                         onClicked: { modal.clearCameraAuth(); Camera.stop() }
                     }
                 }
+            }
+
+            Text {
+                text: "CAMÉRA DIRECTE"; color: Theme.textSecondary; font.pixelSize: 9
+                font.letterSpacing: 1; topPadding: 4
+            }
+            Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-camera-direct-url"; item.fallback = "http://ipcam1.local/doc/page/preview.asp"; item.placeholder = "Page de l'appareil (détection de l'hôte)" } }
+            Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-camera-direct-stream-url"; item.fallback = "rtsp://ipcam1.local:554/ISAPI/Streaming/channels/102"; item.placeholder = "URL du flux RTSP" } }
+            Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-camera-direct-user"; item.fallback = ""; item.placeholder = "Utilisateur de la caméra directe" } }
+            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "camera-direct-password"; item.placeholder = "Mot de passe de la caméra directe"; item.secret = true } }
+            Text {
+                width: parent.width
+                text: DirectCamera.endpoint + "  ·  " + DirectCamera.status
+                      + (DirectCamera.verified ? "  ·  vérifiée"
+                         : "  ·  " + DirectCamera.authAttemptsRemaining + " essais protégés")
+                color: DirectCamera.status === "error" || DirectCamera.status === "blocked"
+                       ? Theme.danger : Theme.textSecondary
+                font.pixelSize: 9
+                elide: Text.ElideMiddle
+            }
+            Row {
+                width: parent.width
+                spacing: 6
                 Rectangle {
-                    width: cameraDirectLabel.implicitWidth + 18; height: 24; radius: 6
-                    color: cameraDirectMouse.containsMouse ? Qt.rgba(0.31,0.56,0.97,0.28) : Qt.rgba(1,1,1,0.05)
-                    border.color: Theme.cardStroke
-                    Text { id: cameraDirectLabel; anchors.centerIn: parent; text: "Directe"; color: Theme.textSecondary; font.pixelSize: 9 }
+                    width: directStartLabel.implicitWidth + 18; height: 24; radius: 6
+                    color: directStartMouse.containsMouse ? Qt.rgba(0.31,0.56,0.97,0.28) : Qt.rgba(0.31,0.56,0.97,0.15)
+                    border.color: Qt.rgba(0.31,0.56,0.97,0.45)
+                    Text { id: directStartLabel; anchors.centerIn: parent; text: "Connecter"; color: Theme.textPrimary; font.pixelSize: 9 }
                     MouseArea {
-                        id: cameraDirectMouse; anchors.fill: parent; hoverEnabled: true
+                        id: directStartMouse; anchors.fill: parent; hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: Diagnostics.openDirectCamera()
+                    }
+                }
+                Rectangle {
+                    width: directStopLabel.implicitWidth + 18; height: 24; radius: 6
+                    color: directStopMouse.containsMouse ? Theme.hover : Qt.rgba(1,1,1,0.05)
+                    border.color: Theme.cardStroke
+                    Text { id: directStopLabel; anchors.centerIn: parent; text: "Arrêter"; color: Theme.textSecondary; font.pixelSize: 9 }
+                    MouseArea {
+                        id: directStopMouse; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: DirectCamera.stop()
+                    }
+                }
+                Rectangle {
+                    width: directForgetLabel.implicitWidth + 18; height: 24; radius: 6
+                    color: directForgetMouse.containsMouse ? Qt.rgba(0.97,0.45,0.45,0.22) : Qt.rgba(1,1,1,0.05)
+                    border.color: Qt.rgba(0.97,0.45,0.45,0.35)
+                    Text { id: directForgetLabel; anchors.centerIn: parent; text: "Oublier"; color: Theme.textSecondary; font.pixelSize: 9 }
+                    MouseArea {
+                        id: directForgetMouse; anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: DirectCamera.forgetCredentials()
                     }
                 }
             }

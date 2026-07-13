@@ -45,7 +45,7 @@ Item {
         { id: "todo", source: "TodoWidget.qml", column: "right", props: {} },
         { id: "starvis", source: "StarvisWidget.qml", column: "right", props: {} },
         { id: "camera", source: "CameraWidget.qml", column: "left", props: {}, resize: true },
-        { id: "camera-direct", source: "DirectCameraWidget.qml", column: "left", props: {} },
+        { id: "camera-direct", source: "DirectCameraWidget.qml", column: "left", props: {}, resize: true },
         { id: "pressreader", source: "PressReaderWidget.qml", column: "mid", props: {} },
         { id: "news-3d", source: "NewsStage3D.qml", column: "feed", props: {}, resize: true },
         { id: "euronews", source: "LiveFeedWidget.qml", column: "feed", props: { feedId: "euronews" }, resize: true },
