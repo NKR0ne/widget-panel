@@ -6,6 +6,7 @@
 #include <QNetworkCookie>
 #include <QString>
 #include <QTimer>
+#include <QPropertyAnimation>
 #include <QVariantMap>
 
 #include "FocusPolicy.h"
@@ -20,8 +21,8 @@ class HelperServer;
 class SettingsStore;
 
 // Owns the panel window lifecycle: geometry (gap inset, work-area height,
-// fit modes, drag resize), show/hide choreography synchronized with the QML
-// slide animation, pin state, blur-to-hide policy, and helper notifications.
+// fit modes, drag resize), native-window slide choreography, pin state,
+// blur-to-hide policy, and helper notifications.
 // Port of the window-management half of the Electron main.js.
 class PanelWindowController : public QObject {
     Q_OBJECT
@@ -53,9 +54,6 @@ public:
     Q_INVOKABLE void hidePanel(bool force = false);
     Q_INVOKABLE void togglePanel();
     Q_INVOKABLE void togglePin();
-    // QML calls this when the slide-out animation lands; only then is the
-    // native window hidden (with a timeout fallback, like the Electron app).
-    Q_INVOKABLE void hideAnimationDone();
     Q_INVOKABLE void setModalOpen(bool open);
     Q_INVOKABLE void startResize();
     Q_INVOKABLE void endResize();
@@ -114,11 +112,11 @@ signals:
     void islandCloseRequested();
     void islandScriptRequested(const QString& id, const QString& script);
     void tradingViewSessionCaptured();
-    void slideInRequested();
-    void slideOutRequested();
 
 private:
     void completeHide();
+    int hiddenWindowX() const;
+    int slideDuration() const;
     void onActiveChanged();
     void onClickOutside();
     void onResizeTick();
@@ -168,6 +166,7 @@ private:
     QString m_graphicsApiName = QStringLiteral("starting");
 
     QTimer m_hideFallback;
+    QPropertyAnimation m_slideAnimation;
     QTimer m_resizeTimer;
     QTimer m_helperStateDelay;
     QTimer m_islandReadyTimeout;

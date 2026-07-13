@@ -14,7 +14,9 @@
 #include <QHash>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QEasingCurve>
 #include <QQuickWindow>
+#include <QScreen>
 #include <QSGRendererInterface>
 #include <QSettings>
 #include <QStandardPaths>
@@ -43,6 +45,14 @@ PanelWindowController::PanelWindowController(SettingsStore* settings, HelperServ
 {
     m_hideFallback.setSingleShot(true);
     connect(&m_hideFallback, &QTimer::timeout, this, &PanelWindowController::completeHide);
+
+    m_slideAnimation.setPropertyName("x");
+    connect(&m_slideAnimation, &QPropertyAnimation::finished, this, [this] {
+        if (m_hiding)
+            completeHide();
+        else
+            m_showAnimating = false;
+    });
 
     m_resizeTimer.setInterval(16);
     connect(&m_resizeTimer, &QTimer::timeout, this, &PanelWindowController::onResizeTick);
@@ -92,6 +102,7 @@ PanelWindowController::PanelWindowController(SettingsStore* settings, HelperServ
 void PanelWindowController::attach(QQuickWindow* window)
 {
     m_window = window;
+    m_slideAnimation.setTargetObject(window);
     window->setFlags(Qt::FramelessWindowHint | Qt::Tool | Qt::WindowStaysOnTopHint);
     window->setColor(Qt::transparent);
     applyWorkArea();
@@ -129,6 +140,14 @@ void PanelWindowController::showPanel()
 
     m_window->setOpacity(m_pinned ? pinnedOpacity() : windowOpacity());
     applyWorkArea();
+    const int restingX = m_window->x();
+    const int hiddenX = hiddenWindowX();
+    m_slideAnimation.stop();
+    m_slideAnimation.setDuration(slideDuration());
+    m_slideAnimation.setEasingCurve(QEasingCurve::OutCubic);
+    m_slideAnimation.setStartValue(hiddenX);
+    m_slideAnimation.setEndValue(restingX);
+    m_window->setX(hiddenX);
     m_window->show();
     m_window->raise();
     if (!m_pinned) {
@@ -137,9 +156,8 @@ void PanelWindowController::showPanel()
                 m_window->requestActivate();
         });
     }
-    emit slideInRequested();
     setPanelVisibleState(true);
-    QTimer::singleShot(kSlideMs, this, [this] { m_showAnimating = false; });
+    m_slideAnimation.start();
     m_helperStateDelay.start();
 }
 
@@ -156,13 +174,13 @@ void PanelWindowController::hidePanel(bool force)
     m_hiding = true;
     m_helperStateDelay.stop();
     m_focus.resetModal();
-    emit slideOutRequested();
-    m_hideFallback.start(kSlideMs + 160);
-}
-
-void PanelWindowController::hideAnimationDone()
-{
-    completeHide();
+    m_slideAnimation.stop();
+    m_slideAnimation.setDuration(slideDuration());
+    m_slideAnimation.setEasingCurve(QEasingCurve::InCubic);
+    m_slideAnimation.setStartValue(m_window->x());
+    m_slideAnimation.setEndValue(hiddenWindowX());
+    m_slideAnimation.start();
+    m_hideFallback.start(slideDuration() + 160);
 }
 
 void PanelWindowController::completeHide()
@@ -170,6 +188,7 @@ void PanelWindowController::completeHide()
     if (!m_hiding)
         return;
     m_hiding = false;
+    m_showAnimating = false;
     m_hideFallback.stop();
     if (!m_window)
         return;
@@ -178,6 +197,21 @@ void PanelWindowController::completeHide()
     if (m_helper)
         m_helper->sendState(false);
     setPanelVisibleState(false);
+}
+
+int PanelWindowController::hiddenWindowX() const
+{
+    if (!m_window)
+        return -kMinPanelWidth - 2;
+    const QScreen* screen = m_window->screen();
+    const int screenLeft = screen ? screen->geometry().left() : m_workArea.workArea().left();
+    return screenLeft - m_window->width() - 2;
+}
+
+int PanelWindowController::slideDuration() const
+{
+    return m_settings->get(QStringLiteral("wp-reduced-motion"), false).toBool()
+        ? 0 : kSlideMs;
 }
 
 void PanelWindowController::togglePanel()

@@ -2,9 +2,9 @@ import QtQuick
 import QtQuick.Layouts
 import QtPanel.Native
 
-// The in-scene half of the show/hide choreography: the native window fades
-// while this surface slides, and the window is only hidden after slideOut
-// lands (Panel.hideAnimationDone).
+// The surface stays fixed inside the native window. PanelWindowController
+// moves the whole window so the acrylic backdrop never remains behind as an
+// empty rectangle during show/hide transitions.
 Item {
     id: surface
 
@@ -80,49 +80,6 @@ Item {
                 Live.resolve(id, true)
         }
         SoundFx.tap()
-    }
-
-    // Resting x must NOT be bound to surface.width: the binding would fire on
-    // every window resize (fit modes, column changes) and yank the whole
-    // surface off-screen. Off-screen starts come from slideIn.from instead,
-    // which is re-evaluated each time the animation starts.
-    transform: Translate {
-        id: slide
-        x: 0
-    }
-
-    NumberAnimation {
-        id: slideIn
-        target: slide
-        property: "x"
-        from: -(surface.width + 24)
-        to: 0
-        duration: Motion.panelMs
-        easing.type: Easing.BezierSpline
-        easing.bezierCurve: Motion.emphasized
-    }
-
-    NumberAnimation {
-        id: slideOut
-        target: slide
-        property: "x"
-        to: -(surface.width + 24)
-        duration: Motion.panelMs
-        easing.type: Easing.BezierSpline
-        easing.bezierCurve: Motion.exit
-        onFinished: Panel.hideAnimationDone()
-    }
-
-    Connections {
-        target: Panel
-        function onSlideInRequested() {
-            slideOut.stop()
-            slideIn.restart()
-        }
-        function onSlideOutRequested() {
-            slideIn.stop()
-            slideOut.restart()
-        }
     }
 
     Rectangle {

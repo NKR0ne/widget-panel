@@ -108,7 +108,7 @@ native/qt-panel/
 ├── src/
 │   ├── main.cpp                # graphics API selection, single-instance, engine boot
 │   ├── shell/                  # Win32 + window management (no QML knowledge)
-│   │   ├── PanelWindowController   # geometry modes, slide/fade choreography, pin
+│   │   ├── PanelWindowController   # geometry modes, native-window slide, pin
 │   │   ├── WinShellIntegration     # DWM backdrop (acrylic/mica), rounded corners,
 │   │   │                           # WS_EX_TOOLWINDOW (skip taskbar), topmost, DPI
 │   │   ├── HelperClient            # TCP 47321 client (toggle/badge/state/hwnd)
@@ -150,7 +150,7 @@ native/qt-panel/
 │   ├── theme/  Theme.qml           # singleton: design tokens (palette, type ramp,
 │   │           Motion.qml          # radii, elevation) + motion spec (durations,
 │   │                               # easing curves) — single source of truth
-│   ├── shell/  PanelSurface.qml    # glass stack, slide-in transform, edge handle
+│   ├── shell/  PanelSurface.qml    # fixed glass stack, content, edge handle
 │   │           ColumnLayoutHost.qml# 6-column layout, drag-reorder, stage modes
 │   │           WidgetHost.qml      # entrance/exit transitions, reorder animation
 │   ├── components/                 # GlassCard, Skeleton, Badge, Sparkline,
@@ -181,8 +181,9 @@ native/qt-panel/
   (`wp-card-opacity`).
 - **Motion spec** (Motion.qml): one easing vocabulary (e.g. emphasized
   `[0.2, 0.0, 0, 1]`, exit `[0.3, 0, 0.8, 0.15]`), durations 90/210/390ms.
-  Panel slide keeps the 390ms signature so the helper-side timing assumptions
-  (350ms state notify, +160ms hide fallback) carry over unchanged.
+  The shell moves the complete acrylic window for the 390ms panel transition,
+  so DWM material and content travel as one surface. The helper-side timing
+  assumptions (350ms state notify, +160ms hide fallback) remain unchanged.
 - Entrance/exit: widgets animate via `WidgetHost` Transitions (translate + scale
   0.96→1 + opacity, 16ms stagger per card); column reorders use displaced
   transitions; stage-mode expansion animates window bounds (shell) and layout
@@ -274,8 +275,8 @@ Each phase ends green: compiles, runs, and the listed acceptance checks pass.
 The Electron app stays untouched and runnable throughout.
 
 **Phase 0 — Shell skeleton (foundation, highest fidelity bar)**
-Panel window with acrylic backdrop, gap inset, work-area sizing, slide-in/out at
-390ms, fade choreography, pin/unpin with pinned opacity, blur-to-hide policy
+Panel window with acrylic backdrop, gap inset, work-area sizing, native-window
+slide-in/out at 390ms, pin/unpin with pinned opacity, blur-to-hide policy
 port, helper TCP client (toggle/badge/state/hwnd/clickoutside), geometry modes
 + drag resize, settings import, single instance, autostart.
 *Accept: toggling from the AppBar pill is indistinguishable from the Electron

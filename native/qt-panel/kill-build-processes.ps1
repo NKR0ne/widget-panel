@@ -80,14 +80,17 @@ foreach ($proc in $targets) {
     }
 }
 
-Start-Sleep -Milliseconds 250
-
 $remaining = @()
-foreach ($name in $names) {
-    $remaining += Get-Process -Name $name -ErrorAction SilentlyContinue |
-        Where-Object { $_.Id -ne $currentPid }
-}
-$remaining = @($remaining | Sort-Object Id -Unique)
+$shutdownDeadline = [DateTime]::UtcNow.AddSeconds(3)
+do {
+    Start-Sleep -Milliseconds 100
+    $remaining = @()
+    foreach ($name in $names) {
+        $remaining += Get-Process -Name $name -ErrorAction SilentlyContinue |
+            Where-Object { $_.Id -ne $currentPid }
+    }
+    $remaining = @($remaining | Sort-Object Id -Unique)
+} while ($remaining.Count -gt 0 -and [DateTime]::UtcNow -lt $shutdownDeadline)
 
 if ($remaining.Count -gt 0) {
     Write-Warning 'Some build processes are still alive after Stop-Process:'

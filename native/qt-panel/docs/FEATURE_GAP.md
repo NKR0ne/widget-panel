@@ -18,7 +18,7 @@ but parity, controls, or runtime validation are incomplete.
 | Area | Status | Notes |
 |---|---|---|
 | Left-edge native panel | Implemented | Frameless/tool/topmost Qt window with native controller. |
-| Slide/fade choreography | Implemented | QML slide and native hide callback are wired. |
+| Native slide choreography | Implemented | The whole acrylic `QQuickWindow` animates across the desktop edge while `PanelSurface` remains fixed, so no empty backdrop rectangle is exposed. A bounded coordinate/capture run on 2026-07-13 validated `x=-717` to `x=10` and back offscreen. Reduced-motion mode skips the animation. |
 | Pin/unpin and blur-hide guard | Implemented | Controller exposes pin, modal guard, focus policy. |
 | Resize handle and persisted width | Implemented | Native controller handles drag resize. |
 | Helper TCP protocol | Implemented | AppBar helper integration uses the existing port/protocol. |
