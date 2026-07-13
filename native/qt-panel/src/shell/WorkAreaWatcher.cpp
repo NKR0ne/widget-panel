@@ -20,6 +20,12 @@ QRect WorkAreaWatcher::workArea() const
     return screen ? screen->availableGeometry() : QRect(0, 0, 1920, 1080);
 }
 
+QRect WorkAreaWatcher::screenGeometry() const
+{
+    const QScreen* screen = QGuiApplication::primaryScreen();
+    return screen ? screen->geometry() : workArea();
+}
+
 void WorkAreaWatcher::watchScreen(QScreen* screen)
 {
     if (m_watched)
@@ -28,6 +34,9 @@ void WorkAreaWatcher::watchScreen(QScreen* screen)
     if (screen) {
         connect(screen, &QScreen::availableGeometryChanged, this, [this](const QRect& area) {
             emit workAreaChanged(area);
+        });
+        connect(screen, &QScreen::geometryChanged, this, [this](const QRect&) {
+            emit workAreaChanged(workArea());
         });
     }
 }

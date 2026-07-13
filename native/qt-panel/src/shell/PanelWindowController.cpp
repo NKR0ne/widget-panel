@@ -291,11 +291,12 @@ void PanelWindowController::onResizeTick()
         return;
     }
     const QRect wa = m_workArea.workArea();
+    const QRect screen = m_workArea.screenGeometry();
     const int maxWidth = fullPanelWidth();
     const int newW = qBound(kMinPanelWidth,
                             m_resizeStartW + (QCursor::pos().x() - m_resizeStartX),
                             maxWidth);
-    m_window->setGeometry(wa.x() + kPanelHorizontalGap,
+    m_window->setGeometry(screen.x() + kPanelHorizontalGap,
                           wa.y() + kPanelVerticalGap,
                           newW, wa.height() - kPanelVerticalGap * 2);
 }
@@ -319,17 +320,20 @@ bool PanelWindowController::fitMode(const QString& mode, int baseColumnCount, co
     if (!stage)
         m_settings->set(QStringLiteral("wp-width"), width);
     const QRect wa = m_workArea.workArea();
-    m_window->setGeometry(wa.x() + kPanelHorizontalGap,
+    const QRect screen = m_workArea.screenGeometry();
+    m_window->setGeometry(screen.x() + kPanelHorizontalGap,
                           wa.y() + kPanelVerticalGap,
                           width, wa.height() - kPanelVerticalGap * 2);
     m_focus.noteToggle();
     notifyHelperHwnds();
     const bool applied = qAbs(m_window->width() - width) <= 2;
-    const int leftGap = m_window->x() - wa.x();
-    const int rightGap = wa.x() + wa.width() - (m_window->x() + m_window->width());
+    const int leftGap = m_window->x() - screen.x();
+    const int rightGap = screen.x() + screen.width()
+        - (m_window->x() + m_window->width());
     qInfo() << "[panel] fit-mode" << mode << "stage=" << stage
             << "width=" << width << "actual=" << m_window->width()
             << "left-gap=" << leftGap << "right-gap=" << rightGap
+            << "screen=" << screen << "work-area=" << wa
             << "ok=" << applied;
     return applied;
 }
@@ -416,9 +420,10 @@ void PanelWindowController::openIsland(const QString& url)
         && !target.startsWith(QLatin1String("data:")))
         target.prepend(QLatin1String("https://"));
     const QRect wa = m_workArea.workArea();
+    const QRect screen = m_workArea.screenGeometry();
     constexpr int kMinWebW = 240;
 
-    const int availableW = qMax(0, wa.width() - kPanelHorizontalGap * 2);
+    const int availableW = qMax(0, screen.width() - kPanelHorizontalGap * 2);
     const int desiredPanelW = m_islandOpen ? m_islandPanelWidth : m_window->width();
     const int maxPanelW = availableW - kMinWebW;
     if (maxPanelW < kMinPanelWidth) {
@@ -440,7 +445,7 @@ void PanelWindowController::openIsland(const QString& url)
 
     m_focus.noteBrowserOpened();
     m_geometryLockUntil = QDateTime::currentMSecsSinceEpoch() + 700;
-    m_window->setGeometry(wa.x() + kPanelHorizontalGap,
+    m_window->setGeometry(screen.x() + kPanelHorizontalGap,
                           wa.y() + kPanelVerticalGap,
                           panelW + webW, height);
 
@@ -624,11 +629,12 @@ void PanelWindowController::closeIsland()
     emit islandChanged();
     if (m_window) {
         const QRect wa = m_workArea.workArea();
+        const QRect screen = m_workArea.screenGeometry();
         const int width = qMax(kMinPanelWidth,
                                m_islandRestoreWidth > 0
                                    ? m_islandRestoreWidth
                                    : m_islandPanelWidth);
-        m_window->setGeometry(wa.x() + kPanelHorizontalGap,
+        m_window->setGeometry(screen.x() + kPanelHorizontalGap,
                               wa.y() + kPanelVerticalGap,
                               qMin(width, fullPanelWidth()),
                               wa.height() - kPanelVerticalGap * 2);
@@ -727,11 +733,12 @@ void PanelWindowController::applyWorkArea()
     if (!m_window)
         return;
     const QRect wa = m_workArea.workArea();
+    const QRect screen = m_workArea.screenGeometry();
     const int current = (m_panelVisible && m_window->width() >= kMinPanelWidth)
         ? m_window->width()
         : storedWidth();
     const int width = qBound(kMinPanelWidth, current, fullPanelWidth());
-    m_window->setGeometry(wa.x() + kPanelHorizontalGap,
+    m_window->setGeometry(screen.x() + kPanelHorizontalGap,
                           wa.y() + kPanelVerticalGap,
                           width, wa.height() - kPanelVerticalGap * 2);
 }
@@ -798,8 +805,8 @@ int PanelWindowController::storedWidth() const
 
 int PanelWindowController::fullPanelWidth() const
 {
-    const QRect wa = m_workArea.workArea();
-    return qMax(kMinPanelWidth, wa.width() - kPanelHorizontalGap * 2);
+    const QRect screen = m_workArea.screenGeometry();
+    return qMax(kMinPanelWidth, screen.width() - kPanelHorizontalGap * 2);
 }
 
 int PanelWindowController::basePanelWidth(int baseColumnCount, const QVariantMap& colWidths) const

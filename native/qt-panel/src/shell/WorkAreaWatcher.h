@@ -16,6 +16,7 @@ public:
     explicit WorkAreaWatcher(QObject* parent = nullptr);
 
     QRect workArea() const;
+    QRect screenGeometry() const;
 
 signals:
     void workAreaChanged(const QRect& area);
