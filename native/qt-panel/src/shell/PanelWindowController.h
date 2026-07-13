@@ -133,7 +133,8 @@ private:
     int fullPanelWidth() const;
     int basePanelWidth(int baseColumnCount, const QVariantMap& colWidths) const;
 
-    static constexpr int kPanelGap = 10;          // PANEL_GAP
+    static constexpr int kPanelHorizontalGap = 5;
+    static constexpr int kPanelVerticalGap = 10;
     static constexpr int kSlideMs = 390;          // PANEL_SLIDE_MS
     static constexpr int kDividerWidth = 4;       // PANEL_DIVIDER_WIDTH
     static constexpr int kResizeHandleWidth = 5;  // PANEL_RESIZE_HANDLE_WIDTH

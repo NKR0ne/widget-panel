@@ -42,9 +42,9 @@ another Qt/MSVC build.
   PATH before loading `vcvars64.bat`.
 
 ## Behavior
-- Left-edge acrylic sidebar, 10px gap inset, work-area height, always-on-top,
-  no taskbar button. The native window slides over desktop content at 390ms and
-  is hidden only after it clears the screen edge.
+- Left-edge acrylic sidebar, 5px horizontal and 10px vertical inset, work-area
+  height, always-on-top, no taskbar button. The native window slides over
+  desktop content at 390ms and is hidden only after it clears the screen edge.
 - Pin (header pin button): panel stays up at `wp-pinned-opacity` and ignores
   focus loss. Unpinned: clicking outside hides the panel (same debounce rules
   as the Electron app).
