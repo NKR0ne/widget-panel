@@ -28,6 +28,11 @@ wraps configure/build/deploy commands with a hard timeout that kills the native
 process tree. Pass `-SkipKill` only when you intentionally need to preserve
 another Qt/MSVC build.
 
+When autostart is enabled from Settings, build-tree installs register the
+hidden `launch.ps1 -Startup` bootstrap. It waits briefly for the login session,
+checks startup liveness, and retries early exits up to three times. Diagnostics
+are written to `%APPDATA%\qt-panel\startup-launch.log`.
+
 ## Stall recovery
 - If a build or Qt tool invocation is interrupted, run
   `powershell -ExecutionPolicy Bypass -File kill-build-processes.ps1` before the

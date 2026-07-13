@@ -22,7 +22,7 @@ but parity, controls, or runtime validation are incomplete.
 | Pin/unpin and blur-hide guard | Implemented | Controller exposes pin, modal guard, focus policy. |
 | Resize handle and persisted width | Implemented | Native controller handles drag resize. |
 | Helper TCP protocol | Implemented | AppBar helper integration uses the existing port/protocol. |
-| Windows startup ownership | Implemented | The Electron and standalone-helper login entries were removed on 2026-07-11. Deployed builds register `qt-panel.exe` directly; undeployed development builds register the hidden `launch.ps1` bootstrap so Qt DLL/plugin discovery survives a cold login. Existing enabled entries self-migrate. |
+| Windows startup ownership | Implemented | The Electron and standalone-helper login entries were removed on 2026-07-11. Build-tree installs register a hidden, delayed `launch.ps1 -Startup` bootstrap with an eight-second liveness check, up to three attempts, and `%APPDATA%\qt-panel\startup-launch.log` diagnostics. Standalone deployments register `qt-panel.exe` directly. Existing enabled entries self-migrate. |
 | Explicit browser boundary | Implemented | Native services use native detail surfaces where available. Authenticated or site-dependent pages open in the embedded Qt WebEngine island; Direct mode never launches it implicitly. System-browser launches remain explicit, validated, and logged. |
 | Runtime polish validation | Partial | Isolated D3D11 startup plus compact/wide screenshot and geometry checks passed on 2026-07-10. The diagnostics island focus/z-order probe still needs an interactive regression pass. |
 

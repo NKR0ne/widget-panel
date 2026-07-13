@@ -86,8 +86,8 @@ PanelWindowController::PanelWindowController(SettingsStore* settings, HelperServ
         cookies->loadAllCookies();
     }
 
-    // Development builds need launch.ps1 to put the Qt runtime on PATH.
-    // Deployed builds with adjacent Qt DLLs continue launching directly.
+    // Build-tree startup uses launch.ps1 for delayed login initialization and
+    // retry handling. Standalone deployments continue launching directly.
     if (autostart()) {
         QSettings run(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows"
                                      "\\CurrentVersion\\Run"), QSettings::NativeFormat);
@@ -682,15 +682,13 @@ QString PanelWindowController::autostartCommand() const
     };
 
     const QDir appDir(QCoreApplication::applicationDirPath());
-    if (QFileInfo::exists(appDir.filePath(QStringLiteral("Qt6Core.dll"))))
-        return quote(appPath);
-
     QDir sourceRoot = appDir;
-    if (!sourceRoot.cdUp() || !sourceRoot.cdUp())
-        return quote(appPath);
-    const QString launcher = sourceRoot.filePath(QStringLiteral("launch.ps1"));
+    const bool hasSourceRoot = sourceRoot.cdUp() && sourceRoot.cdUp();
+    const QString launcher = hasSourceRoot
+        ? sourceRoot.filePath(QStringLiteral("launch.ps1")) : QString();
     if (!QFileInfo::exists(launcher)) {
-        qWarning() << "[settings] autostart runtime missing and no launcher found beside build tree";
+        if (!QFileInfo::exists(appDir.filePath(QStringLiteral("Qt6Core.dll"))))
+            qWarning() << "[settings] autostart runtime missing and no launcher found beside build tree";
         return quote(appPath);
     }
 
@@ -706,7 +704,7 @@ QString PanelWindowController::autostartCommand() const
     const QString generator = buildName.startsWith(QLatin1String("nmake-"))
         ? QStringLiteral("NMake") : QStringLiteral("Ninja");
     return QStringLiteral("%1 -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass"
-                          " -File %2 -Config %3 -Generator %4")
+                          " -File %2 -Config %3 -Generator %4 -Startup")
         .arg(quote(powershell), quote(launcher), config, generator);
 }
 
