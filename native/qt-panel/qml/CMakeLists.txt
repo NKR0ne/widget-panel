@@ -26,6 +26,9 @@ qt_add_qml_module(qtpanel_ui
         WorkstationWidget.qml
         LiveFeedWidget.qml
         NewsWidget.qml
+        NewsModeView.qml
+        ArticleReaderCard.qml
+        BrowserSpotlightCard.qml
         StarvisWidget.qml
         CameraWidget.qml
         PressReaderWidget.qml

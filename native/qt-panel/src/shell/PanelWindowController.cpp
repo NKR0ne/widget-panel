@@ -247,41 +247,31 @@ void PanelWindowController::openIsland(const QString& url)
 {
     if (!m_window || url.trimmed().isEmpty() || !m_brave)
         return;
-    const QRect wa = m_workArea.workArea();
-    const qreal sf = m_window->devicePixelRatio();
-    constexpr int kBraveMargin = 8;
-    constexpr int kToolbarH = 42; // matches the in-panel island toolbar height
-
-    const int panelW = m_islandOpen ? m_islandPanelWidth : m_window->width();
-    if (!m_islandOpen)
-        m_islandPanelWidth = panelW;
-    const int panelScreenRight = wa.x() + kPanelGap + panelW;
-    const int braveW = wa.x() + wa.width() - panelScreenRight - kPanelGap;
-    if (braveW < 240) {
-        qWarning() << "[island] not enough room beside the panel (" << braveW << "px )";
+    QString target = url.trimmed();
+    if (!target.startsWith(QLatin1String("http")))
+        target.prepend(QLatin1String("https://"));
+    if (m_islandOpen) {
+        navigateIsland(target);
         return;
     }
-    const int height = wa.height() - kPanelGap * 2;
 
+    const QRect wa = m_workArea.workArea();
+    m_islandPanelWidth = m_window->width();
     m_focus.noteBrowserOpened();
     m_geometryLockUntil = QDateTime::currentMSecsSinceEpoch() + 700;
-    m_window->setGeometry(wa.x() + kPanelGap, wa.y() + kPanelGap, panelW + braveW, height);
-    // Drop topmost while embedded: the brave shell sets itself HWND_TOPMOST
-    // after the reparent and must win z-order over the panel.
+    m_window->setGeometry(wa.x() + kPanelGap, wa.y() + kPanelGap,
+                          fullPanelWidth(), wa.height() - kPanelGap * 2);
+    // The browser shell is a topmost native viewport above the card's content
+    // rectangle. The QML toolbar remains visible because it does not overlap
+    // that viewport.
     m_window->setFlag(Qt::WindowStaysOnTopHint, false);
 
     m_islandOpen = true;
-    m_islandUrl = url;
+    m_islandLaunched = false;
+    m_islandUrl = target;
     emit islandChanged();
-
-    m_brave->open(url,
-                  qRound((panelScreenRight + kBraveMargin) * sf),
-                  qRound((wa.y() + kPanelGap + kToolbarH) * sf),
-                  qRound((braveW - kBraveMargin * 2) * sf),
-                  qRound((height - kToolbarH - kBraveMargin) * sf));
-    m_brave->roundCorners(static_cast<qulonglong>(m_window->winId()));
     notifyHelperHwnds();
-    qInfo() << "[island] opened" << url << "braveW=" << braveW;
+    qInfo() << "[island] spotlight requested" << target;
 }
 
 void PanelWindowController::navigateIsland(const QString& url)
@@ -300,6 +290,45 @@ void PanelWindowController::navigateIsland(const QString& url)
         m_brave->navigate(target);
 }
 
+void PanelWindowController::placeIsland(double sceneX, double sceneY,
+                                        double sceneWidth, double sceneHeight)
+{
+    if (!m_islandOpen || !m_window || !m_brave
+        || sceneWidth < 80.0 || sceneHeight < 80.0)
+        return;
+    const qreal sf = m_window->devicePixelRatio();
+    const int physX = qRound((m_window->x() + sceneX) * sf);
+    const int physY = qRound((m_window->y() + sceneY) * sf);
+    const int physW = qMax(1, qRound(sceneWidth * sf));
+    const int physH = qMax(1, qRound(sceneHeight * sf));
+    if (!m_islandLaunched) {
+        m_islandLaunched = true;
+        m_brave->open(m_islandUrl, physX, physY, physW, physH);
+        qInfo() << "[island] spotlight opened" << m_islandUrl
+                << QRect(physX, physY, physW, physH);
+        return;
+    }
+    m_brave->setGeometry(physX, physY, physW, physH);
+}
+
+void PanelWindowController::reloadIsland()
+{
+    if (m_islandOpen && m_brave)
+        m_brave->reload();
+}
+
+void PanelWindowController::backIsland()
+{
+    if (m_islandOpen && m_brave)
+        m_brave->back();
+}
+
+void PanelWindowController::forwardIsland()
+{
+    if (m_islandOpen && m_brave)
+        m_brave->forward();
+}
+
 void PanelWindowController::closeIsland()
 {
     if (!m_islandOpen)
@@ -307,6 +336,7 @@ void PanelWindowController::closeIsland()
     if (m_brave)
         m_brave->closeShell();
     m_islandOpen = false;
+    m_islandLaunched = false;
     m_islandUrl.clear();
     emit islandChanged();
     if (m_window) {

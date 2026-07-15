@@ -15,6 +15,10 @@ Item {
     function switchMode(mode) {
         if (panelMode === mode)
             return
+        if (Panel.islandOpen)
+            Panel.closeIsland()
+        if (panelMode === "news" && mode !== "news")
+            Reader.close()
         panelMode = mode
         let widths = {}
         try { widths = JSON.parse(Store.get("wp-col-widths", "{}")) } catch (e) {}
@@ -175,11 +179,19 @@ Item {
                 Item { Layout.fillWidth: true }
                 IconButton {
                     glyph: ""   // GridView: manage widgets
-                    onClicked: manageModal.show()
+                    onClicked: {
+                        if (Panel.islandOpen)
+                            Panel.closeIsland()
+                        manageModal.show()
+                    }
                 }
                 IconButton {
                     glyph: ""   // Settings gear
-                    onClicked: settingsModal.show()
+                    onClicked: {
+                        if (Panel.islandOpen)
+                            Panel.closeIsland()
+                        settingsModal.show()
+                    }
                 }
                 IconButton {
                     glyph: ""   // Segoe Fluent Icons: Pin
@@ -214,66 +226,12 @@ Item {
 
     ReaderOverlay {
         anchors.fill: parent
+        presentationEnabled: surface.panelMode !== "news"
     }
 
     SettingsModal {
         id: settingsModal
         anchors.fill: parent
-    }
-
-    // Web island toolbar: occupies the area beside the panel while the
-    // brave-host shell (a native HWND above us) shows the page below it.
-    Rectangle {
-        visible: Panel.islandOpen
-        x: Panel.islandX
-        width: parent.width - Panel.islandX
-        height: parent.height
-        color: Qt.rgba(0.03, 0.04, 0.07, 0.92)
-        radius: Theme.radiusPanel
-
-        Row {
-            x: 12
-            height: 42
-            spacing: 8
-
-            IconButton {
-                anchors.verticalCenter: parent.verticalCenter
-                glyph: ""   // Refresh
-                onClicked: Panel.navigateIsland(Panel.islandUrl)
-            }
-            Rectangle {
-                anchors.verticalCenter: parent.verticalCenter
-                width: Math.max(80, (Panel.islandOpen ? surface.width - Panel.islandX : 0) - 150)
-                height: 26
-                radius: 6
-                color: Qt.rgba(1, 1, 1, 0.06)
-                border.color: addr.activeFocus ? Theme.accent : Theme.cardStroke
-                TextInput {
-                    id: addr
-                    anchors.fill: parent
-                    anchors.margins: 7
-                    verticalAlignment: TextInput.AlignVCenter
-                    color: Theme.textPrimary
-                    font.pixelSize: Theme.fontSizeCaption
-                    clip: true
-                    text: Panel.islandUrl
-                    onAccepted: Panel.navigateIsland(text)
-                }
-            }
-            IconButton {
-                anchors.verticalCenter: parent.verticalCenter
-                glyph: ""  // OpenInNewWindow
-                onClicked: {
-                    Qt.openUrlExternally(Panel.islandUrl)
-                    Panel.closeIsland()
-                }
-            }
-            IconButton {
-                anchors.verticalCenter: parent.verticalCenter
-                glyph: ""  // ChromeClose
-                onClicked: Panel.closeIsland()
-            }
-        }
     }
 
     // Right-edge resize handle; the controller polls the cursor globally so

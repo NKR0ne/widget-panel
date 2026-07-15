@@ -141,6 +141,37 @@ void BraveHostClient::navigate(const QString& url)
               {QStringLiteral("url"), url}});
 }
 
+void BraveHostClient::setGeometry(int physX, int physY, int physW, int physH)
+{
+    if (!m_pendingOpen.isEmpty()) {
+        m_pendingOpen.insert(QStringLiteral("x"), physX);
+        m_pendingOpen.insert(QStringLiteral("y"), physY);
+        m_pendingOpen.insert(QStringLiteral("w"), physW);
+        m_pendingOpen.insert(QStringLiteral("h"), physH);
+        return;
+    }
+    sendJson({{QStringLiteral("type"), QStringLiteral("geometry")},
+              {QStringLiteral("x"), physX},
+              {QStringLiteral("y"), physY},
+              {QStringLiteral("w"), physW},
+              {QStringLiteral("h"), physH}});
+}
+
+void BraveHostClient::reload()
+{
+    sendJson({{QStringLiteral("type"), QStringLiteral("reload")}});
+}
+
+void BraveHostClient::back()
+{
+    sendJson({{QStringLiteral("type"), QStringLiteral("back")}});
+}
+
+void BraveHostClient::forward()
+{
+    sendJson({{QStringLiteral("type"), QStringLiteral("forward")}});
+}
+
 void BraveHostClient::closeShell()
 {
     m_pendingOpen = {};

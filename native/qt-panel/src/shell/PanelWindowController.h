@@ -57,6 +57,11 @@ public:
     // panel (port of openBraveInPanel / closeBraveInPanel).
     Q_INVOKABLE void openIsland(const QString& url);
     Q_INVOKABLE void navigateIsland(const QString& url);
+    Q_INVOKABLE void placeIsland(double sceneX, double sceneY,
+                                 double sceneWidth, double sceneHeight);
+    Q_INVOKABLE void reloadIsland();
+    Q_INVOKABLE void backIsland();
+    Q_INVOKABLE void forwardIsland();
     Q_INVOKABLE void closeIsland();
     // Settings surface (persists to the wp-* keys, applies live).
     Q_INVOKABLE double windowOpacity() const;
@@ -111,6 +116,7 @@ private:
     bool m_showAnimating = false;
     bool m_hiding = false;
     bool m_islandOpen = false;
+    bool m_islandLaunched = false;
     QString m_islandUrl;
     int m_islandPanelWidth = 0;
     qint64 m_geometryLockUntil = 0;

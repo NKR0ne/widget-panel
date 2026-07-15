@@ -11,6 +11,7 @@ but parity, controls, or runtime validation are incomplete.
 | Documented build flow | Implemented | `build.ps1` matches `docs/RUNNING.md`: cleanup, vcvars, CMake configure, CMake build, optional deploy/run. |
 | Pre-build cleanup | Implemented | `kill-build-processes.ps1` clears Qt/MSVC build tools, `qt-panel`, and `qmlformat` process trees. |
 | PowerShell PATH normalization | Implemented | `build.ps1` normalizes duplicate `Path`/`PATH` inherited by this environment. |
+| Guarded test build | Implemented | `build.ps1 -Tests` enables the Qt test target and runs CTest under the same cleanup and process-tree timeouts. |
 | Timeout wrappers | Avoid | Do not use `Start-Process` timeout wrappers here; this shell can throw before launching because of duplicate environment keys. |
 
 ## Shell And Panel
@@ -22,7 +23,8 @@ but parity, controls, or runtime validation are incomplete.
 | Pin/unpin and blur-hide guard | Implemented | Controller exposes pin, modal guard, focus policy. |
 | Resize handle and persisted width | Implemented | Native controller handles drag resize. |
 | Helper TCP protocol | Implemented | AppBar helper integration uses the existing port/protocol. |
-| Brave-host web island | Implemented | QML toolbar and controller methods exist. |
+| Browser spotlight | Implemented | Native browser shell is clipped to a QML card spanning columns 4-6, with address, back/forward/reload, external-open, close, and live geometry synchronization. |
+| Vulkan/D3D11 selection | Implemented | A header-independent Vulkan instance probe runs before QML; D3D11 is selected explicitly when Vulkan cannot initialize. |
 | Runtime polish validation | Partial | Needs build/run screenshots and focus/z-order regression pass. |
 
 ## Widget Framework
@@ -44,11 +46,11 @@ but parity, controls, or runtime validation are incomplete.
 | Clock/calendar/weather | Implemented | Native QML/services exist. |
 | Traffic | Implemented | TomTom raster tiles, zoom/theme controls, key from Vault. Hot-reloads key changes. |
 | Stocks | Partial | Yahoo quote model, watchlists cache, IPO, heatmap island. Finnhub-specific parity and earnings calendar remain to verify/port. |
-| News | Implemented | OPML/RSS, category cards, carousel, reader overlay, archive hook, 3D stage source exist. Carousel settings hot-reload. |
+| News | Implemented | OPML/RSS, category cards/carousel, archive hook, and 3D source exist. News mode now keeps categories in column 1, shows the selected category's full article list in columns 2-3, and reads the selected article in columns 4-6 without a modal overlay. |
 | Microsoft agenda/mail/todo | Implemented | Graph PKCE, token refresh, calendars, mail read, todo complete/list selection. Needs live OAuth validation. |
 | Live feeds | Partial | Qt Multimedia HLS and YouTube resolver exist. Needs runtime feed validation and fallback decisions for embed-only feeds. |
 | Workstation telemetry | Implemented | Named-pipe client exists and is now activated by visible workstation cards. Needs external service runtime validation. |
-| Camera | Partial | XProtect client and QML card exist. Needs end-to-end gateway validation and fuller settings controls. |
+| Camera | Implemented | Direct RTSP camera card, protected authentication attempts, credential vault, and runtime playback have been validated. |
 | PressReader | Partial | Native card opens Brave-host catalog island. Auth/session parity remains to validate. |
 | Starvis | Partial | Native Responses chat/briefing/TTS/action queue/tool policy source exists. Needs advanced settings UI and runtime API validation. |
 

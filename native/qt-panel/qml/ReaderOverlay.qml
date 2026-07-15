@@ -8,6 +8,7 @@ Item {
     id: overlay
 
     property bool open: false
+    property bool presentationEnabled: true
 
     function show() {
         open = true
@@ -32,7 +33,15 @@ Item {
 
     Connections {
         target: Reader
-        function onOpened() { overlay.show() }
+        function onOpened() {
+            if (overlay.presentationEnabled)
+                overlay.show()
+        }
+    }
+
+    onPresentationEnabledChanged: {
+        if (!presentationEnabled && open)
+            dismiss()
     }
 
     // Scrim — click outside the card closes.

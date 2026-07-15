@@ -85,6 +85,21 @@ private slots:
                  QStringLiteral("https://example.com/a"));
     }
 
+    void rssParseMultipleItems()
+    {
+        const QString xml = QStringLiteral(
+            "<?xml version=\"1.0\"?><rss><channel>"
+            "<item><title>First</title><link>https://example.com/1</link></item>"
+            "<item><title>Second</title><link>https://example.com/2</link></item>"
+            "<item><title>Third</title><link>https://example.com/3</link></item>"
+            "</channel></rss>");
+        const QVariantList items = NewsService::parseFeedXml(
+            xml, QStringLiteral("https://example.com/feed"));
+        QCOMPARE(items.size(), 3);
+        QCOMPARE(items.at(1).toMap().value(QStringLiteral("title")).toString(),
+                 QStringLiteral("Second"));
+    }
+
     void atomParse()
     {
         const QString xml = QStringLiteral(

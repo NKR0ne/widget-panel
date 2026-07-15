@@ -183,6 +183,10 @@ void ReaderService::close()
         m_busy = false;
         emit busyChanged();
     }
+    if (!m_article.isEmpty()) {
+        m_article.clear();
+        emit articleChanged();
+    }
 }
 
 QVariantMap ReaderService::extract(const QString& html, const QString& url)

@@ -3,6 +3,7 @@
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File build.ps1                # release
 #   powershell -ExecutionPolicy Bypass -File build.ps1 -Config debug
+#   powershell -ExecutionPolicy Bypass -File build.ps1 -Tests
 #   powershell -ExecutionPolicy Bypass -File build.ps1 -Deploy -Run
 #   powershell -ExecutionPolicy Bypass -File kill-build-processes.ps1  # cleanup only
 
@@ -13,6 +14,7 @@ param(
     [ValidateSet('Ninja', 'NMake')]
     [string]$Generator = 'Ninja',
     [int]$BuildTimeoutSeconds = 180,
+    [switch]$Tests,
     [switch]$Deploy,
     [switch]$Run,
     [switch]$SkipKill
@@ -98,6 +100,7 @@ if (-not [string]::IsNullOrEmpty($initialPath)) {
 
 $VS_ROOT   = 'C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools'
 $CMAKE     = "$VS_ROOT\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe"
+$CTEST     = "$VS_ROOT\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\ctest.exe"
 $NINJA_DIR = "$VS_ROOT\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja"
 $VCVARS    = "$VS_ROOT\VC\Auxiliary\Build\vcvars64.bat"
 $NMAKE     = Get-ChildItem -Path "$VS_ROOT\VC\Tools\MSVC" -Directory -ErrorAction SilentlyContinue |
@@ -106,7 +109,7 @@ $NMAKE     = Get-ChildItem -Path "$VS_ROOT\VC\Tools\MSVC" -Directory -ErrorActio
     Where-Object { Test-Path $_ } |
     Select-Object -First 1
 
-foreach ($tool in @($CMAKE, $VCVARS)) {
+foreach ($tool in @($CMAKE, $CTEST, $VCVARS)) {
     if (-not (Test-Path $tool)) { Write-Error "Not found: $tool" }
 }
 if ($Generator -eq 'Ninja' -and -not (Test-Path "$NINJA_DIR\ninja.exe")) {
@@ -181,7 +184,8 @@ Invoke-NativeCommand -FilePath $CMAKE -Arguments @(
     '-B', $build,
     '-G', $generatorName,
     "-DCMAKE_BUILD_TYPE=$buildType",
-    "-DCMAKE_PREFIX_PATH=$qtPrefix"
+    "-DCMAKE_PREFIX_PATH=$qtPrefix",
+    "-DQTPANEL_BUILD_TESTS=$(if ($Tests) { 'ON' } else { 'OFF' })"
 ) -WorkingDirectory $root -TimeoutSeconds 90
 
 Write-Host 'Building...' -ForegroundColor Cyan
@@ -193,6 +197,14 @@ if ($Generator -eq 'NMake') {
 
 $exe = Join-Path $build 'qt-panel.exe'
 if (-not (Test-Path $exe)) { Write-Error "Build succeeded but exe not at: $exe" }
+
+if ($Tests) {
+    Write-Host 'Testing...' -ForegroundColor Cyan
+    Invoke-NativeCommand -FilePath $CTEST -Arguments @(
+        '--test-dir', $build,
+        '--output-on-failure'
+    ) -WorkingDirectory $root -TimeoutSeconds 90
+}
 
 if ($Deploy) {
     Write-Host 'Deploying Qt runtime...' -ForegroundColor Cyan

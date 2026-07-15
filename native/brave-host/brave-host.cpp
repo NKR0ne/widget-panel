@@ -63,8 +63,63 @@ static std::string jstr(const std::string& j, const std::string& key) {
     while (p < j.size() && (j[p]==' '||j[p]=='\t'||j[p]=='\r'||j[p]=='\n')) p++;
     if (p >= j.size() || j[p] != '"') return "";
     p++;
-    auto e = j.find('"', p);
-    return e == std::string::npos ? "" : j.substr(p, e - p);
+    std::string out;
+    bool escaped = false;
+    for (; p < j.size(); p++) {
+        char c = j[p];
+        if (escaped) {
+            switch (c) {
+            case '"': out.push_back('"'); break;
+            case '\\': out.push_back('\\'); break;
+            case '/': out.push_back('/'); break;
+            case 'b': out.push_back('\b'); break;
+            case 'f': out.push_back('\f'); break;
+            case 'n': out.push_back('\n'); break;
+            case 'r': out.push_back('\r'); break;
+            case 't': out.push_back('\t'); break;
+            case 'u':
+                if (p + 4 < j.size()) {
+                    auto hex = [](char h) -> int {
+                        if (h >= '0' && h <= '9') return h - '0';
+                        if (h >= 'a' && h <= 'f') return h - 'a' + 10;
+                        if (h >= 'A' && h <= 'F') return h - 'A' + 10;
+                        return -1;
+                    };
+                    int code = 0;
+                    bool ok = true;
+                    for (int i = 1; i <= 4; i++) {
+                        int v = hex(j[p + i]);
+                        if (v < 0) { ok = false; break; }
+                        code = (code << 4) | v;
+                    }
+                    if (ok) {
+                        if (code <= 0x7f) out.push_back((char)code);
+                        else if (code <= 0x7ff) {
+                            out.push_back((char)(0xc0 | (code >> 6)));
+                            out.push_back((char)(0x80 | (code & 0x3f)));
+                        } else {
+                            out.push_back((char)(0xe0 | (code >> 12)));
+                            out.push_back((char)(0x80 | ((code >> 6) & 0x3f)));
+                            out.push_back((char)(0x80 | (code & 0x3f)));
+                        }
+                        p += 4;
+                    }
+                }
+                break;
+            default: out.push_back(c); break;
+            }
+            escaped = false;
+            continue;
+        }
+        if (c == '\\') {
+            escaped = true;
+            continue;
+        }
+        if (c == '"')
+            return out;
+        out.push_back(c);
+    }
+    return out;
 }
 static long long jnum(const std::string& j, const std::string& key) {
     std::string needle = "\"" + key + "\":";
@@ -239,6 +294,7 @@ static const int CDP_PORT = 9232;
 static std::string CdpHttpGet(const wchar_t* path) {
     HINTERNET hSess = WinHttpOpen(L"wp", WINHTTP_ACCESS_TYPE_NO_PROXY, NULL, NULL, 0);
     if (!hSess) return "";
+    WinHttpSetTimeouts(hSess, 1000, 1000, 1000, 1000);
     HINTERNET hConn = WinHttpConnect(hSess, L"localhost", CDP_PORT, 0);
     HINTERNET hReq  = WinHttpOpenRequest(hConn, L"GET", path, NULL, NULL, NULL, 0);
     std::string result;
@@ -293,12 +349,57 @@ static std::string FindPageTarget(const std::string& jsonArray) {
     return "";
 }
 
+static std::string FindPageTargetObject(const std::string& jsonArray) {
+    size_t pos = 0;
+    while (pos < jsonArray.size()) {
+        size_t objStart = jsonArray.find('{', pos);
+        if (objStart == std::string::npos) break;
+        int depth = 0; size_t objEnd = std::string::npos;
+        for (size_t i = objStart; i < jsonArray.size(); i++) {
+            if (jsonArray[i] == '{') depth++;
+            else if (jsonArray[i] == '}') { if (--depth == 0) { objEnd = i; break; } }
+        }
+        if (objEnd == std::string::npos) break;
+        std::string obj = jsonArray.substr(objStart, objEnd - objStart + 1);
+        if (jstr(obj, "type") == "page")
+            return obj;
+        pos = objEnd + 1;
+    }
+    return "";
+}
+
 // Per-call CDP navigate: fetch /json, open a fresh WebSocket to the current
 // page target, send Page.navigate, close. No caching — the page target can
 // change across cross-origin navigations, and a stale cached socket sends
 // data that Brave silently drops. Cost is ~100ms per navigate (acceptable);
 // we skip the receive-after-send so we don't block on a potentially slow
 // Brave response.
+static std::string JsonEscape(const std::string& value) {
+    std::string out;
+    out.reserve(value.size() + 16);
+    for (unsigned char c : value) {
+        switch (c) {
+        case '"': out += "\\\""; break;
+        case '\\': out += "\\\\"; break;
+        case '\b': out += "\\b"; break;
+        case '\f': out += "\\f"; break;
+        case '\n': out += "\\n"; break;
+        case '\r': out += "\\r"; break;
+        case '\t': out += "\\t"; break;
+        default:
+            if (c < 0x20) {
+                char buf[7];
+                _snprintf_s(buf, sizeof(buf), "\\u%04x", c);
+                out += buf;
+            } else {
+                out.push_back((char)c);
+            }
+            break;
+        }
+    }
+    return out;
+}
+
 static bool NavigateViaCDP(const std::string& url) {
     // 15s timeout — with --user-data-dir creating a fresh profile, Brave's
     // CDP takes longer to come online than with a warm profile. 8s wasn't
@@ -339,12 +440,7 @@ static bool NavigateViaCDP(const std::string& url) {
         return false;
     }
 
-    std::string safeUrl;
-    for (char c : url) {
-        if (c == '"') safeUrl += "\\\"";
-        else if (c == '\\') safeUrl += "\\\\";
-        else safeUrl += c;
-    }
+    std::string safeUrl = JsonEscape(url);
     std::string msg = "{\"id\":1,\"method\":\"Page.navigate\",\"params\":{\"url\":\"" + safeUrl + "\"}}";
     DWORD result = WinHttpWebSocketSend(hWs, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
                                         (PVOID)msg.c_str(), (DWORD)msg.size());
@@ -357,6 +453,139 @@ static bool NavigateViaCDP(const std::string& url) {
     WinHttpCloseHandle(hConn);
     WinHttpCloseHandle(hSess);
     return result == ERROR_SUCCESS;
+}
+
+static bool EvaluateViaCDP(const std::string& script) {
+    std::string json = CdpGetJson(15000);
+    if (json.empty()) { Log("[cdp] /json timeout"); return false; }
+
+    std::string wsUrlFull = FindPageTarget(json);
+    if (wsUrlFull.empty()) { Log("[cdp] no page target found"); return false; }
+
+    auto pathPos = wsUrlFull.find("/devtools");
+    if (pathPos == std::string::npos) { Log("[cdp] bad wsUrl"); return false; }
+    std::string wsPath = wsUrlFull.substr(pathPos);
+    std::wstring wsPathW(wsPath.begin(), wsPath.end());
+
+    HINTERNET hSess = WinHttpOpen(L"wp", WINHTTP_ACCESS_TYPE_NO_PROXY, NULL, NULL, 0);
+    if (!hSess) return false;
+    HINTERNET hConn = WinHttpConnect(hSess, L"localhost", CDP_PORT, 0);
+    if (!hConn) { WinHttpCloseHandle(hSess); return false; }
+    HINTERNET hReq = WinHttpOpenRequest(hConn, L"GET", wsPathW.c_str(), NULL, NULL, NULL, 0);
+    if (!hReq) { WinHttpCloseHandle(hConn); WinHttpCloseHandle(hSess); return false; }
+
+    WinHttpSetOption(hReq, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, NULL, 0);
+    if (!WinHttpSendRequest(hReq, NULL, 0, NULL, 0, 0, 0) ||
+        !WinHttpReceiveResponse(hReq, NULL)) {
+        Log("[cdp] ws upgrade failed");
+        WinHttpCloseHandle(hReq);
+        WinHttpCloseHandle(hConn);
+        WinHttpCloseHandle(hSess);
+        return false;
+    }
+
+    HINTERNET hWs = WinHttpWebSocketCompleteUpgrade(hReq, NULL);
+    WinHttpCloseHandle(hReq);
+    if (!hWs) {
+        WinHttpCloseHandle(hConn);
+        WinHttpCloseHandle(hSess);
+        return false;
+    }
+
+    std::string msg = "{\"id\":2,\"method\":\"Runtime.evaluate\",\"params\":{\"expression\":\""
+        + JsonEscape(script)
+        + "\",\"awaitPromise\":false,\"userGesture\":true,\"returnByValue\":false}}";
+    DWORD result = WinHttpWebSocketSend(hWs, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
+                                        (PVOID)msg.c_str(), (DWORD)msg.size());
+    Log("[cdp] Runtime.evaluate sent, result=" + std::to_string(result));
+
+    WinHttpWebSocketClose(hWs, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, NULL, 0);
+    WinHttpCloseHandle(hWs);
+    WinHttpCloseHandle(hConn);
+    WinHttpCloseHandle(hSess);
+    return result == ERROR_SUCCESS;
+}
+
+static std::string CookiesViaCDP()
+{
+    std::string json = CdpGetJson(15000);
+    if (json.empty()) { Log("[cdp] /json timeout"); return ""; }
+
+    std::string wsUrlFull = FindPageTarget(json);
+    if (wsUrlFull.empty()) { Log("[cdp] no page target found"); return ""; }
+
+    auto pathPos = wsUrlFull.find("/devtools");
+    if (pathPos == std::string::npos) { Log("[cdp] bad wsUrl"); return ""; }
+    std::string wsPath = wsUrlFull.substr(pathPos);
+    std::wstring wsPathW(wsPath.begin(), wsPath.end());
+
+    HINTERNET hSess = WinHttpOpen(L"wp", WINHTTP_ACCESS_TYPE_NO_PROXY, NULL, NULL, 0);
+    if (!hSess) return "";
+    HINTERNET hConn = WinHttpConnect(hSess, L"localhost", CDP_PORT, 0);
+    if (!hConn) { WinHttpCloseHandle(hSess); return ""; }
+    HINTERNET hReq = WinHttpOpenRequest(hConn, L"GET", wsPathW.c_str(), NULL, NULL, NULL, 0);
+    if (!hReq) { WinHttpCloseHandle(hConn); WinHttpCloseHandle(hSess); return ""; }
+
+    WinHttpSetOption(hReq, WINHTTP_OPTION_UPGRADE_TO_WEB_SOCKET, NULL, 0);
+    if (!WinHttpSendRequest(hReq, NULL, 0, NULL, 0, 0, 0) ||
+        !WinHttpReceiveResponse(hReq, NULL)) {
+        Log("[cdp] ws upgrade failed");
+        WinHttpCloseHandle(hReq);
+        WinHttpCloseHandle(hConn);
+        WinHttpCloseHandle(hSess);
+        return "";
+    }
+
+    HINTERNET hWs = WinHttpWebSocketCompleteUpgrade(hReq, NULL);
+    WinHttpCloseHandle(hReq);
+    if (!hWs) {
+        WinHttpCloseHandle(hConn);
+        WinHttpCloseHandle(hSess);
+        return "";
+    }
+
+    const std::string msg = "{\"id\":3,\"method\":\"Network.getAllCookies\",\"params\":{}}";
+    DWORD result = WinHttpWebSocketSend(hWs, WINHTTP_WEB_SOCKET_UTF8_MESSAGE_BUFFER_TYPE,
+                                        (PVOID)msg.c_str(), (DWORD)msg.size());
+    Log("[cdp] Network.getAllCookies sent, result=" + std::to_string(result));
+
+    std::string response;
+    auto start = std::chrono::steady_clock::now();
+    while (result == ERROR_SUCCESS
+           && std::chrono::duration_cast<std::chrono::milliseconds>(
+                  std::chrono::steady_clock::now() - start).count() < 3000) {
+        char buffer[16384] = {};
+        DWORD bytesRead = 0;
+        WINHTTP_WEB_SOCKET_BUFFER_TYPE bufferType;
+        DWORD recv = WinHttpWebSocketReceive(hWs, buffer, sizeof(buffer) - 1,
+                                             &bytesRead, &bufferType);
+        if (recv != ERROR_SUCCESS || bytesRead == 0)
+            break;
+        response.append(buffer, bytesRead);
+        if (response.find("\"id\":3") != std::string::npos)
+            break;
+    }
+
+    WinHttpWebSocketClose(hWs, WINHTTP_WEB_SOCKET_SUCCESS_CLOSE_STATUS, NULL, 0);
+    WinHttpCloseHandle(hWs);
+    WinHttpCloseHandle(hConn);
+    WinHttpCloseHandle(hSess);
+    return response;
+}
+
+static std::string BrowserStatePayload()
+{
+    std::string json = CdpGetJson(1200);
+    if (json.empty())
+        return "{\"url\":\"\",\"title\":\"\",\"available\":false}";
+
+    std::string obj = FindPageTargetObject(json);
+    if (obj.empty())
+        return "{\"url\":\"\",\"title\":\"\",\"available\":false}";
+
+    return "{\"url\":\"" + JsonEscape(jstr(obj, "url"))
+        + "\",\"title\":\"" + JsonEscape(jstr(obj, "title"))
+        + "\",\"available\":true}";
 }
 
 // Forward declaration (g_brave defined in Global state section below)
@@ -403,8 +632,12 @@ static HWND CreateShellWin(int x, int y, int w, int h) {
         WS_POPUP | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
         x, y, w, h,
         NULL, NULL, GetModuleHandleW(NULL), NULL);
-    if (hwnd)
+    if (hwnd) {
+        DWORD cornerPreference = 2; // DWMWCP_ROUND
+        DwmSetWindowAttribute(hwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */,
+                              &cornerPreference, sizeof(cornerPreference));
         SetWindowPos(hwnd, HWND_TOP, x, y, w, h, SWP_NOACTIVATE | SWP_HIDEWINDOW);
+    }
     return hwnd;
 }
 
@@ -550,6 +783,9 @@ static void Send(const std::string& json) {
 static void HandleMessage(const std::string& line) {
     std::string type = jstr(line, "type");
     Log("[msg] " + line);
+    auto sendState = [] {
+        Send("{\"type\":\"state\",\"payload\":" + BrowserStatePayload() + "}");
+    };
 
     if (type == "open") {
         g_shellX = (int)jnum(line, "x");  // screen coords for the shell window
@@ -575,8 +811,13 @@ static void HandleMessage(const std::string& line) {
             // Synchronous — main thread blocks here (pumping messages via PumpPending
             // inside FindNewBraveHwnd) until Brave's HWND appears. No detached thread,
             // no race with concurrent "close" messages.
-            if (ReparentBrave(snap)) Send("{\"type\":\"ready\"}");
-            else                     Send("{\"type\":\"error\",\"msg\":\"hwnd not found\"}");
+            if (ReparentBrave(snap)) {
+                Send("{\"type\":\"ready\"}");
+                sendState();
+            }
+            else {
+                Send("{\"type\":\"error\",\"msg\":\"hwnd not found\"}");
+            }
         }
     }
     else if (type == "navigate") {
@@ -585,11 +826,72 @@ static void HandleMessage(const std::string& line) {
             SnapData sd; EnumWindows(SnapProc, reinterpret_cast<LPARAM>(&sd));
             std::vector<HWND> snap = sd.hwnds;
             if (LaunchBrave(url, snap)) {
-                if (ReparentBrave(snap)) Send("{\"type\":\"ready\"}");
+                if (ReparentBrave(snap)) {
+                    Send("{\"type\":\"ready\"}");
+                    sendState();
+                } else {
+                    Send("{\"type\":\"error\",\"msg\":\"hwnd not found\"}");
+                }
+            } else {
+                Send("{\"type\":\"error\",\"msg\":\"launch failed\"}");
             }
         } else {
-            if (NavigateViaCDP(url)) Send("{\"type\":\"ready\"}");
-            else                     Send("{\"type\":\"error\",\"msg\":\"cdp navigate failed\"}");
+            if (NavigateViaCDP(url)) {
+                Send("{\"type\":\"ready\"}");
+                Sleep(250);
+                sendState();
+            }
+            else {
+                Send("{\"type\":\"error\",\"msg\":\"cdp navigate failed\"}");
+            }
+        }
+    }
+    else if (type == "state") {
+        sendState();
+    }
+    else if (type == "reload") {
+        if (EvaluateViaCDP("location.reload()")) {
+            Send("{\"type\":\"ready\"}");
+            Sleep(250);
+            sendState();
+        } else {
+            Send("{\"type\":\"error\",\"msg\":\"cdp reload failed\"}");
+        }
+    }
+    else if (type == "back") {
+        if (EvaluateViaCDP("history.back()")) {
+            Send("{\"type\":\"ready\"}");
+            Sleep(250);
+            sendState();
+        } else {
+            Send("{\"type\":\"error\",\"msg\":\"cdp back failed\"}");
+        }
+    }
+    else if (type == "forward") {
+        if (EvaluateViaCDP("history.forward()")) {
+            Send("{\"type\":\"ready\"}");
+            Sleep(250);
+            sendState();
+        } else {
+            Send("{\"type\":\"error\",\"msg\":\"cdp forward failed\"}");
+        }
+    }
+    else if (type == "eval") {
+        std::string script = jstr(line, "script");
+        if (script.empty()) {
+            Send("{\"type\":\"error\",\"msg\":\"empty script\"}");
+        } else if (EvaluateViaCDP(script)) {
+            Send("{\"type\":\"ready\"}");
+        } else {
+            Send("{\"type\":\"error\",\"msg\":\"cdp eval failed\"}");
+        }
+    }
+    else if (type == "cookies") {
+        std::string payload = CookiesViaCDP();
+        if (payload.empty()) {
+            Send("{\"type\":\"error\",\"msg\":\"cdp cookies failed\"}");
+        } else {
+            Send("{\"type\":\"cookies\",\"payload\":" + payload + "}");
         }
     }
     else if (type == "resize") {
@@ -601,6 +903,21 @@ static void HandleMessage(const std::string& line) {
         if (g_brave && IsWindow(g_brave))
             SetWindowPos(g_brave, NULL, 0, 0, g_w, g_h,
                          SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+    else if (type == "geometry") {
+        g_shellX = (int)jnum(line, "x");
+        g_shellY = (int)jnum(line, "y");
+        g_w = (int)jnum(line, "w");
+        g_h = (int)jnum(line, "h");
+        if (g_shell && IsWindow(g_shell))
+            SetWindowPos(g_shell, HWND_TOPMOST, g_shellX, g_shellY, g_w, g_h,
+                         SWP_NOACTIVATE);
+        if (g_brave && IsWindow(g_brave)) {
+            UINT dpi = g_shell && IsWindow(g_shell) ? GetDpiForWindow(g_shell) : 96;
+            int chromeH = MulDiv(34, dpi, 96);
+            SetWindowPos(g_brave, HWND_TOP, 0, -chromeH, g_w, g_h + chromeH,
+                         SWP_NOACTIVATE);
+        }
     }
     else if (type == "close") {
         // Hide the shell first for instant visual feedback. KillBrave's

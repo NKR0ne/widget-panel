@@ -121,6 +121,8 @@ Item {
         return Math.max(3, Math.min(columnOrder.length, stored || 6))
     }
     readonly property var visibleColumns: {
+        if (Panel.islandOpen)
+            return columnOrder
         if (mode === "news" || mode === "live")
             return columnOrder
         if (mode === "monitor")
@@ -277,8 +279,10 @@ Item {
         id: rowLayout
         anchors.fill: parent
         spacing: 6
+        visible: root.mode !== "news"
 
         Repeater {
+            id: columnRepeater
             model: root.visibleColumns
 
             delegate: Flickable {
@@ -356,5 +360,28 @@ Item {
                 }
             }
         }
+    }
+
+    NewsModeView {
+        id: newsWorkspace
+        anchors.fill: parent
+        visible: root.mode === "news"
+        colWidths: root.savedColWidths
+    }
+
+    readonly property real spotlightX: {
+        if (mode === "news")
+            return newsWorkspace.spotlightX
+        const fourthColumn = columnRepeater.itemAt(3)
+        return fourthColumn ? fourthColumn.x : Math.round(width / 2) + 3
+    }
+
+    BrowserSpotlightCard {
+        id: browserSpotlight
+        visible: Panel.islandOpen
+        x: root.spotlightX
+        width: Math.max(0, root.width - x)
+        height: root.height
+        z: 2000
     }
 }

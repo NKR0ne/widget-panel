@@ -10,6 +10,8 @@
 #include <QTimer>
 #include <QtQml>
 
+#include <windows.h>
+
 #include "core/HttpClient.h"
 #include "core/Log.h"
 #include "core/QmlNetwork.h"
@@ -34,6 +36,54 @@ using namespace qtpanel;
 
 namespace {
 const char kInstanceName[] = "qt-panel-single-instance";
+
+struct VulkanApplicationInfo {
+    quint32 sType = 0; // VK_STRUCTURE_TYPE_APPLICATION_INFO
+    const void* pNext = nullptr;
+    const char* applicationName = "qt-panel";
+    quint32 applicationVersion = 1;
+    const char* engineName = "Qt";
+    quint32 engineVersion = 1;
+    quint32 apiVersion = 1U << 22; // Vulkan 1.0
+};
+
+struct VulkanInstanceCreateInfo {
+    quint32 sType = 1; // VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO
+    const void* pNext = nullptr;
+    quint32 flags = 0;
+    const VulkanApplicationInfo* applicationInfo = nullptr;
+    quint32 enabledLayerCount = 0;
+    const char* const* enabledLayerNames = nullptr;
+    quint32 enabledExtensionCount = 0;
+    const char* const* enabledExtensionNames = nullptr;
+};
+
+bool canCreateVulkanInstance()
+{
+    HMODULE loader = LoadLibraryW(L"vulkan-1.dll");
+    if (!loader)
+        return false;
+    using CreateInstance = int(__stdcall*)(const VulkanInstanceCreateInfo*,
+                                            const void*, void**);
+    using DestroyInstance = void(__stdcall*)(void*, const void*);
+    const auto createInstance = reinterpret_cast<CreateInstance>(
+        GetProcAddress(loader, "vkCreateInstance"));
+    const auto destroyInstance = reinterpret_cast<DestroyInstance>(
+        GetProcAddress(loader, "vkDestroyInstance"));
+    if (!createInstance || !destroyInstance) {
+        FreeLibrary(loader);
+        return false;
+    }
+    const VulkanApplicationInfo applicationInfo;
+    VulkanInstanceCreateInfo createInfo;
+    createInfo.applicationInfo = &applicationInfo;
+    void* instance = nullptr;
+    const int result = createInstance(&createInfo, nullptr, &instance);
+    if (result == 0 && instance)
+        destroyInstance(instance, nullptr);
+    FreeLibrary(loader);
+    return result == 0;
+}
 } // namespace
 
 int main(int argc, char* argv[])
@@ -62,11 +112,15 @@ int main(int argc, char* argv[])
     QLocalServer::removeServer(QLatin1String(kInstanceName));
     instanceServer.listen(QLatin1String(kInstanceName));
 
-    // Renderer selection: prefer Vulkan; since Qt 6.5 the scene graph falls
-    // back to D3D11 automatically when Vulkan initialization fails. The API
-    // that actually won is surfaced in the panel header.
-    QQuickWindow::setGraphicsApi(QSGRendererInterface::Vulkan);
-    qInfo() << "[render] requesting Vulkan (automatic D3D11 fallback)";
+    // Probe before any QQuickWindow exists. Some Windows drivers let Qt select
+    // Vulkan but fail when the scene graph creates its instance; Qt does not
+    // reliably recover from that late failure. Select D3D11 explicitly when
+    // the lightweight instance probe fails.
+    const bool vulkanAvailable = canCreateVulkanInstance();
+    QQuickWindow::setGraphicsApi(vulkanAvailable
+        ? QSGRendererInterface::Vulkan
+        : QSGRendererInterface::Direct3D11);
+    qInfo() << "[render] selected" << (vulkanAvailable ? "Vulkan" : "D3D11");
 
     SettingsStore settings(dataDir + QStringLiteral("/settings.json"));
     settings.importLegacyIfEmpty(appData + QStringLiteral("/widget-panel/config.json"));

@@ -25,6 +25,10 @@ public:
 
     void open(const QString& url, int physX, int physY, int physW, int physH);
     void navigate(const QString& url);
+    void setGeometry(int physX, int physY, int physW, int physH);
+    void reload();
+    void back();
+    void forward();
     void closeShell();
     void roundCorners(qulonglong hwnd);
 
