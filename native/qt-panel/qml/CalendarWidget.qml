@@ -1,13 +1,32 @@
 import QtQuick
-import QtQuick.Controls.Basic
 
 GlassCard {
     id: card
     title: "Calendrier"
-    implicitHeight: body.implicitHeight + 24
+    implicitHeight: Math.max(232, body.implicitHeight + 24)
 
     property date today: new Date()
     property date displayDate: new Date(today.getFullYear(), today.getMonth(), 1)
+    readonly property var weekLabels: ["D", "L", "M", "M", "J", "V", "S"]
+    readonly property var calendarCells: buildCalendarCells()
+
+    function buildCalendarCells() {
+        const cells = []
+        const year = displayDate.getFullYear()
+        const month = displayDate.getMonth()
+        const firstWeekday = new Date(year, month, 1).getDay()
+        for (let index = 0; index < 42; index++) {
+            const value = new Date(year, month, 1 - firstWeekday + index)
+            cells.push({
+                day: value.getDate(),
+                currentMonth: value.getMonth() === month,
+                today: value.getDate() === today.getDate()
+                    && value.getMonth() === today.getMonth()
+                    && value.getFullYear() === today.getFullYear(),
+            })
+        }
+        return cells
+    }
 
     function moveMonth(delta) {
         displayDate = new Date(displayDate.getFullYear(), displayDate.getMonth() + delta, 1)
@@ -122,45 +141,61 @@ GlassCard {
             }
         }
 
-        DayOfWeekRow {
+        Grid {
+            id: weekdayGrid
             width: parent.width
-            locale: Qt.locale("fr_CA")
-            delegate: Text {
-                required property var model
-                text: model.shortName
-                color: Theme.textSecondary
-                font.pixelSize: 9
-                font.weight: Font.DemiBold
-                horizontalAlignment: Text.AlignHCenter
+            height: 20
+            columns: 7
+            spacing: 0
+
+            Repeater {
+                model: card.weekLabels
+                delegate: Item {
+                    required property string modelData
+                    width: weekdayGrid.width / 7
+                    height: weekdayGrid.height
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: modelData
+                        color: Theme.textSecondary
+                        font.pixelSize: 9
+                        font.weight: Font.DemiBold
+                    }
+                }
             }
         }
 
-        MonthGrid {
+        Grid {
+            id: dateGrid
             width: parent.width
-            month: card.displayDate.getMonth()
-            year: card.displayDate.getFullYear()
-            locale: Qt.locale("fr_CA")
+            height: 144
+            columns: 7
             spacing: 0
 
-            delegate: Item {
-                required property var model
-                implicitHeight: 24
+            Repeater {
+                model: card.calendarCells
+                delegate: Item {
+                    required property var modelData
+                    width: dateGrid.width / 7
+                    height: 24
 
-                Rectangle {
-                    anchors.centerIn: parent
-                    width: 22
-                    height: 22
-                    radius: 11
-                    color: model.today ? Theme.accent : "transparent"
-                }
-                Text {
-                    anchors.centerIn: parent
-                    text: model.day
-                    color: model.today ? "#ffffff"
-                         : model.month === card.displayDate.getMonth() ? Theme.textPrimary
-                         : Qt.rgba(1, 1, 1, 0.22)
-                    font.pixelSize: 10
-                    font.weight: model.today ? Font.DemiBold : Font.Normal
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: 22
+                        height: 22
+                        radius: 11
+                        color: modelData.today ? Theme.accent : "transparent"
+                    }
+                    Text {
+                        anchors.centerIn: parent
+                        text: modelData.day
+                        color: modelData.today ? "#ffffff"
+                             : modelData.currentMonth ? Theme.textPrimary
+                             : Qt.rgba(1, 1, 1, 0.22)
+                        font.pixelSize: 10
+                        font.weight: modelData.today ? Font.DemiBold : Font.Normal
+                    }
                 }
             }
         }
