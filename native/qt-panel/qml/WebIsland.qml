@@ -8,6 +8,8 @@ Rectangle {
     visible: Panel.islandOpen
     color: "#080a10"
     radius: Theme.radiusPanel
+    border.width: 1
+    border.color: Theme.cardStroke
     clip: true
     z: 80
 
@@ -312,7 +314,9 @@ Rectangle {
                 renderRecovery.restart()
             }
         }
-        onWindowCloseRequested: Panel.closeIsland()
+        // A page may call window.close() after redirects or popup handling.
+        // Embedded content must not be able to dismiss the native spotlight.
+        onWindowCloseRequested: console.info("[web] ignored page window-close request")
         onFullScreenRequested: function(request) { request.accept() }
     }
 

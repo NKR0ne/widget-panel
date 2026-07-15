@@ -2,25 +2,44 @@ import QtQuick
 import QtQuick.Dialogs
 import QtPanel.Native
 
-// News-focused workspace: category navigation on the left and live category
-// cards in an adaptive grid. Matrix and article-reader actions remain owned by
-// NewsWidget so the same end-to-end path is used in Base and News modes.
+// Six-column news workspace: category rail in column one, article list in
+// columns two and three, and the native article reader in columns four to six.
 Item {
     id: stage
 
     property string selectedCategory: ""
+    property string selectedUrl: ""
     property int newsRevision: 0
     readonly property real railWidth: Math.min(250, Math.max(210, width * 0.16))
-
-    function categoriesForGrid() {
+    readonly property var selectedItems: {
         newsRevision
-        if (selectedCategory !== "")
-            return [selectedCategory]
-        return News.categories
+        const result = []
+        const seen = {}
+        const labels = selectedCategory !== "" ? [selectedCategory] : News.categories
+        for (const label of labels) {
+            for (const item of News.itemsFor(label)) {
+                const key = item.link || (label + "|" + (item.title || ""))
+                if (!seen[key]) {
+                    seen[key] = true
+                    result.push(item)
+                }
+            }
+        }
+        return result
     }
 
     function selectCategory(label) {
         selectedCategory = label || ""
+        selectedUrl = ""
+        Reader.close()
+    }
+
+    function openArticle(item) {
+        if (!item || !item.link)
+            return
+        selectedUrl = String(item.link)
+        Reader.open(item.link, item.title || "", item.source || "",
+                    item.image || "", item.description || "")
     }
 
     Connections {
@@ -29,10 +48,12 @@ Item {
             stage.newsRevision++
             if (stage.selectedCategory !== ""
                     && News.categories.indexOf(stage.selectedCategory) < 0)
-                stage.selectedCategory = ""
+                stage.selectCategory("")
         }
         function onCategoryUpdated() { stage.newsRevision++ }
     }
+
+    Component.onDestruction: Reader.close()
 
     FileDialog {
         id: opmlDialog
@@ -48,152 +69,156 @@ Item {
         anchors.bottom: parent.bottom
         width: stage.railWidth
 
-        Column {
-            anchors.fill: parent
-            spacing: 8
+        Row {
+            id: railHeader
+            width: parent.width
+            height: 30
+            spacing: 5
 
-            Row {
-                width: parent.width
-                height: 28
-                spacing: 5
-
+            Text {
+                width: Math.max(40, parent.width - refreshButton.width - importButton.width - 10)
+                anchors.verticalCenter: parent.verticalCenter
+                text: "Nouvelles"
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontSizeTitle
+                font.weight: Font.DemiBold
+                elide: Text.ElideRight
+            }
+            Rectangle {
+                id: refreshButton
+                width: refreshLabel.implicitWidth + 14
+                height: 24
+                radius: 6
+                color: refreshMouse.containsMouse ? Theme.hover : Theme.cardFill
+                border.color: Theme.cardStroke
                 Text {
-                    width: Math.max(40, parent.width - refreshButton.width - importButton.width - 10)
-                    text: "Nouvelles"
-                    color: Theme.textPrimary
-                    font.pixelSize: Theme.fontSizeTitle
-                    font.weight: Font.DemiBold
-                    elide: Text.ElideRight
-                    anchors.verticalCenter: parent.verticalCenter
+                    id: refreshLabel
+                    anchors.centerIn: parent
+                    text: "Actualiser"
+                    color: Theme.textSecondary
+                    font.pixelSize: 9
                 }
-                Rectangle {
-                    id: refreshButton
-                    width: refreshLabel.implicitWidth + 14
-                    height: 24
-                    radius: 6
-                    color: refreshMouse.containsMouse ? Theme.hover : Theme.cardFill
-                    border.color: Theme.cardStroke
-                    Text {
-                        id: refreshLabel
-                        anchors.centerIn: parent
-                        text: "Actualiser"
-                        color: Theme.textSecondary
-                        font.pixelSize: 9
-                    }
-                    MouseArea {
-                        id: refreshMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: News.refresh()
-                    }
-                }
-                Rectangle {
-                    id: importButton
-                    width: importLabel.implicitWidth + 14
-                    height: 24
-                    radius: 6
-                    color: importMouse.containsMouse ? Theme.activeFill : Theme.cardFill
-                    border.color: importMouse.containsMouse ? Theme.accent : Theme.cardStroke
-                    Text {
-                        id: importLabel
-                        anchors.centerIn: parent
-                        text: "OPML"
-                        color: Theme.textSecondary
-                        font.pixelSize: 9
-                    }
-                    MouseArea {
-                        id: importMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: opmlDialog.open()
-                    }
+                MouseArea {
+                    id: refreshMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: News.refresh()
                 }
             }
+            Rectangle {
+                id: importButton
+                width: importLabel.implicitWidth + 14
+                height: 24
+                radius: 6
+                color: importMouse.containsMouse ? Theme.activeFill : Theme.cardFill
+                border.color: Theme.cardStroke
+                Text {
+                    id: importLabel
+                    anchors.centerIn: parent
+                    text: "OPML"
+                    color: Theme.textSecondary
+                    font.pixelSize: 9
+                }
+                MouseArea {
+                    id: importMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: opmlDialog.open()
+                }
+            }
+        }
 
-            Flickable {
+        Flickable {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: railHeader.bottom
+            anchors.bottom: parent.bottom
+            anchors.topMargin: 8
+            contentHeight: categoryColumn.height
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+
+            Column {
+                id: categoryColumn
                 width: parent.width
-                height: parent.height - y
-                contentHeight: categoryColumn.height
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
+                spacing: 5
 
-                Column {
-                    id: categoryColumn
+                Rectangle {
                     width: parent.width
-                    spacing: 5
+                    height: 36
+                    radius: 6
+                    color: stage.selectedCategory === "" ? Theme.activeFill
+                         : allMouse.containsMouse ? Theme.hover : "transparent"
+                    border.color: stage.selectedCategory === "" ? Theme.accent : "transparent"
 
-                    Rectangle {
-                        width: parent.width
-                        height: 34
+                    Text {
+                        anchors.left: parent.left
+                        anchors.leftMargin: 10
+                        anchors.right: allCount.left
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Toutes les categories"
+                        color: Theme.textPrimary
+                        font.pixelSize: 10
+                        elide: Text.ElideRight
+                    }
+                    Text {
+                        id: allCount
+                        anchors.right: parent.right
+                        anchors.rightMargin: 10
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: stage.selectedCategory === "" ? stage.selectedItems.length : News.categories.length
+                        color: Theme.textSecondary
+                        font.pixelSize: 9
+                    }
+                    MouseArea {
+                        id: allMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: stage.selectCategory("")
+                    }
+                }
+
+                Repeater {
+                    model: stage.newsRevision, News.categories
+                    delegate: Rectangle {
+                        required property string modelData
+                        width: categoryColumn.width
+                        height: 38
                         radius: 6
-                        color: stage.selectedCategory === "" ? Theme.activeFill
-                             : allMouse.containsMouse ? Theme.hover : "transparent"
-                        border.color: stage.selectedCategory === "" ? Theme.accent : "transparent"
+                        color: stage.selectedCategory === modelData ? Theme.activeFill
+                             : categoryMouse.containsMouse ? Theme.hover : "transparent"
+                        border.color: stage.selectedCategory === modelData ? Theme.accent : "transparent"
+
                         Text {
                             anchors.left: parent.left
                             anchors.leftMargin: 10
+                            anchors.right: itemCount.left
+                            anchors.rightMargin: 8
                             anchors.verticalCenter: parent.verticalCenter
-                            text: "Toutes les categories"
+                            text: modelData
                             color: Theme.textPrimary
                             font.pixelSize: 10
+                            elide: Text.ElideRight
                         }
                         Text {
+                            id: itemCount
                             anchors.right: parent.right
                             anchors.rightMargin: 10
                             anchors.verticalCenter: parent.verticalCenter
-                            text: News.categories.length
-                            color: Theme.textSecondary
+                            text: News.isLoading(modelData) ? "..." : News.itemsFor(modelData).length
+                            color: News.isLoading(modelData) ? Theme.accent : Theme.textSecondary
                             font.pixelSize: 9
                         }
                         MouseArea {
-                            id: allMouse
+                            id: categoryMouse
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            onClicked: stage.selectCategory("")
-                        }
-                    }
-
-                    Repeater {
-                        model: stage.newsRevision, News.categories
-                        delegate: Rectangle {
-                            required property string modelData
-                            width: categoryColumn.width
-                            height: 38
-                            radius: 6
-                            color: stage.selectedCategory === modelData ? Theme.activeFill
-                                 : categoryMouse.containsMouse ? Theme.hover : "transparent"
-                            border.color: stage.selectedCategory === modelData ? Theme.accent : "transparent"
-
-                            Text {
-                                anchors.left: parent.left
-                                anchors.leftMargin: 10
-                                anchors.right: itemCount.left
-                                anchors.rightMargin: 8
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: modelData
-                                color: Theme.textPrimary
-                                font.pixelSize: 10
-                                elide: Text.ElideRight
-                            }
-                            Text {
-                                id: itemCount
-                                anchors.right: parent.right
-                                anchors.rightMargin: 10
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: News.isLoading(modelData) ? "..." : News.itemsFor(modelData).length
-                                color: News.isLoading(modelData) ? Theme.accent : Theme.textSecondary
-                                font.pixelSize: 9
-                            }
-                            MouseArea {
-                                id: categoryMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: stage.selectCategory(modelData)
-                            }
+                            onClicked: stage.selectCategory(modelData)
                         }
                     }
                 }
@@ -201,50 +226,159 @@ Item {
         }
     }
 
-    Flickable {
-        id: newsScroll
+    Item {
+        id: articleListPane
         anchors.left: categoryRail.right
         anchors.leftMargin: 8
-        anchors.right: parent.right
+        anchors.right: centerDivider.left
+        anchors.rightMargin: 8
         anchors.top: parent.top
         anchors.bottom: parent.bottom
-        contentHeight: newsContent.height
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
 
-        Column {
-            id: newsContent
-            width: newsScroll.width
+        Row {
+            id: listHeader
+            width: parent.width
+            height: 30
             spacing: 8
 
             Text {
-                visible: News.categories.length === 0
-                width: parent.width
-                height: visible ? 44 : 0
-                text: "Aucune categorie configuree"
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeBody
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
+                width: Math.max(60, parent.width - listCount.width - 8)
+                anchors.verticalCenter: parent.verticalCenter
+                text: stage.selectedCategory !== "" ? stage.selectedCategory : "Toutes les nouvelles"
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontSizeTitle
+                font.weight: Font.DemiBold
+                elide: Text.ElideRight
             }
-
-            Grid {
-                id: newsGrid
-                width: parent.width
-                columns: stage.selectedCategory !== ""
-                       ? 1 : Math.max(1, Math.min(5, Math.floor(width / 360)))
-                spacing: 8
-
-                Repeater {
-                    model: stage.newsRevision, stage.categoriesForGrid()
-                    delegate: NewsWidget {
-                        required property string modelData
-                        categoryLabel: modelData
-                        width: (newsGrid.width - Math.max(0, newsGrid.columns - 1) * newsGrid.spacing)
-                               / newsGrid.columns
-                    }
-                }
+            Text {
+                id: listCount
+                anchors.verticalCenter: parent.verticalCenter
+                text: stage.selectedItems.length + " articles"
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontSizeCaption
             }
         }
+
+        ListView {
+            id: articleList
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: listHeader.bottom
+            anchors.bottom: parent.bottom
+            anchors.topMargin: 8
+            model: stage.newsRevision, stage.selectedItems
+            spacing: 6
+            clip: true
+            boundsBehavior: Flickable.StopAtBounds
+
+            delegate: Rectangle {
+                id: articleRow
+                required property var modelData
+                required property int index
+                width: ListView.view.width
+                height: 94
+                radius: 6
+                color: stage.selectedUrl === String(modelData.link || "") ? Theme.activeFill
+                     : rowMouse.containsMouse ? Theme.hover : Theme.cardFill
+                border.color: stage.selectedUrl === String(modelData.link || "")
+                              ? Theme.accent : Theme.cardStroke
+
+                Rectangle {
+                    id: thumbnailFrame
+                    visible: (articleRow.modelData.image || "") !== ""
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    anchors.margins: 7
+                    width: visible ? 108 : 0
+                    radius: 5
+                    color: Qt.rgba(1, 1, 1, 0.04)
+                    clip: true
+
+                    Image {
+                        anchors.fill: parent
+                        source: articleRow.modelData.image || ""
+                        fillMode: Image.PreserveAspectCrop
+                        asynchronous: true
+                    }
+                }
+
+                Column {
+                    anchors.left: thumbnailFrame.visible ? thumbnailFrame.right : parent.left
+                    anchors.leftMargin: 9
+                    anchors.right: parent.right
+                    anchors.rightMargin: 9
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 4
+
+                    Text {
+                        width: parent.width
+                        text: articleRow.modelData.title || "Article"
+                        color: Theme.textPrimary
+                        font.pixelSize: 11
+                        font.weight: Font.DemiBold
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                        wrapMode: Text.WordWrap
+                    }
+                    Text {
+                        width: parent.width
+                        text: articleRow.modelData.description || ""
+                        visible: text !== ""
+                        color: Theme.textSecondary
+                        font.pixelSize: 9
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                        wrapMode: Text.WordWrap
+                    }
+                    Text {
+                        width: parent.width
+                        text: [articleRow.modelData.source || "", articleRow.modelData.time || ""]
+                              .filter(Boolean).join(" | ")
+                        color: Theme.textSecondary
+                        opacity: 0.78
+                        font.pixelSize: 8
+                        elide: Text.ElideRight
+                    }
+                }
+
+                MouseArea {
+                    id: rowMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: stage.openArticle(articleRow.modelData)
+                }
+            }
+
+            Text {
+                anchors.centerIn: parent
+                visible: articleList.count === 0
+                text: News.categories.length === 0
+                      ? "Aucune categorie configuree" : "Aucun article disponible"
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontSizeBody
+            }
+        }
+    }
+
+    Rectangle {
+        id: centerDivider
+        x: Math.round(parent.width / 2) - 1
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 1
+        color: Theme.cardStroke
+    }
+
+    ArticleReaderPane {
+        id: readerPane
+        anchors.left: centerDivider.right
+        anchors.leftMargin: 7
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        active: stage.selectedUrl !== ""
+        onCloseRequested: stage.selectedUrl = ""
     }
 }

@@ -44,6 +44,7 @@ Item {
         if (panelMode === targetMode)
             return
         const previousMode = panelMode
+        Reader.close()
         if (Ui.detailOpen)
             Ui.closeDetail()
         if (Live.detailOpen)
@@ -328,6 +329,7 @@ Item {
 
     ReaderOverlay {
         anchors.fill: parent
+        presentationEnabled: surface.panelMode !== "news"
     }
 
     NewsMatrixOverlay {
@@ -477,12 +479,6 @@ Item {
                 }
             }
         }
-    }
-
-    WebIsland {
-        x: Panel.islandX
-        width: parent.width - Panel.islandX
-        height: parent.height
     }
 
     // Right-edge resize handle; the controller polls the cursor globally so

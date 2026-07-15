@@ -7,6 +7,7 @@ import QtPanel.Native
 Item {
     id: overlay
 
+    property bool presentationEnabled: true
     property bool open: false
     property var articleImages: {
         const out = []
@@ -61,7 +62,18 @@ Item {
 
     Connections {
         target: Reader
-        function onOpened() { overlay.show() }
+        function onOpened() {
+            if (overlay.presentationEnabled)
+                overlay.show()
+        }
+    }
+
+    onPresentationEnabledChanged: {
+        if (!presentationEnabled && open) {
+            open = false
+            imageViewerOpen = false
+            Panel.setModalOpen(false)
+        }
     }
 
     // Scrim — click outside the card closes.

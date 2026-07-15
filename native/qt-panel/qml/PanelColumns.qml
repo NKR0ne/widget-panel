@@ -9,6 +9,7 @@ Item {
     id: root
 
     property string mode: "base"
+    readonly property real spotlightX: Math.round(width / 2) + 3
 
     readonly property var columnOrder: ["left", "monitor", "mid", "feed", "right", "aux"]
     readonly property var workstationIds: [
@@ -304,7 +305,11 @@ Item {
 
     RowLayout {
         id: rowLayout
-        anchors.fill: parent
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: root.mode === "base" && Panel.islandOpen
+               ? Math.max(0, root.spotlightX - 6) : root.width
         spacing: 6
         visible: root.mode === "base"
 
@@ -424,5 +429,12 @@ Item {
                 }
             }
         }
+    }
+
+    WebIsland {
+        x: root.spotlightX
+        y: 0
+        width: Math.max(0, root.width - x)
+        height: root.height
     }
 }

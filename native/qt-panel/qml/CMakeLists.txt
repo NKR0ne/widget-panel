@@ -45,6 +45,7 @@ qt_add_qml_module(qtpanel_ui
         DirectCameraWidget.qml
         PressReaderWidget.qml
         NewsStage3D.qml
+        ArticleReaderPane.qml
         ReaderOverlay.qml
         AgendaWidget.qml
         MailWidget.qml

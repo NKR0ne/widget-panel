@@ -421,33 +421,17 @@ void PanelWindowController::openIsland(const QString& url)
         target.prepend(QLatin1String("https://"));
     const QRect wa = m_workArea.workArea();
     const QRect screen = m_workArea.screenGeometry();
-    constexpr int kMinWebW = 240;
-
-    const int availableW = qMax(0, screen.width() - kPanelHorizontalGap * 2);
-    const int desiredPanelW = m_islandOpen ? m_islandPanelWidth : m_window->width();
-    const int maxPanelW = availableW - kMinWebW;
-    if (maxPanelW < kMinPanelWidth) {
-        qWarning() << "[island] not enough room for panel and browser island ("
-                   << availableW << "px available )";
-        return;
-    }
-
-    const int panelW = qBound(kMinPanelWidth, desiredPanelW, maxPanelW);
-    const int webW = availableW - panelW;
-    if (webW < kMinWebW) {
-        qWarning() << "[island] not enough room beside the panel (" << webW << "px )";
-        return;
-    }
+    const int fullWidth = fullPanelWidth();
     if (!m_islandOpen)
-        m_islandRestoreWidth = desiredPanelW;
-    m_islandPanelWidth = panelW;
+        m_islandRestoreWidth = m_window->width();
+    m_islandPanelWidth = fullWidth / 2;
     const int height = wa.height() - kPanelVerticalGap * 2;
 
     m_focus.noteBrowserOpened();
     m_geometryLockUntil = QDateTime::currentMSecsSinceEpoch() + 700;
     m_window->setGeometry(screen.x() + kPanelHorizontalGap,
                           wa.y() + kPanelVerticalGap,
-                          panelW + webW, height);
+                          fullWidth, height);
 
     m_islandOpen = true;
     m_islandUrl = target;
@@ -458,7 +442,8 @@ void PanelWindowController::openIsland(const QString& url)
     startIslandLoad(QStringLiteral("Opening"));
     emit islandOpenRequested(target);
     notifyHelperHwnds();
-    qInfo() << "[web] island opened" << target << "panelW=" << panelW << "webW=" << webW;
+    qInfo() << "[web] spotlight opened" << target
+            << "windowW=" << fullWidth << "spotlightX=" << m_islandPanelWidth;
 }
 
 void PanelWindowController::navigateIsland(const QString& url)

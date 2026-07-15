@@ -60,8 +60,8 @@ public:
     // Port of the panel-fit-mode IPC: 'base' sizes to the visible columns,
     // stage modes (news/monitor/live) expand to the full work area.
     Q_INVOKABLE bool fitMode(const QString& mode, int baseColumnCount, const QVariantMap& colWidths);
-    // Web island: widens the native window and reveals the embedded Qt
-    // WebEngine surface beside the panel.
+    // Web spotlight: expands to the six-column surface and embeds Qt WebEngine
+    // in columns four through six.
     Q_INVOKABLE void openIsland(const QString& url);
     Q_INVOKABLE void navigateIsland(const QString& url);
     Q_INVOKABLE void reloadIsland();
