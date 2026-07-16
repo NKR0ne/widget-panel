@@ -3,6 +3,7 @@
 #include <QDateTime>
 #include <QFile>
 #include <QMutex>
+#include <QRegularExpression>
 
 #include <cstdio>
 #include <cstdlib>
@@ -13,6 +14,15 @@ QFile* g_logFile = nullptr;
 QMutex g_mutex;
 QString g_lastFfmpegError;
 qint64 g_lastFfmpegErrorAt = 0;
+
+QString redactSecrets(QString message)
+{
+    static const QRegularExpression secretQuery(
+        QStringLiteral(R"(([?&](?:key|apiKey|token|password)=)[^&\s\"']+)"),
+        QRegularExpression::CaseInsensitiveOption);
+    message.replace(secretQuery, QStringLiteral("\\1<redacted>"));
+    return message;
+}
 
 void messageHandler(QtMsgType type, const QMessageLogContext& context, const QString& msg)
 {
@@ -25,13 +35,14 @@ void messageHandler(QtMsgType type, const QMessageLogContext& context, const QSt
     case QtCriticalMsg: level = "critical"; break;
     case QtFatalMsg:    level = "fatal"; break;
     }
+    const QString safeMessage = redactSecrets(msg);
     const QString line = QStringLiteral("[%1] [%2] %3\n")
         .arg(QDateTime::currentDateTime().toString(Qt::ISODateWithMs),
-             QLatin1String(level), msg);
+             QLatin1String(level), safeMessage);
     {
         QMutexLocker lock(&g_mutex);
-        if (msg.contains(QLatin1String("FFmpeg error description:"))) {
-            g_lastFfmpegError = msg;
+        if (safeMessage.contains(QLatin1String("FFmpeg error description:"))) {
+            g_lastFfmpegError = safeMessage;
             g_lastFfmpegErrorAt = QDateTime::currentMSecsSinceEpoch();
         }
         if (g_logFile && g_logFile->isOpen()) {

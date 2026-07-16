@@ -13,13 +13,27 @@ GlassCard {
 
     property int vaultRev: 0
     property int storeRev: 0
-    property string apiKey: { vaultRev; return Vault.get("tomtom-key") }
+    property int trafficRevision: 0
+    property int trafficStatus: Image.Null
+    property real trafficProgress: 0
+    property string apiKey: { vaultRev; return Vault.get("tomtom-key").trim() }
+    readonly property bool trafficConfigured: apiKey.length > 0
+    readonly property bool trafficReady: trafficConfigured && trafficStatus === Image.Ready
+    readonly property bool trafficFailed: trafficConfigured && trafficStatus === Image.Error
+
+    function refreshTraffic() {
+        trafficRevision++
+        trafficStatus = trafficConfigured ? Image.Loading : Image.Null
+        trafficProgress = 0
+    }
 
     Connections {
         target: Vault
         function onChanged(key) {
-            if (key === "tomtom-key")
+            if (key === "tomtom-key") {
                 card.vaultRev++
+                card.refreshTraffic()
+            }
         }
     }
     Connections {
@@ -67,6 +81,13 @@ GlassCard {
         running: true
         repeat: true
         onTriggered: card.currentHour = new Date().getHours()
+    }
+
+    Timer {
+        interval: 120000
+        running: card.trafficConfigured
+        repeat: true
+        onTriggered: card.refreshTraffic()
     }
 
     readonly property int n: Math.pow(2, zoom)
@@ -127,12 +148,13 @@ GlassCard {
             + zoom + "/" + tile.y + "/" + tile.x
     }
     function trafficTileUrl(dx, dy) {
-        if (apiKey === "")
+        if (!trafficConfigured)
             return ""
         const tile = tileCoords(dx, dy)
         return "https://api.tomtom.com/traffic/map/4/tile/flow/relative0/"
             + zoom + "/" + tile.x + "/" + tile.y
-            + ".png?tileSize=512&key=" + apiKey
+            + ".png?key=" + encodeURIComponent(apiKey) + "&tileSize=256"
+            + "#refresh-" + trafficRevision
     }
 
     Column {
@@ -147,8 +169,12 @@ GlassCard {
             width: parent.width
             title: card.title
             subtitle: card.location.name ? String(card.location.name).split(",")[0] : ""
-            status: card.apiKey === "" ? "CARTE" : "TRAFIC"
-            statusColor: card.apiKey === "" ? Theme.warning : Theme.success
+            status: !card.trafficConfigured ? "CARTE"
+                : card.trafficFailed ? "ERREUR"
+                : card.trafficReady ? "DIRECT" : "CHARG."
+            statusColor: !card.trafficConfigured ? Theme.warning
+                : card.trafficFailed ? Theme.danger
+                : card.trafficReady ? Theme.success : Theme.accent
             expandable: !card.detailMode
             onExpandRequested: Ui.openDetail("traffic", "Circulation", {
                 subtitle: card.location.name || ""
@@ -263,14 +289,89 @@ GlassCard {
                             opacity: 0.56
                         }
                         Image {
+                            id: trafficImage
                             anchors.fill: parent
                             fillMode: Image.Stretch
                             asynchronous: true
                             cache: false
                             source: card.trafficTileUrl(modelData.x, modelData.y)
-                            opacity: 0.82
+                            opacity: status === Image.Ready ? 0.95 : 0
+
+                            readonly property bool centerTile:
+                                modelData.x === 0 && modelData.y === 0
+
+                            onStatusChanged: {
+                                if (!centerTile)
+                                    return
+                                card.trafficStatus = status
+                                if (status === Image.Ready)
+                                    console.info("[traffic] center flow tile ready")
+                                else if (status === Image.Error)
+                                    console.warn("[traffic] center flow tile failed")
+                            }
+                            onProgressChanged: {
+                                if (centerTile)
+                                    card.trafficProgress = trafficImage.progress
+                            }
                         }
                     }
+                }
+            }
+
+            Rectangle {
+                z: 3
+                visible: card.trafficConfigured
+                    && card.trafficStatus === Image.Loading
+                anchors.left: parent.left
+                anchors.bottom: parent.bottom
+                anchors.margins: 7
+                width: loadingText.implicitWidth + 14
+                height: 22
+                radius: 5
+                color: Qt.rgba(0, 0, 0, 0.68)
+                border.color: Theme.cardStroke
+
+                Text {
+                    id: loadingText
+                    anchors.centerIn: parent
+                    text: "Trafic " + Math.round(card.trafficProgress * 100) + "%"
+                    color: Theme.textPrimary
+                    font.pixelSize: 9
+                }
+            }
+
+            Rectangle {
+                z: 3
+                visible: card.trafficFailed
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.margins: 7
+                height: 30
+                radius: 5
+                color: Qt.rgba(0.12, 0.03, 0.04, 0.9)
+                border.color: Theme.danger
+
+                Text {
+                    anchors.left: parent.left
+                    anchors.right: retryButton.left
+                    anchors.leftMargin: 8
+                    anchors.rightMargin: 6
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Flux TomTom indisponible"
+                    color: Theme.textPrimary
+                    font.pixelSize: 9
+                    elide: Text.ElideRight
+                }
+                IconButton {
+                    id: retryButton
+                    anchors.right: parent.right
+                    anchors.rightMargin: 4
+                    anchors.verticalCenter: parent.verticalCenter
+                    buttonSize: 22
+                    glyph: "\uE72C"
+                    tooltip: "Réessayer"
+                    onClicked: card.refreshTraffic()
                 }
             }
 
@@ -359,14 +460,17 @@ GlassCard {
             width: parent.width
             text: (card.location.name
                 ? String(card.location.name).split(",")[0] : "")
-                + (card.apiKey === "" ? " \u00b7 carte seulement" : " \u00b7 trafic TomTom")
+                + (!card.trafficConfigured ? " \u00b7 carte seulement"
+                    : card.trafficFailed ? " \u00b7 trafic indisponible"
+                    : card.trafficReady ? " \u00b7 trafic TomTom actualisé"
+                    : " \u00b7 chargement du trafic")
             color: Theme.textSecondary
             font.pixelSize: 10
             elide: Text.ElideRight
         }
 
         Text {
-            visible: card.apiKey === ""
+            visible: !card.trafficConfigured
             width: parent.width
             text: "Ajoutez une cl\u00e9 TomTom pour superposer le flux de circulation."
             color: Theme.textSecondary
