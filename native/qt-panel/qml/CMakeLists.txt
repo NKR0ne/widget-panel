@@ -51,6 +51,8 @@ qt_add_qml_module(qtpanel_ui
         MailWidget.qml
         TodoWidget.qml
         MsStatePane.qml
+    RESOURCES
+        web/traffic-map.html
 )
 
 qt_add_shaders(qtpanel_ui "qtpanel_shaders"

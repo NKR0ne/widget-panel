@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+html,body,#map{width:100%;height:100%;margin:0;padding:0;overflow:hidden;background:#050914}
+#map{position:relative;font-family:"Segoe UI",system-ui,sans-serif;cursor:grab}
+#map:active{cursor:grabbing}
+.leaflet-container{background:#050914}
+.leaflet-control-zoom{margin:0 8px 8px 0!important;border:1px solid rgba(238,248,255,.22)!important;border-radius:6px!important;overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.36)!important}
+.leaflet-control-zoom a{width:26px!important;height:26px!important;line-height:25px!important;background:rgba(8,12,21,.86)!important;color:#f7faff!important;border-color:rgba(238,248,255,.14)!important;font-size:16px!important}
+.leaflet-control-zoom a:hover{background:rgba(43,55,78,.94)!important}
+.leaflet-control-attribution{font-size:8px!important;background:rgba(3,8,18,.68)!important;color:rgba(220,235,255,.68)!important;border-radius:5px 0 0 0!important}
+.leaflet-control-attribution a{color:#8db7ff!important}
+.theme-day-plan .leaflet-container,.theme-day-satellite .leaflet-container{background:#eef3fb}
+.blueprint-base{filter:sepia(1) hue-rotate(166deg) saturate(2.4) brightness(.62) contrast(1.1);opacity:.88}
+.blueprint-labels{filter:hue-rotate(176deg) saturate(1.8) brightness(1.28);opacity:.62}
+.day-plan-base{filter:saturate(.88) brightness(.98) contrast(1.02);opacity:.96}
+.day-plan-labels{filter:saturate(.92) brightness(.86) contrast(1.08);opacity:.76}
+.day-satellite-base{filter:saturate(.92) brightness(.9) contrast(1.02)}
+.day-satellite-reference{filter:saturate(.84) brightness(.82) contrast(1.05);opacity:.64}
+.traffic-flow{filter:saturate(1.18) brightness(1.02) contrast(1.08)}
+.theme-blueprint .traffic-flow{mix-blend-mode:screen}
+.theme-day-plan .traffic-flow,.theme-day-satellite .traffic-flow{mix-blend-mode:multiply}
+#fatal{display:none;position:absolute;inset:auto 10px 10px 10px;z-index:1000;padding:8px 10px;border:1px solid #f87171;border-radius:6px;background:rgba(30,8,10,.94);color:#f7faff;font:11px "Segoe UI",sans-serif}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="fatal">Le moteur cartographique n'a pas pu charger.</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+(function () {
+  const report = (message) => console.info('qtpanel:' + message);
+  const fatal = (message) => {
+    document.getElementById('fatal').style.display = 'block';
+    report('error:' + message);
+  };
+  if (!window.L) {
+    fatal('Leaflet indisponible');
+    return;
+  }
+
+  const params = new URLSearchParams(location.search);
+  const initial = {
+    lat: Number(params.get('lat')) || 46.81228,
+    lon: Number(params.get('lon')) || -71.21454,
+    zoom: Math.max(6, Math.min(18, Number(params.get('zoom')) || 11))
+  };
+  const theme = params.get('theme') || 'blueprint';
+  document.body.className = 'theme-' + theme;
+
+  const map = L.map('map', {
+    zoomControl: false,
+    attributionControl: true,
+    preferCanvas: true,
+    dragging: true,
+    touchZoom: true,
+    scrollWheelZoom: true,
+    doubleClickZoom: true,
+    boxZoom: true,
+    keyboard: true,
+    inertia: true,
+    inertiaDeceleration: 2600,
+    zoomAnimation: true,
+    fadeAnimation: true,
+    wheelPxPerZoomLevel: 90,
+    minZoom: 6,
+    maxZoom: 18
+  }).setView([initial.lat, initial.lon], initial.zoom);
+
+  L.control.zoom({ position: 'bottomright' }).addTo(map);
+  const cartoAttribution = '&copy; OpenStreetMap &copy; CARTO';
+
+  function addCarto(style, baseClass, labelClass) {
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/' + style + '_nolabels/{z}/{x}/{y}{r}.png', {
+      attribution: cartoAttribution, maxZoom: 20, keepBuffer: 4, className: baseClass
+    }).addTo(map);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/' + style + '_only_labels/{z}/{x}/{y}{r}.png', {
+      maxZoom: 20, keepBuffer: 4, className: labelClass, pane: 'shadowPane'
+    }).addTo(map);
+  }
+
+  if (theme === 'day-satellite') {
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      attribution: '&copy; Esri, Maxar, Earthstar Geographics', maxZoom: 19,
+      keepBuffer: 4, className: 'day-satellite-base'
+    }).addTo(map);
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 19, keepBuffer: 4, className: 'day-satellite-reference', pane: 'shadowPane'
+    }).addTo(map);
+    L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 19, keepBuffer: 4, className: 'day-satellite-reference', pane: 'shadowPane'
+    }).addTo(map);
+  } else if (theme === 'day-plan') {
+    addCarto('light', 'day-plan-base', 'day-plan-labels');
+  } else {
+    addCarto('dark', 'blueprint-base', 'blueprint-labels');
+  }
+
+  map.createPane('trafficPane');
+  map.getPane('trafficPane').style.zIndex = 430;
+  map.getPane('trafficPane').style.pointerEvents = 'none';
+  let trafficLayer = null;
+  let trafficKey = '';
+
+  function removeTraffic() {
+    if (trafficLayer) map.removeLayer(trafficLayer);
+    trafficLayer = null;
+  }
+
+  function setTrafficKey(key) {
+    const next = String(key || '').trim();
+    if (next === trafficKey && trafficLayer) return;
+    trafficKey = next;
+    removeTraffic();
+    if (!trafficKey) return;
+    report('traffic:loading');
+    trafficLayer = L.tileLayer(
+      'https://api.tomtom.com/traffic/map/4/tile/flow/relative0/{z}/{x}/{y}.png?tileSize=256&key=' + encodeURIComponent(trafficKey),
+      { maxZoom:18, opacity:.95, keepBuffer:4, pane:'trafficPane', className:'traffic-flow' }
+    );
+    trafficLayer.on('loading', () => report('traffic:loading'));
+    trafficLayer.on('load', () => report('traffic:ready'));
+    trafficLayer.on('tileerror', () => report('traffic:error'));
+    trafficLayer.addTo(map);
+  }
+
+  let stateTimer = 0;
+  function reportState() {
+    clearTimeout(stateTimer);
+    stateTimer = setTimeout(() => {
+      const center = map.getCenter();
+      report('state:' + JSON.stringify({
+        lat: Number(center.lat.toFixed(6)),
+        lon: Number(center.lng.toFixed(6)),
+        zoom: map.getZoom()
+      }));
+    }, 60);
+  }
+  map.on('moveend zoomend', reportState);
+
+  window.qtPanelMap = {
+    setTrafficKey,
+    refreshTraffic: () => { if (trafficLayer) { report('traffic:loading'); trafficLayer.redraw(); } },
+    setZoom: (value) => map.setZoom(Math.max(6, Math.min(18, Number(value) || map.getZoom()))),
+    resetView: () => map.setView([initial.lat, initial.lon], initial.zoom, { animate:true })
+  };
+
+  setTimeout(() => map.invalidateSize(false), 0);
+  report('ready');
+  reportState();
+}());
+</script>
+</body>
+</html>
