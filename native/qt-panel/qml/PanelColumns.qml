@@ -39,7 +39,7 @@ Item {
         { id: "clock", source: "ClockWidget.qml", column: "left", props: {} },
         { id: "weather", source: "WeatherWidget.qml", column: "left", props: {} },
         { id: "traffic", source: "TrafficWidget.qml", column: "left", props: {} },
-        { id: "stocks", source: "StocksWidget.qml", column: "left", props: {} },
+        { id: "stocks", source: "StocksWidget.qml", column: "left", props: {}, resize: true, minHeight: 260 },
         { id: "calendar", source: "CalendarWidget.qml", column: "mid", props: {} },
         { id: "agenda", source: "AgendaWidget.qml", column: "right", props: {}, resize: true },
         { id: "mail", source: "MailWidget.qml", column: "right", props: {}, resize: true },
@@ -389,6 +389,7 @@ Item {
                             dragEnabled: root.mode === "base"
                             titleDragEnabled: modelData.titleDrag !== false
                             resizable: modelData.resize === true
+                            minimumUserHeight: Number(modelData.minHeight || 120)
                         }
                     }
                 }

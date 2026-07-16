@@ -4,7 +4,7 @@ import QtPanel.Native
 GlassCard {
     id: card
     title: "Marchés"
-    implicitHeight: body.implicitHeight + 24
+    implicitHeight: detailMode ? body.implicitHeight + 24 : 440
     property bool detailMode: false
     flat: detailMode
     interactive: !detailMode
@@ -22,6 +22,11 @@ GlassCard {
     readonly property bool overviewTab: Stocks.currentList === 0
     property string heatmapPeriod: Store.get("wp-heatmap-period", "change") || "change"
     property int storeRevision: 0
+
+    onTabChanged: {
+        if (marketFlick)
+            marketFlick.contentY = 0
+    }
     readonly property var heatmapPeriods: [
         { id: "change", label: "1D" },
         { id: "Perf.W", label: "1W" },
@@ -413,6 +418,23 @@ GlassCard {
             }
         }
 
+        Flickable {
+            id: marketFlick
+            width: parent.width
+            height: card.detailMode ? marketContent.height
+                                    : Math.max(96, card.height - y - 24)
+            contentWidth: width
+            contentHeight: marketContent.height
+            clip: true
+            interactive: contentHeight > height
+            boundsBehavior: Flickable.StopAtBounds
+            flickableDirection: Flickable.VerticalFlick
+
+            Column {
+                id: marketContent
+                width: marketFlick.width - (marketFlick.contentHeight > marketFlick.height ? 6 : 0)
+                spacing: 5
+
         // Earnings calendar view
         Column {
             visible: card.earningsTab
@@ -427,7 +449,7 @@ GlassCard {
                 model: card.earningsTab ? Stocks.earnings : []
                 delegate: Row {
                     required property var modelData
-                    width: body.width
+                    width: marketContent.width
                     spacing: 6
                     TapHandler {
                         onTapped: card.openMarketEvent(modelData)
@@ -483,7 +505,7 @@ GlassCard {
                 model: card.iposTab ? Stocks.ipos : []
                 delegate: Row {
                     required property var modelData
-                    width: body.width
+                    width: marketContent.width
                     spacing: 6
                     TapHandler {
                         onTapped: card.openMarketEvent(modelData)
@@ -516,7 +538,7 @@ GlassCard {
                     model: card.heatmapPeriods
                     delegate: Rectangle {
                         required property var modelData
-                        width: Math.max(22, (body.width - 18) / card.heatmapPeriods.length)
+                        width: Math.max(22, (marketContent.width - 18) / card.heatmapPeriods.length)
                         height: 22
                         radius: 4
                         color: card.heatmapPeriod === modelData.id ? Theme.activeFill
@@ -665,7 +687,7 @@ GlassCard {
                 required property bool hasData
                 required property bool up
 
-                width: body.width
+                width: marketContent.width
                 height: card.overviewTab ? 30 : 34
                 property real priceWidth: 58
                 property real rsiWidth: 28
@@ -841,6 +863,21 @@ GlassCard {
             color: Theme.textSecondary
             font.pixelSize: Theme.fontSizeCaption
             horizontalAlignment: Text.AlignHCenter
+        }
+            }
+
+            Rectangle {
+                visible: marketFlick.contentHeight > marketFlick.height
+                width: 2
+                radius: 1
+                anchors.right: parent.right
+                height: Math.max(18, marketFlick.height * marketFlick.height
+                    / Math.max(1, marketFlick.contentHeight))
+                y: marketFlick.contentY / Math.max(1,
+                    marketFlick.contentHeight - marketFlick.height)
+                    * Math.max(0, marketFlick.height - height)
+                color: Qt.rgba(1, 1, 1, 0.24)
+            }
         }
     }
 }
