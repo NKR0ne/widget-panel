@@ -7,11 +7,6 @@ Item {
     id: stage
 
     property int storeRevision: 0
-    readonly property int configuredColumns: {
-        storeRevision
-        return Math.max(3, Math.min(6,
-            Number(Store.get("wp-base-columns", 3)) || 3))
-    }
     readonly property var allFeeds: Live.feedIds()
     readonly property var activeIds: {
         storeRevision
@@ -26,7 +21,7 @@ Item {
     Connections {
         target: Store
         function onChanged(key) {
-            if (key === "wp-config" || key === "wp-base-columns")
+            if (key === "wp-config")
                 stage.storeRevision++
         }
     }
@@ -121,8 +116,9 @@ Item {
             Grid {
                 id: liveGrid
                 width: liveScroll.width
-                columns: Math.max(1, Math.min(stage.configuredColumns,
-                                              stage.feeds.length))
+                // Six feeds form two columns by three rows; a single selected
+                // feed still expands across the complete Direct workspace.
+                columns: Math.max(1, Math.min(2, stage.feeds.length))
                 spacing: 8
 
                 Repeater {
