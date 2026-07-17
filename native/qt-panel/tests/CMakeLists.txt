@@ -22,3 +22,7 @@ target_link_libraries(qt-panel-tests PRIVATE
 )
 
 add_test(NAME qt-panel-tests COMMAND qt-panel-tests)
+set_tests_properties(qt-panel-tests PROPERTIES
+    ENVIRONMENT_MODIFICATION
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Network>"
+)
