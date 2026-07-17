@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import QtPanel.Native
 
@@ -369,7 +370,9 @@ GlassCard {
         if (kind === "gpu")
             return [
                 { label: "Clock", value: fmt(metric.clockMHz, " MHz", 0) },
-                { label: "VRAM", value: fmtMemoryMB(metric.vramUsedMB) }
+                { label: "VRAM", value: fmtMemoryMB(metric.vramUsedMB) },
+                { label: "FPS", value: snapshot.fps && snapshot.fps.tracking
+                    ? fmt(snapshot.fps.current, "", 0) : "--" }
             ]
         if (kind === "ram") {
             const bw = metric.bandwidth || ({})
@@ -600,62 +603,85 @@ GlassCard {
             }
         }
 
-        Column {
+        Flickable {
+            id: detailsView
             visible: Workstation.connected
                      && (card.detailMode || card.tab === "details")
+            readonly property real naturalHeight: detailsColumn.implicitHeight
             Layout.fillWidth: true
-            spacing: 0
+            Layout.fillHeight: visible && !card.detailMode
+            Layout.minimumHeight: card.detailMode ? naturalHeight : 72
+            Layout.preferredHeight: card.detailMode
+                ? naturalHeight : Math.max(72, card.graphFlowHeight(width))
+            contentWidth: width
+            contentHeight: detailsColumn.height
+            clip: !card.detailMode
+            interactive: !card.detailMode && contentHeight > height
+            flickableDirection: Flickable.VerticalFlick
+            boundsBehavior: Flickable.StopAtBounds
 
-            Rectangle {
-                visible: card.detailMode
-                width: parent.width
-                height: 1
-                color: Theme.cardStroke
+            ScrollBar.vertical: ScrollBar {
+                id: detailsScrollBar
+                policy: card.detailMode ? ScrollBar.AlwaysOff : ScrollBar.AsNeeded
+                width: 5
             }
 
-            Text {
-                visible: card.detailMode
-                width: parent.width
-                height: 28
-                text: "Details"
-                color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeCaption
-                font.weight: Font.DemiBold
-                verticalAlignment: Text.AlignVCenter
-            }
+            Column {
+                id: detailsColumn
+                width: Math.max(1, detailsView.width - (card.detailMode ? 0 : 10))
+                spacing: 0
 
-            Repeater {
-                model: detailModel
-                delegate: Row {
-                    required property var spec
+                Rectangle {
+                    visible: card.detailMode
                     width: parent.width
-                    height: Math.max(labelText.implicitHeight, valueText.implicitHeight) + 8
-                    spacing: 8
-                    Text {
-                        id: labelText
-                        width: Math.max(76, parent.width * 0.43)
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: spec.label
-                        color: Theme.textSecondary
-                        font.pixelSize: 9
-                        elide: Text.ElideRight
-                    }
-                    Text {
-                        id: valueText
-                        width: Math.max(40, parent.width - labelText.width - 8)
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: spec.value
-                        color: Theme.textPrimary
-                        font.pixelSize: 10
-                        horizontalAlignment: Text.AlignRight
-                        wrapMode: Text.WrapAnywhere
+                    height: 1
+                    color: Theme.cardStroke
+                }
+
+                Text {
+                    visible: card.detailMode
+                    width: parent.width
+                    height: 28
+                    text: "Details"
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSizeCaption
+                    font.weight: Font.DemiBold
+                    verticalAlignment: Text.AlignVCenter
+                }
+
+                Repeater {
+                    model: detailModel
+                    delegate: Row {
+                        required property var spec
+                        width: parent.width
+                        height: Math.max(labelText.implicitHeight, valueText.implicitHeight) + 8
+                        spacing: 8
+                        Text {
+                            id: labelText
+                            width: Math.max(76, parent.width * 0.43)
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: spec.label
+                            color: Theme.textSecondary
+                            font.pixelSize: 9
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            id: valueText
+                            width: Math.max(40, parent.width - labelText.width - 8)
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: spec.value
+                            color: Theme.textPrimary
+                            font.pixelSize: 10
+                            horizontalAlignment: Text.AlignRight
+                            wrapMode: Text.WrapAnywhere
+                        }
                     }
                 }
             }
         }
 
         Item {
-            visible: !card.detailMode && !graphFlow.visible
+            visible: !card.detailMode && !graphFlow.visible && !detailsView.visible
             Layout.fillWidth: true
             Layout.fillHeight: true
             Layout.minimumHeight: 0
@@ -710,8 +736,10 @@ GlassCard {
                 spacing: 6
                 readonly property real powerWidth: width >= 360 ? 94 : 48
                 readonly property real tempWidth: width >= 360 ? 74 : 52
+                readonly property int metricCount: Math.max(1, footerModel.count)
                 readonly property real metricWidth: Math.max(
-                    26, (width - powerWidth - tempWidth - spacing * 3) / 2)
+                    22, (width - powerWidth - tempWidth
+                         - spacing * (metricCount + 1)) / metricCount)
 
                 Repeater {
                     model: footerModel
