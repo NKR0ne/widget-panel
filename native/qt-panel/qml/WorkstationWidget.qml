@@ -549,7 +549,7 @@ GlassCard {
                                 ctx.stroke()
                             }
                             ctx.strokeStyle = "rgba(255,255,255,0.08)"
-                            const timeGrid = [0.25, 0.50, 0.75]
+                            const timeGrid = [1 / 3, 2 / 3]
                             for (const ratio of timeGrid) {
                                 const x = Math.round(ratio * (width - 1)) + 0.5
                                 ctx.beginPath()
