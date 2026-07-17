@@ -2,9 +2,8 @@ import QtQuick
 import QtQuick.Dialogs
 import QtPanel.Native
 
-// Mode-aware widget/category selector. It writes the same wp-config.activeIds
-// contract as the Electron CategoryManager, then PanelColumns applies it per
-// mode.
+// Mode-aware widget/category selector. Each workspace owns an explicit card
+// selection; the legacy activeIds list is only used to initialize old profiles.
 Item {
     id: modal
     anchors.fill: parent
@@ -67,30 +66,6 @@ Item {
         return c
     }
 
-    function activeIds() {
-        const c = config()
-        return c.activeIds || []
-    }
-
-    function allIds() {
-        const ids = []
-        for (const entry of catalog)
-            ids.push(entry.id)
-        for (const label of News.allCategories)
-            ids.push("cat:" + label)
-        return ids
-    }
-
-    function activeListForWrite() {
-        const active = activeIds()
-        return active.length === 0 ? allIds() : active.slice()
-    }
-
-    function isOn(id) {
-        const active = activeIds()
-        return active.length === 0 || active.indexOf(id) >= 0
-    }
-
     function colorForCategory(index) {
         const palette = ["#4f8ef7", "#5cc8a8", "#b07ef7", "#f7a64f", "#f74f7e", "#4ff7c8", "#c8f74f"]
         return palette[index % palette.length]
@@ -123,6 +98,33 @@ Item {
         return entriesForMode(selectedMode)
     }
 
+    function idsForMode(mode) {
+        const ids = []
+        for (const entry of entriesForMode(mode))
+            ids.push(entry.id)
+        return ids
+    }
+
+    function allowedIdsByMode() {
+        const result = {}
+        for (const mode of modes)
+            result[mode.id] = idsForMode(mode.id)
+        return result
+    }
+
+    function activeIds(mode) {
+        const targetMode = mode || selectedMode
+        return ModeSettings.activeIds(config(), targetMode, idsForMode(targetMode))
+    }
+
+    function activeListForWrite() {
+        return activeIds(selectedMode).slice()
+    }
+
+    function isOn(id) {
+        return activeIds(selectedMode).indexOf(id) >= 0
+    }
+
     function enabledCount(entries) {
         let count = 0
         for (const entry of entries)
@@ -132,8 +134,9 @@ Item {
     }
 
     function saveActiveIds(next, reloadNews) {
-        const cfg = config()
-        cfg.activeIds = next
+        const cfg = ModeSettings.initialize(config(), allowedIdsByMode())
+        cfg.modeActiveIds[selectedMode] = ModeSettings.sanitizedIds(
+                    next, idsForMode(selectedMode))
         Store.set("wp-config", JSON.stringify(cfg))
         rev++
         if (reloadNews)
@@ -181,7 +184,7 @@ Item {
         Store.set("wp-layout-preset-" + selectedMode, JSON.stringify({
             columns: cfg.columns || {},
             widths: widths,
-            baseColumns: Number(Store.get("wp-base-columns", 3)) || 3
+            columnCount: Number(Store.get("wp-base-columns", 3)) || 3
         }))
         Ui.notify("Disposition enregistr\u00e9e", "success")
     }
@@ -197,8 +200,12 @@ Item {
         cfg.columns = preset.columns || {}
         Store.set("wp-config", JSON.stringify(cfg))
         Store.set("wp-col-widths", JSON.stringify(preset.widths || {}))
-        if (selectedMode === "base" && preset.baseColumns)
-            Store.set("wp-base-columns", Math.max(3, Math.min(6, Number(preset.baseColumns))))
+        const savedCount = preset.columnCount || preset.baseColumns
+        if (savedCount) {
+            const count = Math.max(3, Math.min(6, Number(savedCount)))
+            Store.set("wp-base-columns", count)
+            Panel.fitMode(selectedMode, count, preset.widths || {})
+        }
         Ui.notify("Disposition restaur\u00e9e", "success")
     }
 

@@ -1,7 +1,7 @@
 import QtQuick
 import QtPanel.Native
 
-// Native settings sheet: opacities, card glass, autostart, base column count.
+// Native settings sheet: opacities, card glass, autostart, workspace columns.
 // Holds the modal guard while open, like every other overlay.
 Item {
     id: modal
@@ -11,7 +11,7 @@ Item {
     Keys.onEscapePressed: dismiss()
 
     function show() {
-        baseColumnsDraft = Number(Store.get("wp-base-columns", 3)) || 3
+        columnCountDraft = Number(Store.get("wp-base-columns", 3)) || 3
         autostartDraft = Panel.autostart()
         open = true
         Panel.setModalOpen(true)
@@ -100,7 +100,7 @@ Item {
         return Theme.accent
     }
 
-    property int baseColumnsDraft: 3
+    property int columnCountDraft: 3
     property bool autostartDraft: false
 
     Component {
@@ -940,12 +940,12 @@ Item {
                 }
             }
 
-            // Base column count stepper
+            // Shared workspace column count stepper
             Row {
                 width: parent.width
                 spacing: 8
                 Text {
-                    text: "Colonnes visibles"
+                    text: "Colonnes par mode"
                     color: Theme.textSecondary
                     font.pixelSize: Theme.fontSizeCaption
                     anchors.verticalCenter: parent.verticalCenter
@@ -958,13 +958,13 @@ Item {
                     IconButton {
                         glyph: "−"
                         onClicked: {
-                            modal.baseColumnsDraft = Math.max(3, modal.baseColumnsDraft - 1)
-                            Store.set("wp-base-columns", modal.baseColumnsDraft)
-                            Panel.fitMode("base", modal.baseColumnsDraft, {})
+                            modal.columnCountDraft = Math.max(3, modal.columnCountDraft - 1)
+                            Store.set("wp-base-columns", modal.columnCountDraft)
+                            Panel.fitMode("base", modal.columnCountDraft, {})
                         }
                     }
                     Text {
-                        text: modal.baseColumnsDraft
+                        text: modal.columnCountDraft
                         color: Theme.textPrimary
                         font.pixelSize: Theme.fontSizeBody
                         anchors.verticalCenter: parent.verticalCenter
@@ -972,9 +972,9 @@ Item {
                     IconButton {
                         glyph: "+"
                         onClicked: {
-                            modal.baseColumnsDraft = Math.min(6, modal.baseColumnsDraft + 1)
-                            Store.set("wp-base-columns", modal.baseColumnsDraft)
-                            Panel.fitMode("base", modal.baseColumnsDraft, {})
+                            modal.columnCountDraft = Math.min(6, modal.columnCountDraft + 1)
+                            Store.set("wp-base-columns", modal.columnCountDraft)
+                            Panel.fitMode("base", modal.columnCountDraft, {})
                         }
                     }
                 }

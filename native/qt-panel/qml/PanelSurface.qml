@@ -20,7 +20,7 @@ Item {
     property string panelMode: StartupMode
     property string modeSwitchError: ""
     property int storeRevision: 0
-    readonly property int baseColumnCount: {
+    readonly property int columnCount: {
         storeRevision
         return Math.max(3, Math.min(6, Number(Store.get("wp-base-columns", 3)) || 3))
     }
@@ -60,12 +60,12 @@ Item {
         }
     }
 
-    function adjustBaseColumns(delta) {
-        const next = Math.max(3, Math.min(6, baseColumnCount + delta))
-        if (next === baseColumnCount)
+    function adjustColumns(delta) {
+        const next = Math.max(3, Math.min(6, columnCount + delta))
+        if (next === columnCount)
             return
         Store.set("wp-base-columns", next)
-        fitCurrentWindowMode("base")
+        fitCurrentWindowMode(panelMode)
     }
 
     function refreshData() {
@@ -210,13 +210,12 @@ Item {
                 }
 
                 Row {
-                    visible: surface.panelMode === "base"
                     spacing: 2
                     Layout.alignment: Qt.AlignVCenter
 
                     Rectangle {
                         width: 20; height: 20; radius: 5
-                        opacity: surface.baseColumnCount > 3 ? 1 : 0.35
+                        opacity: surface.columnCount > 3 ? 1 : 0.35
                         color: fewerMouse.containsMouse ? Theme.hover : "transparent"
                         Text {
                             anchors.centerIn: parent
@@ -228,14 +227,14 @@ Item {
                             id: fewerMouse
                             anchors.fill: parent
                             hoverEnabled: true
-                            enabled: surface.baseColumnCount > 3
+                            enabled: surface.columnCount > 3
                             cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                            onClicked: surface.adjustBaseColumns(-1)
+                            onClicked: surface.adjustColumns(-1)
                         }
                     }
                     Text {
                         width: 14
-                        text: surface.baseColumnCount
+                        text: surface.columnCount
                         color: Theme.textSecondary
                         font.pixelSize: 9
                         horizontalAlignment: Text.AlignHCenter
@@ -243,7 +242,7 @@ Item {
                     }
                     Rectangle {
                         width: 20; height: 20; radius: 5
-                        opacity: surface.baseColumnCount < 6 ? 1 : 0.35
+                        opacity: surface.columnCount < 6 ? 1 : 0.35
                         color: moreMouse.containsMouse ? Theme.hover : "transparent"
                         Text {
                             anchors.centerIn: parent
@@ -255,9 +254,9 @@ Item {
                             id: moreMouse
                             anchors.fill: parent
                             hoverEnabled: true
-                            enabled: surface.baseColumnCount < 6
+                            enabled: surface.columnCount < 6
                             cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                            onClicked: surface.adjustBaseColumns(1)
+                            onClicked: surface.adjustColumns(1)
                         }
                     }
                 }

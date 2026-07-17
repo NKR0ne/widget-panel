@@ -2,21 +2,37 @@ import QtQuick
 import QtQuick.Layouts
 import QtPanel.Native
 
-// Dedicated Station workspace. Supporting context stays in a narrow rail;
-// telemetry gets the remaining space in the same 2 + 3 hierarchy as the
-// Electron monitor stage.
+// Dedicated Station workspace. It fills the shared configured column span;
+// supporting context uses one column and telemetry consumes the remainder.
 Item {
     id: stage
 
     property int storeRevision: 0
+    readonly property int configuredColumns: {
+        storeRevision
+        return Math.max(3, Math.min(6,
+            Number(Store.get("wp-base-columns", 3)) || 3))
+    }
+    readonly property var allowedIds: [
+        "clock", "weather", "stocks", "workstation-cpu", "workstation-gpu",
+        "workstation-ram", "workstation-disk", "workstation-network",
+    ]
     readonly property var activeIds: {
         storeRevision
         let config = {}
         try { config = JSON.parse(Store.get("wp-config", "{}")) } catch (e) {}
-        return config.activeIds || []
+        return ModeSettings.activeIds(config, "monitor", allowedIds)
     }
     function isActive(id) {
-        return activeIds.length === 0 || activeIds.indexOf(id) >= 0
+        return activeIds.indexOf(id) >= 0
+    }
+    function activeCount(ids) {
+        let count = 0
+        for (const id of ids) {
+            if (isActive(id))
+                count++
+        }
+        return count
     }
     readonly property bool supportEnabled:
         isActive("clock") || isActive("weather") || isActive("stocks")
@@ -24,17 +40,24 @@ Item {
         isActive("workstation-cpu") || isActive("workstation-gpu")
         || isActive("workstation-ram") || isActive("workstation-disk")
         || isActive("workstation-network")
-    readonly property real railWidth: supportEnabled
-        ? Math.min(280, Math.max(224, width * 0.18)) : 0
+    readonly property int telemetryColumnCount: Math.max(
+        1, configuredColumns - (supportEnabled ? 1 : 0))
+    readonly property real logicalColumnWidth: Math.max(
+        1, (width - (configuredColumns - 1) * 8) / configuredColumns)
+    readonly property real railWidth: supportEnabled ? logicalColumnWidth : 0
     readonly property real stageWidth: Math.max(
         1, width - railWidth - (supportEnabled ? 8 : 0))
-    readonly property int primaryColumns: stageWidth >= 980 ? 2 : 1
-    readonly property int secondaryColumns: stageWidth >= 1240 ? 3 : (stageWidth >= 760 ? 2 : 1)
+    readonly property int primaryColumns: Math.max(1, Math.min(
+        2, telemetryColumnCount,
+        activeCount(["workstation-cpu", "workstation-gpu"])))
+    readonly property int secondaryColumns: Math.max(1, Math.min(
+        3, telemetryColumnCount,
+        activeCount(["workstation-ram", "workstation-disk", "workstation-network"])))
 
     Connections {
         target: Store
         function onChanged(key) {
-            if (key === "wp-config")
+            if (key === "wp-config" || key === "wp-base-columns")
                 stage.storeRevision++
         }
     }

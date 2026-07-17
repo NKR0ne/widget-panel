@@ -31,7 +31,7 @@ public:
     Q_INVOKABLE QVariantList feedLabelsFor(const QString& label) const;
     Q_INVOKABLE bool isLoading(const QString& label) const;
     Q_INVOKABLE void refresh();
-    // Re-read wp-config (categories + activeIds) and refetch. Called when the
+    // Re-read wp-config (categories + mode-specific active ids) and refetch. Called when the
     // manage panel toggles categories or imports a new OPML.
     Q_INVOKABLE void reload();
     // Parse a Feedly OPML file and replace wp-config.categories. Returns the

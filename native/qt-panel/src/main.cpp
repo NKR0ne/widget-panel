@@ -383,8 +383,21 @@ int main(int argc, char* argv[])
     }
 
     controller.showPanel();
-    if (startMode != QStringLiteral("base"))
-        controller.fitMode(startMode, 3, {});
+    if (startMode != QStringLiteral("base")) {
+        QVariantMap columnWidths;
+        const QVariant rawWidths = settings.get(QStringLiteral("wp-col-widths"));
+        if (rawWidths.canConvert<QVariantMap>()) {
+            columnWidths = rawWidths.toMap();
+        } else {
+            const QJsonDocument widthsDocument = QJsonDocument::fromJson(
+                rawWidths.toString().toUtf8());
+            if (widthsDocument.isObject())
+                columnWidths = widthsDocument.object().toVariantMap();
+        }
+        controller.fitMode(startMode,
+                           settings.getInt(QStringLiteral("wp-base-columns"), 3),
+                           columnWidths);
+    }
     if (!diagIslandUrl.isEmpty()) {
         QTimer::singleShot(350, &controller,
                            [&controller, diagIslandUrl] { controller.openIsland(diagIslandUrl); });

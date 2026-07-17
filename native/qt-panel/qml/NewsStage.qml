@@ -2,15 +2,25 @@ import QtQuick
 import QtQuick.Dialogs
 import QtPanel.Native
 
-// Six-column news workspace: category rail in column one, article list in
-// columns two and three, and the native article reader in columns four to six.
+// News workspace mapped onto the shared configured column span: one category
+// column, then balanced article-list and reader spans using all remaining room.
 Item {
     id: stage
 
     property string selectedCategory: ""
     property string selectedUrl: ""
     property int newsRevision: 0
-    readonly property real railWidth: Math.min(250, Math.max(210, width * 0.16))
+    property int storeRevision: 0
+    readonly property int configuredColumns: {
+        storeRevision
+        return Math.max(3, Math.min(6,
+            Number(Store.get("wp-base-columns", 3)) || 3))
+    }
+    readonly property int articleColumns: Math.max(
+        1, Math.floor((configuredColumns - 1) / 2))
+    readonly property real railWidth: Math.max(1, width / configuredColumns)
+    readonly property real dividerPosition: Math.round(
+        width * (1 + articleColumns) / configuredColumns)
     readonly property var selectedItems: {
         newsRevision
         const result = []
@@ -51,6 +61,14 @@ Item {
                 stage.selectCategory("")
         }
         function onCategoryUpdated() { stage.newsRevision++ }
+    }
+
+    Connections {
+        target: Store
+        function onChanged(key) {
+            if (key === "wp-base-columns")
+                stage.storeRevision++
+        }
     }
 
     Component.onDestruction: Reader.close()
@@ -364,7 +382,7 @@ Item {
 
     Rectangle {
         id: centerDivider
-        x: Math.round(parent.width / 2) - 1
+        x: stage.dividerPosition - 1
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: 1

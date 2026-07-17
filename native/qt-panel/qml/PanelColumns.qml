@@ -4,7 +4,7 @@ import QtPanel.Native
 
 // Lays the implemented widgets out into the saved Electron column assignment:
 // wp-config.columns (widget id → column), wp-col-widths (per-column px used as
-// flex weights), wp-base-columns (how many of the 6 columns are visible).
+// flex weights), wp-base-columns (legacy key shared by every workspace).
 Item {
     id: root
 
@@ -62,18 +62,8 @@ Item {
         { id: "workstation-network", source: "WorkstationWidget.qml", column: "monitor", props: { kind: "network" } },
     ]
 
-    readonly property var registry: {
-        const entries = baseRegistry.slice()
-        for (const label of News.categories) {
-            entries.push({
-                id: "cat:" + label,
-                source: "NewsWidget.qml",
-                column: "feed",
-                props: { categoryLabel: label },
-            })
-        }
-        return entries
-    }
+    // Stage cards are owned by their stage and never leak into Base columns.
+    readonly property var registry: baseRegistry
 
     function parseStored(key, fallback) {
         const raw = Store.get(key)
@@ -98,24 +88,28 @@ Item {
 
     readonly property var savedConfig: { storeRev; return parseStored("wp-config", {}) }
     readonly property var savedColumns: savedConfig.columns || {}
-    readonly property var savedActiveIds: savedConfig.activeIds || []
+    readonly property var allowedBaseIds: baseRegistry.map(entry => entry.id)
+    readonly property var allowedMonitorIds: Object.keys(monitorModeColumns)
+    readonly property var savedActiveIds: ModeSettings.activeIds(
+        savedConfig, "base", allowedBaseIds)
+    readonly property var monitorActiveIds: ModeSettings.activeIds(
+        savedConfig, "monitor", allowedMonitorIds)
 
-    // activeIds gate widget visibility (Manage panel). News categories are
-    // already filtered by NewsService, so cat:* entries here are always active.
+    // Base and Station selections are independent even for shared cards.
     readonly property var activeIdSet: {
         const set = {}
         for (const id of savedActiveIds) set[id] = true
         return set
     }
+    readonly property var monitorActiveIdSet: {
+        const set = {}
+        for (const id of monitorActiveIds) set[id] = true
+        return set
+    }
     function isActive(id) {
-        if (id.indexOf("cat:") === 0) return true
-        // Absent activeIds → everything on (fresh install).
-        if (savedActiveIds.length === 0) return true
         return activeIdSet[id] === true
     }
 
-    // Once activeIds exists, it is the user's manage-widget state. Missing or
-    // empty activeIds keeps the fresh-install "everything on" behavior above.
     readonly property var savedColWidths: { storeRev; return parseStored("wp-col-widths", {}) }
     readonly property int baseColumnCount: {
         storeRev
@@ -123,22 +117,23 @@ Item {
         return Math.max(3, Math.min(columnOrder.length, stored || 3))
     }
     readonly property var visibleColumns: {
-        if (mode === "news" || mode === "live")
-            return columnOrder
-        if (mode === "monitor")
-            return ["left", "monitor", "mid", "feed"]
         return columnOrder.slice(0, baseColumnCount)
     }
     readonly property bool workstationVisible: {
         storeRev
         if (mode === "news" || mode === "live")
             return false
+        if (mode === "monitor") {
+            for (const id of workstationIds) {
+                if (monitorActiveIdSet[id] === true)
+                    return true
+            }
+            return false
+        }
         for (const id of workstationIds) {
             if (!isActive(id))
                 continue
-            const assigned = mode === "monitor"
-                ? monitorModeColumns[id]
-                : (savedColumns[id] || "monitor")
+            const assigned = savedColumns[id] || "monitor"
             if (assigned !== undefined && visibleColumns.indexOf(assigned) >= 0)
                 return true
         }
@@ -224,7 +219,8 @@ Item {
         } else {
             nextIds.push(id)
         }
-        cfg.activeIds = nextIds
+        ModeSettings.initialize(cfg, ({ base: allowedBaseIds }))
+        cfg.modeActiveIds.base = nextIds
         Store.set("wp-config", JSON.stringify(cfg)) // storeRev bump → animated relayout
     }
 

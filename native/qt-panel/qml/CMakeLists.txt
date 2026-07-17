@@ -1,4 +1,4 @@
-set_source_files_properties(Theme.qml Motion.qml Ui.qml
+set_source_files_properties(Theme.qml Motion.qml Ui.qml ModeSettings.qml
     PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(qtpanel_ui
@@ -20,6 +20,7 @@ qt_add_qml_module(qtpanel_ui
         Theme.qml
         Motion.qml
         Ui.qml
+        ModeSettings.qml
         SettingsModal.qml
         SettingsSlider.qml
         SettingsToggle.qml

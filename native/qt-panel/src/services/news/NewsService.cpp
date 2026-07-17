@@ -246,10 +246,15 @@ void NewsService::loadCategories()
         config = raw.toMap();
     }
 
-    const QVariantList active = config.value(QStringLiteral("activeIds")).toList();
+    const QVariantMap modeActiveIds = config.value(QStringLiteral("modeActiveIds")).toMap();
+    const bool hasNewsSelection = modeActiveIds.contains(QStringLiteral("news"));
+    const QVariantList active = hasNewsSelection
+        ? modeActiveIds.value(QStringLiteral("news")).toList()
+        : config.value(QStringLiteral("activeIds")).toList();
     QStringList activeIds;
     for (const QVariant& id : active)
         activeIds.append(id.toString());
+    const bool filterCategories = hasNewsSelection || !activeIds.isEmpty();
 
     m_categories.clear();
     m_categoryLabels.clear();
@@ -261,7 +266,7 @@ void NewsService::loadCategories()
         if (label.isEmpty())
             continue;
         m_allCategoryLabels.append(label);
-        if (!activeIds.isEmpty() && !activeIds.contains(QStringLiteral("cat:") + label))
+        if (filterCategories && !activeIds.contains(QStringLiteral("cat:") + label))
             continue;
         Category category;
         category.label = label;
@@ -345,13 +350,16 @@ int NewsService::importOpml(const QUrl& fileUrl)
     if (categories.isEmpty())
         return 0;
 
-    // Merge into wp-config: replace categories, reset column placements, keep
-    // system activeIds and add the new category ids.
+    // Merge into wp-config: replace categories, reset column placements, and
+    // make the imported set the explicit News-mode selection.
     const QJsonObject cfg = QJsonDocument::fromJson(
         m_settings->get(QStringLiteral("wp-config")).toString().toUtf8()).object();
     QVariantMap config = cfg.toVariantMap();
     config.insert(QStringLiteral("categories"), categories);
     config.insert(QStringLiteral("columns"), QVariantMap{});
+    QVariantMap modeActiveIds = config.value(QStringLiteral("modeActiveIds")).toMap();
+    modeActiveIds.insert(QStringLiteral("news"), activeCatIds);
+    config.insert(QStringLiteral("modeActiveIds"), modeActiveIds);
     const QVariantList existingActiveIds = config.value(QStringLiteral("activeIds")).toList();
     if (!existingActiveIds.isEmpty()) {
         QStringList active;

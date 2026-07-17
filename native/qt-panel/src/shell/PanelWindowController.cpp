@@ -310,12 +310,12 @@ void PanelWindowController::endResize()
         m_settings->set(QStringLiteral("wp-width"), m_window->width());
 }
 
-bool PanelWindowController::fitMode(const QString& mode, int baseColumnCount, const QVariantMap& colWidths)
+bool PanelWindowController::fitMode(const QString& mode, int columnCount, const QVariantMap& colWidths)
 {
     if (!m_window)
         return false;
     const bool stage = mode != QLatin1String("base");
-    const int width = stage ? fullPanelWidth() : basePanelWidth(baseColumnCount, colWidths);
+    const int width = basePanelWidth(columnCount, colWidths);
     m_geometryLockUntil = QDateTime::currentMSecsSinceEpoch() + 700;
     if (!stage)
         m_settings->set(QStringLiteral("wp-width"), width);

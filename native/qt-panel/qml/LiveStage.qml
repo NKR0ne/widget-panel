@@ -7,23 +7,26 @@ Item {
     id: stage
 
     property int storeRevision: 0
+    readonly property int configuredColumns: {
+        storeRevision
+        return Math.max(3, Math.min(6,
+            Number(Store.get("wp-base-columns", 3)) || 3))
+    }
+    readonly property var allFeeds: Live.feedIds()
     readonly property var activeIds: {
         storeRevision
         let config = {}
         try { config = JSON.parse(Store.get("wp-config", "{}")) } catch (e) {}
-        return config.activeIds || []
+        return ModeSettings.activeIds(config, "live", allFeeds)
     }
     readonly property var feeds: {
-        const all = Live.feedIds()
-        if (activeIds.length === 0)
-            return all
-        return all.filter(id => activeIds.indexOf(id) >= 0)
+        return allFeeds.filter(id => activeIds.indexOf(id) >= 0)
     }
 
     Connections {
         target: Store
         function onChanged(key) {
-            if (key === "wp-config")
+            if (key === "wp-config" || key === "wp-base-columns")
                 stage.storeRevision++
         }
     }
@@ -118,7 +121,8 @@ Item {
             Grid {
                 id: liveGrid
                 width: liveScroll.width
-                columns: width >= 920 ? 2 : 1
+                columns: Math.max(1, Math.min(stage.configuredColumns,
+                                              stage.feeds.length))
                 spacing: 8
 
                 Repeater {
