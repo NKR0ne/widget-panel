@@ -120,6 +120,14 @@ GlassCard {
                 return
             card.useExternalFallback(reason, true)
         }
+        function onShutdownRequested() {
+            resolveWatchdog.stop()
+            playbackWatchdog.stop()
+            retryTimer.stop()
+            player.stop()
+            player.source = ""
+            card.hlsUrl = ""
+        }
         function onDetailChanged() {
             if (Live.detailOpen && Live.detailFeedId === card.feedId) {
                 card.pausedForDetail = true

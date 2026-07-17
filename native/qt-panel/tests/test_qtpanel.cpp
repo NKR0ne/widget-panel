@@ -315,14 +315,18 @@ private slots:
             QStringLiteral("live-lcn"),
             QStringLiteral("euronews"),
         }));
-        QVERIFY(live.isYouTube(QStringLiteral("live-bloomberg")));
+        QVERIFY(!live.isYouTube(QStringLiteral("live-bloomberg")));
         QCOMPARE(live.videoId(QStringLiteral("live-bloomberg")),
-                 QStringLiteral("iEpJwprxDdk"));
+                 QStringLiteral("QB5BNdBFujE"));
         QCOMPARE(live.videoId(QStringLiteral("live-france24")),
                  QStringLiteral("HvZt-nh9sGg"));
+        QCOMPARE(live.sourceLabel(QStringLiteral("live-bloomberg")), QStringLiteral("HLS"));
+        QCOMPARE(live.sourceLabel(QStringLiteral("live-radio-canada")), QStringLiteral("HLS"));
         QCOMPARE(live.sourceLabel(QStringLiteral("live-lcn")), QStringLiteral("HLS"));
-        QVERIFY(live.webUrl(QStringLiteral("euronews")).endsWith(
-            QStringLiteral("playlist.m3u8")));
+        QCOMPARE(live.webUrl(QStringLiteral("live-cbc-news")),
+                 QStringLiteral("https://www.cbc.ca/player/play/video/9.4766516"));
+        QCOMPARE(live.webUrl(QStringLiteral("euronews")),
+                 QStringLiteral("https://www.euronews.com/live"));
     }
 
     void liveAudioOwnerRejectsUnknownFeeds()
@@ -343,6 +347,25 @@ private slots:
         QCOMPARE(changed.count(), 2);
     }
 
+    void liveShutdownIsIdempotent()
+    {
+        HttpClient http;
+        LiveFeedService live(&http);
+        QSignalSpy audioChanged(&live, &LiveFeedService::audioFeedIdChanged);
+        QSignalSpy shutdownRequested(&live, &LiveFeedService::shutdownRequested);
+        QSignalSpy resolved(&live, &LiveFeedService::feedResolved);
+
+        live.requestAudio(QStringLiteral("euronews"));
+        live.prepareShutdown();
+        live.prepareShutdown();
+        live.resolve(QStringLiteral("euronews"));
+
+        QCOMPARE(live.audioFeedId(), QString());
+        QCOMPARE(audioChanged.count(), 2);
+        QCOMPARE(shutdownRequested.count(), 1);
+        QCOMPARE(resolved.count(), 0);
+    }
+
     void liveDetailAcceptsOnlyNativeHlsFeeds()
     {
         HttpClient http;
@@ -350,15 +373,17 @@ private slots:
         QSignalSpy detailChanged(&live, &LiveFeedService::detailChanged);
 
         QVERIFY(!live.openDetail(QStringLiteral("not-a-feed")));
-        QVERIFY(!live.openDetail(QStringLiteral("live-bloomberg")));
-        QVERIFY(!live.detailOpen());
-        QCOMPARE(detailChanged.count(), 0);
+        QVERIFY(!live.openDetail(QStringLiteral("live-radio-canada")));
+        QVERIFY(live.openDetail(QStringLiteral("live-bloomberg")));
+        QVERIFY(live.detailOpen());
+        live.closeDetail();
+        QCOMPARE(detailChanged.count(), 2);
 
         QVERIFY(live.openDetail(QStringLiteral("euronews")));
         QVERIFY(live.detailOpen());
         QCOMPARE(live.detailFeedId(), QStringLiteral("euronews"));
         QVERIFY(live.detailUrl().endsWith(QStringLiteral("playlist.m3u8")));
-        QCOMPARE(detailChanged.count(), 1);
+        QCOMPARE(detailChanged.count(), 3);
 
         live.requestAudio(QStringLiteral("euronews"));
         QCOMPARE(live.audioFeedId(), QStringLiteral("euronews"));
@@ -367,7 +392,7 @@ private slots:
         QCOMPARE(live.detailFeedId(), QString());
         QCOMPARE(live.detailUrl(), QString());
         QCOMPARE(live.audioFeedId(), QString());
-        QCOMPARE(detailChanged.count(), 2);
+        QCOMPARE(detailChanged.count(), 4);
     }
 };
 

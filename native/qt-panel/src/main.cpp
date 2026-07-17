@@ -1,6 +1,7 @@
 #include <QDir>
 #include <QCommandLineOption>
 #include <QCommandLineParser>
+#include <QEventLoop>
 #include <QGuiApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -408,6 +409,10 @@ int main(int argc, char* argv[])
         QTimer::singleShot(exitAfterMs, &app, &QCoreApplication::quit);
     }
     const int rc = app.exec();
+    live.prepareShutdown();
+    QEventLoop multimediaShutdownLoop;
+    QTimer::singleShot(600, &multimediaShutdownLoop, &QEventLoop::quit);
+    multimediaShutdownLoop.exec();
     settings.flush();
     return rc;
 }

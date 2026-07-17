@@ -96,21 +96,38 @@ LiveFeedService::LiveFeedService(HttpClient* http, QObject* parent)
     : QObject(parent)
     , m_http(http)
 {
-    // Port of LIVE_FEEDS in renderer/widgets/live/LiveFeedGrid.jsx +
-    // EURONEWS_HLS_URL from euronews.constants.js.
+    // Provider-native transport avoids browser policy and network Restricted
+    // Mode. YouTube ids remain available as fallbacks for dynamic providers.
     m_feeds = {
-        {QStringLiteral("live-bloomberg"), QStringLiteral("Bloomberg Live"), true,
-         QStringLiteral("iEpJwprxDdk")},
-        {QStringLiteral("live-radio-canada"), QStringLiteral("Radio-Canada.info"), true,
+        {QStringLiteral("live-bloomberg"), QStringLiteral("Bloomberg Live"),
+         Transport::DirectHls,
+         QStringLiteral("https://www.bloomberg.com/media-manifest/streams/us.m3u8"),
+         QStringLiteral("https://www.bloomberg.com/live/us-btv"),
+         QStringLiteral("QB5BNdBFujE")},
+        {QStringLiteral("live-radio-canada"), QStringLiteral("Radio-Canada.info"),
+         Transport::MediaValidation,
+         QStringLiteral("https://services.radio-canada.ca/media/validation/v2?"
+                        "appCode=medianetlive&idMedia=36479&tech=hls&output=json"),
+         QStringLiteral("https://ici.radio-canada.ca/info/videos/1-14028569/rdi-en-direct"),
          QStringLiteral("oacvZh5Rmcg")},
-        {QStringLiteral("live-france24"), QStringLiteral("France 24"), true,
+        {QStringLiteral("live-france24"), QStringLiteral("France 24"),
+         Transport::DirectHls,
+         QStringLiteral("https://live.france24.com/hls/live/2037218/"
+                        "F24_EN_HI_HLS/master_2300.m3u8"),
+         QStringLiteral("https://www.france24.com/en/live"),
          QStringLiteral("HvZt-nh9sGg")},
-        {QStringLiteral("live-cbc-news"), QStringLiteral("CBC News"), true,
+        {QStringLiteral("live-cbc-news"), QStringLiteral("CBC News"),
+         Transport::MediaValidation,
+         QStringLiteral("https://services.radio-canada.ca/media/validation/v2?"
+                        "appCode=medianetlive&idMedia=15717&tech=hls&output=json"),
+         QStringLiteral("https://www.cbc.ca/player/play/video/9.4766516"),
          QStringLiteral("5vfaDsMhCF4")},
-        {QStringLiteral("live-lcn"), QStringLiteral("LCN"), false,
-         QStringLiteral("https://tvalive.akamaized.net/hls/live/2014213/tvan01/tvan01.m3u8")},
-        {QStringLiteral("euronews"), QStringLiteral("Euronews"), false,
-         QStringLiteral("https://dash4.antik.sk/live/test_euronews/playlist.m3u8")},
+        {QStringLiteral("live-lcn"), QStringLiteral("LCN"), Transport::DirectHls,
+         QStringLiteral("https://tvalive.akamaized.net/hls/live/2014213/tvan01/tvan01.m3u8"),
+         QStringLiteral("https://www.qub.ca/tvaplus/tva/en-direct"), {}},
+        {QStringLiteral("euronews"), QStringLiteral("Euronews"), Transport::DirectHls,
+         QStringLiteral("https://dash4.antik.sk/live/test_euronews/playlist.m3u8"),
+         QStringLiteral("https://www.euronews.com/live"), {}},
     };
 }
 
@@ -134,19 +151,23 @@ QString LiveFeedService::sourceLabel(const QString& feedId) const
     const Feed* feed = feedById(feedId);
     if (!feed)
         return {};
-    return feed->youtube ? QStringLiteral("YouTube") : QStringLiteral("HLS");
+    return feed->transport == Transport::YouTube
+        ? QStringLiteral("YouTube") : QStringLiteral("HLS");
 }
 
 QString LiveFeedService::videoId(const QString& feedId) const
 {
     const Feed* feed = feedById(feedId);
-    return (feed && feed->youtube) ? feed->source : QString();
+    if (!feed)
+        return {};
+    return feed->transport == Transport::YouTube
+        ? feed->source : feed->youtubeFallbackId;
 }
 
 bool LiveFeedService::isYouTube(const QString& feedId) const
 {
     const Feed* feed = feedById(feedId);
-    return feed ? feed->youtube : false;
+    return feed && feed->transport == Transport::YouTube;
 }
 
 bool LiveFeedService::isKnownFeed(const QString& feedId) const
@@ -180,11 +201,11 @@ QString LiveFeedService::webUrl(const QString& feedId) const
     const Feed* feed = feedById(feedId);
     if (!feed)
         return {};
-    if (feed->youtube) {
+    if (feed->transport == Transport::YouTube) {
         return QStringLiteral("https://www.youtube.com/watch?v=%1").arg(
             QString::fromUtf8(QUrl::toPercentEncoding(feed->source)));
     }
-    return feed->source;
+    return feed->webUrl.isEmpty() ? feed->source : feed->webUrl;
 }
 
 void LiveFeedService::requestAudio(const QString& feedId)
@@ -205,6 +226,19 @@ void LiveFeedService::notePlayback(const QString& feedId, const QString& state)
     qInfo() << "[live]" << feedId << "playback:" << state;
 }
 
+void LiveFeedService::prepareShutdown()
+{
+    if (m_shuttingDown)
+        return;
+    m_shuttingDown = true;
+    m_pending.clear();
+    for (const Feed& feed : m_feeds)
+        m_resolveGenerations.insert(feed.id, m_resolveGenerations.value(feed.id) + 1);
+    requestAudio(QString());
+    emit shutdownRequested();
+    qInfo() << "[live] multimedia shutdown requested";
+}
+
 void LiveFeedService::cancelResolve(const QString& feedId)
 {
     if (!isKnownFeed(feedId))
@@ -218,9 +252,13 @@ void LiveFeedService::cancelResolve(const QString& feedId)
 bool LiveFeedService::openDetail(const QString& feedId, const QString& hlsUrl)
 {
     const Feed* feed = feedById(feedId);
-    if (!feed || feed->youtube)
+    if (!feed || feed->transport == Transport::YouTube)
         return false;
-    const QString target = hlsUrl.trimmed().isEmpty() ? feed->source : hlsUrl.trimmed();
+    QString target = hlsUrl.trimmed();
+    if (target.isEmpty() && feed->transport == Transport::DirectHls)
+        target = feed->source;
+    if (target.isEmpty())
+        return false;
     const QUrl url(target);
     if (!url.isValid()
         || (url.scheme() != QLatin1String("http") && url.scheme() != QLatin1String("https")))
@@ -251,15 +289,27 @@ void LiveFeedService::closeDetail()
 
 void LiveFeedService::resolve(const QString& feedId, bool force)
 {
+    if (m_shuttingDown)
+        return;
     const Feed* feed = feedById(feedId);
     if (!feed) {
         emit feedFailed(feedId, QStringLiteral("unknown feed"));
         return;
     }
 
-    if (!feed->youtube) {
+    if (feed->transport == Transport::DirectHls) {
         qInfo() << "[live]" << feedId << "direct HLS:" << QUrl(feed->source).host();
         emit feedResolved(feedId, feed->source);
+        return;
+    }
+
+    if (feed->transport == Transport::MediaValidation) {
+        if (!force && m_pending.contains(feedId))
+            return;
+        const quint64 generation = m_resolveGenerations.value(feedId) + 1;
+        m_resolveGenerations.insert(feedId, generation);
+        m_pending.insert(feedId);
+        resolveMediaValidation(*feed, generation);
         return;
     }
 
@@ -283,11 +333,56 @@ void LiveFeedService::resolve(const QString& feedId, bool force)
     resolveYouTube(*feed, generation);
 }
 
+void LiveFeedService::resolveMediaValidation(const Feed& feed, quint64 generation)
+{
+    const QString feedId = feed.id;
+    m_http->getJson(QUrl(feed.source), this,
+                    [this, feedId, generation](const QJsonDocument& doc,
+                                               const QString& error) {
+        if (m_resolveGenerations.value(feedId) != generation) {
+            qInfo() << "[live]" << feedId << "ignored stale provider response";
+            return;
+        }
+
+        const Feed* feed = feedById(feedId);
+        const QString manifest = doc.object().value(QLatin1String("url")).toString();
+        const QUrl manifestUrl(manifest);
+        if (error.isEmpty() && manifestUrl.isValid()
+            && (manifestUrl.scheme() == QLatin1String("http")
+                || manifestUrl.scheme() == QLatin1String("https"))) {
+            m_pending.remove(feedId);
+            qInfo() << "[live]" << feedId << "provider manifest host:"
+                    << manifestUrl.host();
+            emit feedResolved(feedId, manifest);
+            return;
+        }
+
+        if (feed && !feed->youtubeFallbackId.isEmpty()) {
+            qWarning() << "[live]" << feedId
+                       << "provider resolution failed; trying YouTube fallback:"
+                       << (error.isEmpty() ? QStringLiteral("manifest unavailable") : error);
+            resolveYouTube(*feed, generation);
+            return;
+        }
+
+        m_pending.remove(feedId);
+        emit feedFailed(feedId, error.isEmpty()
+            ? QStringLiteral("Provider stream unavailable") : error);
+    });
+}
+
 void LiveFeedService::resolveYouTube(const Feed& feed, quint64 generation)
 {
+    const QString videoId = feed.transport == Transport::YouTube
+        ? feed.source : feed.youtubeFallbackId;
+    if (videoId.isEmpty()) {
+        m_pending.remove(feed.id);
+        emit feedFailed(feed.id, QStringLiteral("YouTube fallback unavailable"));
+        return;
+    }
     // bpctr/has_verified skip the content-warning interstitials.
     const QUrl watchUrl(QStringLiteral(
-        "https://www.youtube.com/watch?v=%1&bpctr=9999999999&has_verified=1").arg(feed.source));
+        "https://www.youtube.com/watch?v=%1&bpctr=9999999999&has_verified=1").arg(videoId));
     const QString feedId = feed.id;
 
     m_http->getText(watchUrl, this,
@@ -334,7 +429,8 @@ void LiveFeedService::resolveYouTube(const Feed& feed, quint64 generation)
             {QStringLiteral("context"), QJsonObject{
                  {QStringLiteral("client"), client}
              }},
-            {QStringLiteral("videoId"), feed->source},
+            {QStringLiteral("videoId"), feed->transport == Transport::YouTube
+                 ? feed->source : feed->youtubeFallbackId},
             {QStringLiteral("contentCheckOk"), true},
             {QStringLiteral("racyCheckOk"), true},
         };
