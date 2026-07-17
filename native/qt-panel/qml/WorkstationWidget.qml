@@ -387,7 +387,8 @@ GlassCard {
             width: parent.width
             spacing: 8
             Text {
-                width: Math.max(70, parent.width - tabRow.width - 8)
+                width: card.detailMode ? parent.width
+                                       : Math.max(70, parent.width - tabRow.width - 8)
                 text: card.headline
                 color: Theme.textPrimary
                 font.pixelSize: 21
@@ -396,6 +397,7 @@ GlassCard {
             }
             Row {
                 id: tabRow
+                visible: !card.detailMode
                 spacing: 4
                 anchors.verticalCenter: parent.verticalCenter
                 Repeater {
@@ -438,7 +440,8 @@ GlassCard {
 
         Flow {
             id: graphFlow
-            visible: Workstation.connected && card.tab === "graphs"
+            visible: Workstation.connected
+                     && (card.detailMode || card.tab === "graphs")
             width: parent.width
             height: {
                 card.snapRev
@@ -497,12 +500,28 @@ GlassCard {
                             const ctx = getContext("2d")
                             ctx.reset()
                             ctx.clearRect(0, 0, width, height)
-                            ctx.strokeStyle = "rgba(255,255,255,0.08)"
+
+                            // Task Manager-style grid, confined to the chart canvas.
                             ctx.lineWidth = 1
-                            ctx.beginPath()
-                            ctx.moveTo(0, height - 0.5)
-                            ctx.lineTo(width, height - 0.5)
-                            ctx.stroke()
+                            for (let valueStep = 1; valueStep <= 10; valueStep++) {
+                                const ratio = valueStep / 10
+                                const y = Math.round((1 - ratio) * (height - 1)) + 0.5
+                                ctx.strokeStyle = valueStep === 10
+                                    ? "rgba(255,255,255,0.13)"
+                                    : "rgba(255,255,255,0.07)"
+                                ctx.beginPath()
+                                ctx.moveTo(0, y)
+                                ctx.lineTo(width, y)
+                                ctx.stroke()
+                            }
+                            ctx.strokeStyle = "rgba(255,255,255,0.08)"
+                            for (let timeStep = 1; timeStep <= 3; timeStep++) {
+                                const x = Math.round(timeStep / 4 * (width - 1)) + 0.5
+                                ctx.beginPath()
+                                ctx.moveTo(x, 0)
+                                ctx.lineTo(x, height)
+                                ctx.stroke()
+                            }
 
                             const max = Math.max(1, Number(graph.spec.max) || 100)
                             const series = graph.spec.series || []
@@ -545,9 +564,28 @@ GlassCard {
         }
 
         Column {
-            visible: Workstation.connected && card.tab === "details"
+            visible: Workstation.connected
+                     && (card.detailMode || card.tab === "details")
             width: parent.width
             spacing: 0
+
+            Rectangle {
+                visible: card.detailMode
+                width: parent.width
+                height: 1
+                color: Theme.cardStroke
+            }
+
+            Text {
+                visible: card.detailMode
+                width: parent.width
+                height: 28
+                text: "Details"
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontSizeCaption
+                font.weight: Font.DemiBold
+                verticalAlignment: Text.AlignVCenter
+            }
 
             Repeater {
                 model: detailModel

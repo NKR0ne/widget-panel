@@ -126,16 +126,19 @@ Item {
                 height: childrenRect.height
 
                 WorkstationWidget {
+                    id: cpuCard
                     kind: "cpu"
                     visible: stage.isActive("workstation-cpu")
                     width: (primaryGrid.width - (primaryGrid.columns - 1) * primaryGrid.spacing)
                            / primaryGrid.columns
+                    height: implicitHeight
                 }
                 WorkstationWidget {
                     kind: "gpu"
                     visible: stage.isActive("workstation-gpu")
                     width: (primaryGrid.width - (primaryGrid.columns - 1) * primaryGrid.spacing)
                            / primaryGrid.columns
+                    height: cpuCard.height
                 }
             }
 
@@ -147,22 +150,26 @@ Item {
                 height: childrenRect.height
 
                 WorkstationWidget {
+                    id: ramCard
                     kind: "ram"
                     visible: stage.isActive("workstation-ram")
                     width: (secondaryGrid.width - (secondaryGrid.columns - 1) * secondaryGrid.spacing)
                            / secondaryGrid.columns
+                    height: implicitHeight
                 }
                 WorkstationWidget {
                     kind: "disk"
                     visible: stage.isActive("workstation-disk")
                     width: (secondaryGrid.width - (secondaryGrid.columns - 1) * secondaryGrid.spacing)
                            / secondaryGrid.columns
+                    height: ramCard.height
                 }
                 WorkstationWidget {
                     kind: "network"
                     visible: stage.isActive("workstation-network")
                     width: (secondaryGrid.width - (secondaryGrid.columns - 1) * secondaryGrid.spacing)
                            / secondaryGrid.columns
+                    height: ramCard.height
                 }
             }
 
