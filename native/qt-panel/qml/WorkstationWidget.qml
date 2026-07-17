@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Layouts
 import QtPanel.Native
 
 // One telemetry card per metric (kind: cpu | gpu | ram | disk | network),
@@ -309,6 +310,25 @@ GlassCard {
         return availableWidth
     }
 
+    function graphBaseHeight(spec) {
+        return Math.max(26, Number(spec.height) || 42) + 22
+    }
+
+    function graphFlowRows(availableWidth) {
+        const specs = graphSpecs()
+        let x = 0
+        let rows = 0
+        for (let i = 0; i < specs.length; i++) {
+            const itemWidth = graphWidth(i, availableWidth)
+            if (x > 0 && x + itemWidth > availableWidth + 0.5) {
+                rows++
+                x = 0
+            }
+            x += itemWidth + 5
+        }
+        return specs.length > 0 ? rows + 1 : 0
+    }
+
     function graphFlowHeight(availableWidth) {
         const specs = graphSpecs()
         let x = 0
@@ -316,7 +336,7 @@ GlassCard {
         let rowHeight = 0
         for (let i = 0; i < specs.length; i++) {
             const itemWidth = graphWidth(i, availableWidth)
-            const itemHeight = Math.max(26, Number(specs[i].height) || 42) + 22
+            const itemHeight = graphBaseHeight(specs[i])
             if (x > 0 && x + itemWidth > availableWidth + 0.5) {
                 y += rowHeight + 5
                 x = 0
@@ -326,6 +346,18 @@ GlassCard {
             rowHeight = Math.max(rowHeight, itemHeight)
         }
         return specs.length > 0 ? y + rowHeight : 0
+    }
+
+    function stretchedGraphHeight(spec, availableWidth, availableHeight) {
+        const baseHeight = graphBaseHeight(spec)
+        if (detailMode || tab !== "graphs")
+            return baseHeight
+        const rows = graphFlowRows(availableWidth)
+        if (rows <= 0)
+            return baseHeight
+        const extraHeight = Math.max(
+            0, availableHeight - graphFlowHeight(availableWidth))
+        return baseHeight + extraHeight / rows
     }
 
     function footerTiles() {
@@ -362,16 +394,14 @@ GlassCard {
         return []
     }
 
-    Column {
+    ColumnLayout {
         id: body
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
+        anchors.fill: parent
         anchors.margins: 12
         spacing: 8
 
         CardHeader {
-            width: parent.width
+            Layout.fillWidth: true
             title: card.title
             subtitle: card.subline
             status: card.live ? "LIVE" : "STALE"
@@ -384,7 +414,7 @@ GlassCard {
         }
 
         Row {
-            width: parent.width
+            Layout.fillWidth: true
             spacing: 8
             Text {
                 width: card.detailMode ? parent.width
@@ -431,7 +461,7 @@ GlassCard {
 
         Text {
             visible: !Workstation.connected
-            width: parent.width
+            Layout.fillWidth: true
             text: "Telemetry service unavailable. Start WorkstationMonitor with telemetry enabled."
             color: Theme.textSecondary
             font.pixelSize: Theme.fontSizeCaption
@@ -442,11 +472,14 @@ GlassCard {
             id: graphFlow
             visible: Workstation.connected
                      && (card.detailMode || card.tab === "graphs")
-            width: parent.width
-            height: {
+            readonly property real naturalHeight: {
                 card.snapRev
                 return visible ? card.graphFlowHeight(width) : 0
             }
+            Layout.fillWidth: true
+            Layout.fillHeight: visible && !card.detailMode
+            Layout.minimumHeight: naturalHeight
+            Layout.preferredHeight: naturalHeight
             spacing: 5
 
             Repeater {
@@ -456,7 +489,8 @@ GlassCard {
                     required property var spec
                     required property int index
                     width: card.graphWidth(index, graphFlow.width)
-                    height: Math.max(26, Number(spec.height) || 42) + 22
+                    height: card.stretchedGraphHeight(
+                        spec, graphFlow.width, graphFlow.height)
                     radius: 6
                     color: Qt.rgba(0.01, 0.03, 0.07, 0.28)
                     border.color: Theme.cardStroke
@@ -515,8 +549,9 @@ GlassCard {
                                 ctx.stroke()
                             }
                             ctx.strokeStyle = "rgba(255,255,255,0.08)"
-                            for (let timeStep = 1; timeStep <= 3; timeStep++) {
-                                const x = Math.round(timeStep / 4 * (width - 1)) + 0.5
+                            const timeGrid = [0.25, 0.50, 0.75]
+                            for (const ratio of timeGrid) {
+                                const x = Math.round(ratio * (width - 1)) + 0.5
                                 ctx.beginPath()
                                 ctx.moveTo(x, 0)
                                 ctx.lineTo(x, height)
@@ -557,6 +592,8 @@ GlassCard {
                             }
                         }
 
+                        onWidthChanged: requestPaint()
+                        onHeightChanged: requestPaint()
                         Component.onCompleted: requestPaint()
                     }
                 }
@@ -566,7 +603,7 @@ GlassCard {
         Column {
             visible: Workstation.connected
                      && (card.detailMode || card.tab === "details")
-            width: parent.width
+            Layout.fillWidth: true
             spacing: 0
 
             Rectangle {
@@ -617,9 +654,16 @@ GlassCard {
             }
         }
 
+        Item {
+            visible: !card.detailMode && !graphFlow.visible
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.minimumHeight: 0
+        }
+
         Grid {
             visible: Workstation.connected && card.kind !== "cpu" && card.kind !== "gpu"
-            width: parent.width
+            Layout.fillWidth: true
             columns: Math.min(footerModel.count, 4)
             spacing: 6
             Repeater {
@@ -650,7 +694,7 @@ GlassCard {
         Column {
             id: instrumentFooter
             visible: Workstation.connected && (card.kind === "cpu" || card.kind === "gpu")
-            width: parent.width
+            Layout.fillWidth: true
             spacing: 6
 
             Rectangle {
