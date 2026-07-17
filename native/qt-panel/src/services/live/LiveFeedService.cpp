@@ -84,8 +84,8 @@ QString youtubeConfigValue(const QString& html, const QString& key)
 bool isRestrictedPlayback(const QString& reason)
 {
     static const QRegularExpression restrictedRe(
-        QStringLiteral("video unavailable|restricted mode|content is not available|"
-                       "not available in your country|blocked by your administrator"),
+        QStringLiteral("restricted mode|blocked by your administrator|"
+                       "network administrator|administrator has restricted|restricted by"),
         QRegularExpression::CaseInsensitiveOption);
     return restrictedRe.match(reason).hasMatch();
 }
