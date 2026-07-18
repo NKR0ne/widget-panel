@@ -14,6 +14,7 @@ param(
     [ValidateSet('base', 'news', 'monitor', 'live')]
     [string]$StartMode = 'base',
     [switch]$DiagFitMode,
+    [switch]$DiagPressReader,
     [string]$DiagIslandUrl = '',
     [int]$StartupCheckSeconds = 4,
     [switch]$Startup,
@@ -136,6 +137,9 @@ $args += @('--renderer', $Renderer)
 $args += @('--start-mode', $StartMode)
 if ($DiagFitMode) {
     $args += '--diag-fitmode'
+}
+if ($DiagPressReader) {
+    $args += '--diag-pressreader'
 }
 if (-not [string]::IsNullOrWhiteSpace($DiagIslandUrl)) {
     $args += @('--diag-island-url', $DiagIslandUrl)

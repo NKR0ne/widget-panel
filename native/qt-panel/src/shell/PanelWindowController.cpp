@@ -413,6 +413,16 @@ void PanelWindowController::reportIslandState(const QString& url, const QString&
 
 void PanelWindowController::openIsland(const QString& url)
 {
+    openSpotlight(url, QStringLiteral("web"));
+}
+
+void PanelWindowController::openPressReader(const QString& url)
+{
+    openSpotlight(url, QStringLiteral("pressreader"));
+}
+
+void PanelWindowController::openSpotlight(const QString& url, const QString& kind)
+{
     if (!m_window || url.trimmed().isEmpty() || !m_webProfile)
         return;
     QString target = url.trimmed();
@@ -434,15 +444,19 @@ void PanelWindowController::openIsland(const QString& url)
                           fullWidth, height);
 
     m_islandOpen = true;
+    m_islandKind = kind;
     m_islandUrl = target;
     m_islandTitle.clear();
     m_islandCanGoBack = false;
     m_islandCanGoForward = false;
     m_islandReadyState.clear();
     startIslandLoad(QStringLiteral("Opening"));
-    emit islandOpenRequested(target);
+    if (kind == QLatin1String("pressreader"))
+        emit pressReaderOpenRequested(target);
+    else
+        emit islandOpenRequested(target);
     notifyHelperHwnds();
-    qInfo() << "[web] spotlight opened" << target
+    qInfo() << "[web] spotlight opened" << kind << target
             << "windowW=" << fullWidth << "spotlightX=" << m_islandPanelWidth;
 }
 
@@ -603,6 +617,7 @@ void PanelWindowController::closeIsland()
     emit islandCloseRequested();
     m_islandReadyTimeout.stop();
     m_islandOpen = false;
+    m_islandKind.clear();
     m_islandLoading = false;
     m_islandUrl.clear();
     m_islandStatus.clear();

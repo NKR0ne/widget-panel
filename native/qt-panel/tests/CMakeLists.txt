@@ -4,12 +4,14 @@ qt_add_executable(qt-panel-tests
     test_qtpanel.cpp
     ${CMAKE_SOURCE_DIR}/src/core/TextFix.cpp
     ${CMAKE_SOURCE_DIR}/src/core/SettingsStore.cpp
+    ${CMAKE_SOURCE_DIR}/src/core/SecretVault.cpp
     ${CMAKE_SOURCE_DIR}/src/core/HttpClient.cpp
     ${CMAKE_SOURCE_DIR}/src/shell/FocusPolicy.cpp
     ${CMAKE_SOURCE_DIR}/src/shell/SystemTheme.cpp
     ${CMAKE_SOURCE_DIR}/src/services/news/NewsService.cpp
     ${CMAKE_SOURCE_DIR}/src/services/reader/ReaderService.cpp
     ${CMAKE_SOURCE_DIR}/src/services/live/LiveFeedService.cpp
+    ${CMAKE_SOURCE_DIR}/src/services/pressreader/PressReaderService.cpp
 )
 
 target_include_directories(qt-panel-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
@@ -19,6 +21,7 @@ target_link_libraries(qt-panel-tests PRIVATE
     Qt6::Network
     Qt6::Xml
     Qt6::Gui
+    advapi32
 )
 
 add_test(NAME qt-panel-tests COMMAND qt-panel-tests)

@@ -13,6 +13,7 @@ class DirectCameraClient;
 class LiveFeedService;
 class MsGraphService;
 class PanelWindowController;
+class PressReaderService;
 class SecretVault;
 class SettingsStore;
 class StarvisService;
@@ -30,7 +31,8 @@ class DiagnosticsService : public QObject {
 
 public:
     DiagnosticsService(SettingsStore* settings, SecretVault* vault,
-                       PanelWindowController* panel, MsGraphService* graph,
+                       PanelWindowController* panel, PressReaderService* pressReader,
+                       MsGraphService* graph,
                        LiveFeedService* live, WorkstationClient* workstation,
                        CameraClient* camera, DirectCameraClient* directCamera,
                        StarvisService* starvis,
@@ -74,6 +76,7 @@ private:
     SettingsStore* m_settings = nullptr;
     SecretVault* m_vault = nullptr;
     PanelWindowController* m_panel = nullptr;
+    PressReaderService* m_pressReader = nullptr;
     MsGraphService* m_graph = nullptr;
     LiveFeedService* m_live = nullptr;
     WorkstationClient* m_workstation = nullptr;

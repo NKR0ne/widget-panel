@@ -210,6 +210,12 @@ mode stays fully native; the browser island is an escalation path rather than
 the default article renderer. The persistent profile provides cookie continuity
 without sharing or reparenting a personal browser window.
 
+PressReader has a separate disk-backed WebEngine profile and a dedicated
+columns 4-6 spotlight. Its service owns session/authentication policy even when
+the optional Base card is disabled. Named diagnostic profiles never submit
+stored credentials automatically; proxy/catalog DOM adapters are bounded and
+versioned resources rather than long-running scripts embedded in a card.
+
 ### 2.5 Threading model
 
 - UI thread: QML, models, input. Never blocks on I/O.
@@ -337,6 +343,6 @@ box; cold start < 1s to first frame.*
 - No cross-platform support (Win32 integration is the point).
 - No plugin ABI for third-party widgets yet — the contract is internal until
   the registry stabilizes.
-- PressReader integration uses the persistent Qt WebEngine profile; credentials
-  remain in the Windows vault and automation remains bounded.
+- PressReader integration uses its own persistent Qt WebEngine profile;
+  credentials remain in the Windows vault and automation remains bounded.
 - The Electron app is not modified; it is retired only after Phase 5 parity.

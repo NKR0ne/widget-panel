@@ -86,7 +86,7 @@ Item {
     }
     function pressReaderUrl() {
         return Store.get("wp-pressreader-url",
-                         "https://www.pressreader.com.ezproxy.bibliothequedequebec.qc.ca/fr/catalog/featured")
+                         "https://ezproxy.bibliothequedequebec.qc.ca/login?url=https%3A%2F%2Fwww.pressreader.com")
     }
     function diagColor(state) {
         if (state === "ok")
@@ -634,9 +634,9 @@ Item {
                 text: "PRESSREADER"; color: Theme.textSecondary; font.pixelSize: 9
                 font.letterSpacing: 1; topPadding: 4
             }
-            Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-pressreader-url"; item.fallback = "https://www.pressreader.com.ezproxy.bibliothequedequebec.qc.ca/fr/catalog/featured"; item.placeholder = "URL catalogue PressReader" } }
-            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "pressreader-user"; item.placeholder = "Utilisateur PressReader"; item.secret = false } }
-            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "pressreader-password"; item.placeholder = "Mot de passe PressReader"; item.secret = true } }
+            Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-pressreader-url"; item.fallback = "https://ezproxy.bibliothequedequebec.qc.ca/login?url=https%3A%2F%2Fwww.pressreader.com"; item.placeholder = "URL d'acces de la bibliotheque" } }
+            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "pressreader-user"; item.placeholder = "No d'usager de la bibliotheque"; item.secret = false } }
+            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "pressreader-password"; item.placeholder = "Mot de passe de la bibliotheque"; item.secret = true } }
             Row {
                 width: parent.width
                 spacing: 6
@@ -648,7 +648,7 @@ Item {
                     MouseArea {
                         id: pressOpenMouse; anchors.fill: parent; hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: Panel.openIsland(modal.pressReaderUrl())
+                        onClicked: PressReader.openCatalog()
                     }
                 }
                 Rectangle {
@@ -659,7 +659,7 @@ Item {
                     MouseArea {
                         id: pressForgetMouse; anchors.fill: parent; hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: { Vault.remove("pressreader-user"); Vault.remove("pressreader-password") }
+                        onClicked: PressReader.forgetCredentials()
                     }
                 }
             }

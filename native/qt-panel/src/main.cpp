@@ -32,6 +32,7 @@
 #include "services/live/LiveFeedService.h"
 #include "services/msgraph/MsGraphService.h"
 #include "services/news/NewsService.h"
+#include "services/pressreader/PressReaderService.h"
 #include "services/reader/ReaderService.h"
 #include "services/starvis/StarvisService.h"
 #include "services/stocks/StocksModel.h"
@@ -93,6 +94,9 @@ int main(int argc, char* argv[])
         QStringLiteral("diag-island-url"),
         QStringLiteral("Open a URL in the embedded web island for bounded diagnostics."),
         QStringLiteral("url"));
+    const QCommandLineOption diagPressReaderOption(
+        QStringLiteral("diag-pressreader"),
+        QStringLiteral("Open the dedicated PressReader spotlight without automatic login."));
     parser.addOption(noHelperOption);
     parser.addOption(profileOption);
     parser.addOption(exitAfterOption);
@@ -100,6 +104,7 @@ int main(int argc, char* argv[])
     parser.addOption(rendererOption);
     parser.addOption(startModeOption);
     parser.addOption(diagIslandUrlOption);
+    parser.addOption(diagPressReaderOption);
     parser.process(app);
 
     const QString startMode = parser.value(startModeOption).trimmed().toLower();
@@ -180,6 +185,15 @@ int main(int argc, char* argv[])
         settings.set(QStringLiteral("wp-pinned"), true);
         settings.set(QStringLiteral("wp-pinned-opacity"), QStringLiteral("1"));
     }
+    const QString legacyPressReaderUrl = settings.get(
+        QStringLiteral("wp-pressreader-url")).toString().trimmed();
+    if (legacyPressReaderUrl.contains(
+            QLatin1String("pressreader.com.ezproxy.bibliothequedequebec.qc.ca"),
+            Qt::CaseInsensitive)) {
+        settings.set(QStringLiteral("wp-pressreader-url"),
+                     PressReaderService::defaultEntryUrl());
+        qInfo() << "[pressreader] migrated legacy rewritten catalog URL to library entry point";
+    }
 
     // Move secrets out of plaintext settings into the Windows Credential
     // Manager (one-time; no-op once migrated). Camera password is split out of
@@ -254,6 +268,31 @@ int main(int argc, char* argv[])
     qInfo() << "[web] persistent Qt WebEngine profile at"
             << QDir::toNativeSeparators(webDataDir);
 
+    QQuickWebEngineProfile pressReaderProfile(QStringLiteral("qt-panel-pressreader"), &app);
+    const QString pressReaderDataDir = dataDir + QStringLiteral("/webengine-pressreader");
+    const QString pressReaderCacheDir = dataDir + QStringLiteral("/webengine-pressreader-cache");
+    QDir().mkpath(pressReaderDataDir);
+    QDir().mkpath(pressReaderCacheDir);
+    pressReaderProfile.setOffTheRecord(false);
+    pressReaderProfile.setPersistentStoragePath(pressReaderDataDir);
+    pressReaderProfile.setCachePath(pressReaderCacheDir);
+    pressReaderProfile.setHttpCacheType(QQuickWebEngineProfile::DiskHttpCache);
+    pressReaderProfile.setPersistentCookiesPolicy(
+        QQuickWebEngineProfile::ForcePersistentCookies);
+    pressReaderProfile.setPersistentPermissionsPolicy(
+        QQuickWebEngineProfile::PersistentPermissionsPolicy::AskEveryTime);
+    pressReaderProfile.setHttpAcceptLanguage(
+        QStringLiteral("fr-CA,fr;q=0.9,en-CA;q=0.8,en;q=0.7"));
+    pressReaderProfile.setDownloadPath(
+        QStandardPaths::writableLocation(QStandardPaths::DownloadLocation));
+    QObject::connect(&pressReaderProfile, &QQuickWebEngineProfile::downloadRequested,
+                     [](QQuickWebEngineDownloadRequest* request) {
+        if (request)
+            request->accept();
+    });
+    qInfo() << "[pressreader] isolated WebEngine profile at"
+            << QDir::toNativeSeparators(pressReaderDataDir);
+
     HelperServer helper;
     PanelWindowController controller(&settings, &helper, &webProfile);
 
@@ -265,11 +304,13 @@ int main(int argc, char* argv[])
     MsGraphService msGraph(&settings, &http);
     LiveFeedService live(&http);
     ReaderService reader(&http);
+    PressReaderService pressReader(&settings, &vault, profile.isEmpty());
     StarvisService starvis(&settings, &vault, &http, &weather, &stocks, &news, &workstation);
     auto* cameraProvider = new CameraImageProvider(); // engine takes ownership
     CameraClient camera(&settings, &vault, cameraProvider);
     DirectCameraClient directCamera(&settings, &vault);
-    DiagnosticsService diagnostics(&settings, &vault, &controller, &msGraph, &live,
+    DiagnosticsService diagnostics(&settings, &vault, &controller, &pressReader,
+                                   &msGraph, &live,
                                    &workstation, &camera, &directCamera, &starvis, &stocks);
 
     // Outlook unread count → AppBar pill badge (and any future overlay).
@@ -288,6 +329,16 @@ int main(int argc, char* argv[])
     });
     QObject::connect(&controller, &PanelWindowController::tradingViewSessionCaptured,
                      &stocks, &StocksModel::refreshWatchlists);
+    QObject::connect(&pressReader, &PressReaderService::openRequested,
+                     &controller, &PanelWindowController::openPressReader);
+    QObject::connect(&pressReader, &PressReaderService::closeRequested,
+                     &controller, &PanelWindowController::closeIsland);
+    QObject::connect(&controller, &PanelWindowController::islandChanged,
+                     &pressReader, [&controller, &pressReader] {
+        if (!controller.islandOpen()
+            || controller.islandKind() != QLatin1String("pressreader"))
+            pressReader.surfaceClosed();
+    });
 
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Panel", &controller);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Store", &settings);
@@ -298,6 +349,7 @@ int main(int argc, char* argv[])
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "MsGraph", &msGraph);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Live", &live);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Reader", &reader);
+    qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "PressReader", &pressReader);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Starvis", &starvis);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Camera", &camera);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "DirectCamera", &directCamera);
@@ -312,6 +364,8 @@ int main(int argc, char* argv[])
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty(QStringLiteral("StartupMode"), startMode);
     engine.rootContext()->setContextProperty(QStringLiteral("WebProfile"), &webProfile);
+    engine.rootContext()->setContextProperty(QStringLiteral("PressReaderProfile"),
+                                             &pressReaderProfile);
     QmlNetworkFactory netFactory;
     engine.setNetworkAccessManagerFactory(&netFactory);
     engine.addImageProvider(QStringLiteral("camera"), cameraProvider);
@@ -347,7 +401,8 @@ int main(int argc, char* argv[])
 
     // Temporary diagnostic: reproduce the settings-stepper column change and
     // dump scene grabs before/after to verify rendering survives the resize.
-    if (parser.isSet(diagFitModeOption) && !diagIslandUrl.isEmpty()) {
+    if (parser.isSet(diagFitModeOption)
+        && (!diagIslandUrl.isEmpty() || parser.isSet(diagPressReaderOption))) {
         QTimer::singleShot(8000, window, [window, &dataDir] {
             window->grabWindow().save(dataDir + QStringLiteral("/diag-web-island.png"));
             qInfo() << "[diag] web island grab saved, window" << window->geometry();
@@ -402,6 +457,8 @@ int main(int argc, char* argv[])
     if (!diagIslandUrl.isEmpty()) {
         QTimer::singleShot(350, &controller,
                            [&controller, diagIslandUrl] { controller.openIsland(diagIslandUrl); });
+    } else if (parser.isSet(diagPressReaderOption)) {
+        QTimer::singleShot(350, &pressReader, &PressReaderService::openCatalog);
     }
     qInfo() << "[startup] ready";
     if (exitAfterOk) {

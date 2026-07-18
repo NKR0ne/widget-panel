@@ -6,21 +6,22 @@
 #include "services/camera/DirectCameraClient.h"
 #include "services/live/LiveFeedService.h"
 #include "services/msgraph/MsGraphService.h"
+#include "services/pressreader/PressReaderService.h"
 #include "services/starvis/StarvisService.h"
 #include "services/stocks/StocksModel.h"
 #include "services/workstation/WorkstationClient.h"
 #include "shell/PanelWindowController.h"
 
 #include <QDateTime>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QTimer>
 #include <QUrl>
 
 namespace qtpanel {
 
 DiagnosticsService::DiagnosticsService(SettingsStore* settings, SecretVault* vault,
-                                       PanelWindowController* panel, MsGraphService* graph,
+                                       PanelWindowController* panel,
+                                       PressReaderService* pressReader,
+                                       MsGraphService* graph,
                                        LiveFeedService* live, WorkstationClient* workstation,
                                        CameraClient* camera, DirectCameraClient* directCamera,
                                        StarvisService* starvis,
@@ -29,6 +30,7 @@ DiagnosticsService::DiagnosticsService(SettingsStore* settings, SecretVault* vau
     , m_settings(settings)
     , m_vault(vault)
     , m_panel(panel)
+    , m_pressReader(pressReader)
     , m_graph(graph)
     , m_live(live)
     , m_workstation(workstation)
@@ -105,6 +107,10 @@ DiagnosticsService::DiagnosticsService(SettingsStore* settings, SecretVault* vau
                 &DiagnosticsService::updateShellRow);
         connect(m_panel, &PanelWindowController::graphicsApiNameChanged, this,
                 &DiagnosticsService::updateShellRow);
+    }
+    if (m_pressReader) {
+        connect(m_pressReader, &PressReaderService::changed, this,
+                &DiagnosticsService::updatePressReaderRow);
     }
     if (m_vault) {
         connect(m_vault, &SecretVault::changed, this, [this](const QString& key) {
@@ -227,14 +233,12 @@ void DiagnosticsService::probeStarvis()
 
 void DiagnosticsService::openPressReader()
 {
-    if (!m_panel || !m_settings)
+    if (!m_pressReader)
         return;
-    const QString url = m_settings->get(
-        QStringLiteral("wp-pressreader-url"),
-        QStringLiteral("https://www.pressreader.com.ezproxy.bibliothequedequebec.qc.ca/fr/catalog/featured")).toString();
-    m_panel->openIsland(url);
+    m_pressReader->openCatalog();
     upsertRow(QStringLiteral("pressreader"), QStringLiteral("PressReader"),
-              QStringLiteral("checking"), QStringLiteral("Opened saved PressReader URL"));
+              QStringLiteral("checking"),
+              QStringLiteral("Opened dedicated PressReader spotlight"));
 }
 
 void DiagnosticsService::openDirectCamera()
@@ -399,31 +403,27 @@ void DiagnosticsService::updateStarvisRow()
 
 void DiagnosticsService::updatePressReaderRow()
 {
-    if (!m_settings || !m_vault) {
+    if (!m_pressReader) {
         upsertRow(QStringLiteral("pressreader"), QStringLiteral("PressReader"),
-                  QStringLiteral("error"), QStringLiteral("Settings or vault missing"));
+                  QStringLiteral("error"), QStringLiteral("PressReader service missing"));
         return;
     }
-    const QString url = m_settings->get(QStringLiteral("wp-pressreader-url")).toString();
-    const bool hasUser = m_vault->has(QStringLiteral("pressreader-user"));
-    const bool hasPass = m_vault->has(QStringLiteral("pressreader-password"));
-    const QString guardrailRaw = m_settings->get(QStringLiteral("wp-pressreader-guardrail")).toString();
-    const QJsonObject guardrail = QJsonDocument::fromJson(guardrailRaw.toUtf8()).object();
-    const qint64 blockedUntil = static_cast<qint64>(
-        guardrail.value(QLatin1String("blockedUntil")).toDouble());
-    const qint64 remainingMs = blockedUntil - QDateTime::currentMSecsSinceEpoch();
-    const bool paused = remainingMs > 0;
-    const QString state = paused ? QStringLiteral("checking")
-        : (hasUser && hasPass) ? QStringLiteral("ok") : QStringLiteral("setup");
-    const QString pauseDetail = paused
-        ? QStringLiteral("; automation paused %1 min").arg((remainingMs + 59999) / 60000)
-        : QString();
+    QString state = QStringLiteral("ok");
+    if (!m_pressReader->hasCredentials())
+        state = QStringLiteral("setup");
+    if (m_pressReader->automationBlocked())
+        state = QStringLiteral("warn");
+    if (m_pressReader->state() == QLatin1String("offline")
+        || m_pressReader->state() == QLatin1String("rejected"))
+        state = QStringLiteral("error");
     upsertRow(QStringLiteral("pressreader"), QStringLiteral("PressReader"), state,
-              QStringLiteral("%1; credentials %2/%3%4")
-                  .arg(url.isEmpty() ? QStringLiteral("default URL") : QStringLiteral("custom URL"),
-                       hasUser ? QStringLiteral("user") : QStringLiteral("no user"),
-                       hasPass ? QStringLiteral("password") : QStringLiteral("no password"),
-                       pauseDetail));
+              QStringLiteral("%1; credentials %2; automation %3; session %4 min")
+                  .arg(m_pressReader->state(),
+                       m_pressReader->hasCredentials() ? QStringLiteral("ready")
+                                                       : QStringLiteral("missing"),
+                       m_pressReader->automationAllowed() ? QStringLiteral("enabled")
+                                                          : QStringLiteral("diagnostic-safe"))
+                  .arg(m_pressReader->sessionRemainingMinutes()));
 }
 
 void DiagnosticsService::updateStocksRow()

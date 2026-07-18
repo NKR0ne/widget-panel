@@ -434,4 +434,11 @@ Item {
         width: Math.max(0, root.width - x)
         height: root.height
     }
+
+    PressReaderSpotlight {
+        x: root.spotlightX
+        y: 0
+        width: Math.max(0, root.width - x)
+        height: root.height
+    }
 }

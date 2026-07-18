@@ -30,6 +30,7 @@ class PanelWindowController : public QObject {
     Q_PROPERTY(bool panelVisible READ panelVisible NOTIFY panelVisibleChanged)
     Q_PROPERTY(QString graphicsApiName READ graphicsApiName NOTIFY graphicsApiNameChanged)
     Q_PROPERTY(bool islandOpen READ islandOpen NOTIFY islandChanged)
+    Q_PROPERTY(QString islandKind READ islandKind NOTIFY islandChanged)
     Q_PROPERTY(QString islandUrl READ islandUrl NOTIFY islandChanged)
     Q_PROPERTY(int islandX READ islandX NOTIFY islandChanged)
     Q_PROPERTY(bool islandLoading READ islandLoading NOTIFY islandChanged)
@@ -63,6 +64,7 @@ public:
     // Web spotlight: expands to the six-column surface and embeds Qt WebEngine
     // in columns four through six.
     Q_INVOKABLE void openIsland(const QString& url);
+    Q_INVOKABLE void openPressReader(const QString& url);
     Q_INVOKABLE void navigateIsland(const QString& url);
     Q_INVOKABLE void reloadIsland();
     Q_INVOKABLE void backIsland();
@@ -87,6 +89,7 @@ public:
     Q_INVOKABLE void quit();
 
     bool islandOpen() const { return m_islandOpen; }
+    QString islandKind() const { return m_islandKind; }
     QString islandUrl() const { return m_islandUrl; }
     int islandX() const { return m_islandPanelWidth; }
     bool islandLoading() const { return m_islandLoading; }
@@ -105,6 +108,7 @@ signals:
     void islandScriptResult(const QString& id, const QVariant& result,
                             const QString& error);
     void islandOpenRequested(const QString& url);
+    void pressReaderOpenRequested(const QString& url);
     void islandNavigateRequested(const QString& url);
     void islandReloadRequested();
     void islandBackRequested();
@@ -124,6 +128,7 @@ private:
     void notifyHelperHwnds();
     void captureTradingViewCookies();
     void startIslandLoad(const QString& status);
+    void openSpotlight(const QString& url, const QString& kind);
     void failIslandLoad(const QString& error);
     void setPanelVisibleState(bool visible);
     void resolveGraphicsApiName();
@@ -153,6 +158,7 @@ private:
     bool m_showAnimating = false;
     bool m_hiding = false;
     bool m_islandOpen = false;
+    QString m_islandKind;
     bool m_islandLoading = false;
     QString m_islandUrl;
     QString m_islandStatus;

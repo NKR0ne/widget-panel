@@ -6,6 +6,7 @@
 #include "services/news/NewsService.h"
 #include "services/reader/ReaderService.h"
 #include "services/live/LiveFeedService.h"
+#include "services/pressreader/PressReaderService.h"
 #include "shell/FocusPolicy.h"
 #include "shell/SystemTheme.h"
 
@@ -71,6 +72,49 @@ private slots:
         // String-stored number coerces via getDouble (Electron-store mixes types).
         QCOMPARE(reloaded.getDouble(QStringLiteral("wp-opacity"), 1.0), 0.5);
         QCOMPARE(reloaded.getInt(QStringLiteral("missing"), 42), 42);
+    }
+
+    void pressReaderStateMachineIsBoundedAndDiagnosticSafe()
+    {
+        QTemporaryDir dir;
+        SettingsStore settings(dir.filePath(QStringLiteral("settings.json")));
+        PressReaderService pressReader(&settings, nullptr, false);
+        QSignalSpy opened(&pressReader, &PressReaderService::openRequested);
+
+        QCOMPARE(pressReader.entryUrl(), PressReaderService::defaultEntryUrl());
+        pressReader.openCatalog();
+        QCOMPARE(opened.count(), 1);
+        QCOMPARE(pressReader.state(), QStringLiteral("opening"));
+        QVERIFY(pressReader.open());
+
+        const QVariantMap loginProbe{
+            {QStringLiteral("hasLogin"), true},
+            {QStringLiteral("signature"), QStringLiteral("proxy-login")},
+        };
+        pressReader.applyProbe(loginProbe);
+        QCOMPARE(pressReader.state(), QStringLiteral("manual"));
+        QVERIFY(!pressReader.claimLoginAttempt(QStringLiteral("proxy-login")));
+
+        const QVariantMap catalogProbe{
+            {QStringLiteral("url"), QStringLiteral("https://www.pressreader.com/catalog")},
+            {QStringLiteral("hasSessionEvidence"), true},
+        };
+        pressReader.applyProbe(catalogProbe);
+        QCOMPARE(pressReader.state(), QStringLiteral("catalog-ready"));
+        QVERIFY(pressReader.sessionRemainingMinutes() > 47 * 60);
+
+        const QVariantMap rejectionProbe{
+            {QStringLiteral("authRejected"), true},
+        };
+        pressReader.applyProbe(rejectionProbe);
+        QCOMPARE(pressReader.state(), QStringLiteral("rejected"));
+        QVERIFY(pressReader.automationBlocked());
+        pressReader.resumeAutomation();
+        QVERIFY(!pressReader.automationBlocked());
+
+        pressReader.close();
+        QVERIFY(!pressReader.open());
+        QCOMPARE(pressReader.state(), QStringLiteral("closed"));
     }
 
     void rssParse()

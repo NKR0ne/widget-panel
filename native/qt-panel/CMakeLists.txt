@@ -31,6 +31,7 @@ qt_add_executable(qt-panel WIN32
     src/services/live/LiveFeedService.h src/services/live/LiveFeedService.cpp
     src/services/msgraph/MsGraphService.h src/services/msgraph/MsGraphService.cpp
     src/services/news/NewsService.h src/services/news/NewsService.cpp
+    src/services/pressreader/PressReaderService.h src/services/pressreader/PressReaderService.cpp
     src/services/reader/ReaderService.h src/services/reader/ReaderService.cpp
     src/services/starvis/StarvisService.h src/services/starvis/StarvisService.cpp
     src/services/stocks/StocksModel.h src/services/stocks/StocksModel.cpp

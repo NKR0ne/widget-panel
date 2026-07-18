@@ -45,6 +45,8 @@ qt_add_qml_module(qtpanel_ui
         CameraWidget.qml
         DirectCameraWidget.qml
         PressReaderWidget.qml
+        PressReaderSpotlight.qml
+        pressreader/PressReaderAutomation.js
         NewsStage3D.qml
         ArticleReaderPane.qml
         ReaderOverlay.qml

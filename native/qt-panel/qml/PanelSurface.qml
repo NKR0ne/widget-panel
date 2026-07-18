@@ -12,6 +12,7 @@ Item {
     Shortcut { sequence: "Ctrl+2"; onActivated: surface.switchMode("news") }
     Shortcut { sequence: "Ctrl+3"; onActivated: surface.switchMode("monitor") }
     Shortcut { sequence: "Ctrl+4"; onActivated: surface.switchMode("live") }
+    Shortcut { sequence: "Ctrl+5"; onActivated: PressReader.toggle() }
     Shortcut { sequence: "Ctrl+R"; onActivated: surface.refreshData() }
     Shortcut { sequence: "Ctrl+Comma"; onActivated: settingsModal.show() }
 
@@ -262,6 +263,12 @@ Item {
                 }
 
                 Item { Layout.fillWidth: true }
+                IconButton {
+                    glyph: "\uE82D"
+                    active: PressReader.open
+                    onClicked: PressReader.toggle()
+                    tooltip: "PressReader"
+                }
                 IconButton {
                     glyph: "\uE9D9"
                     onClicked: Ui.openStatus()

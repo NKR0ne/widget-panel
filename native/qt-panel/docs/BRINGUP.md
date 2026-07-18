@@ -78,6 +78,19 @@ powershell -ExecutionPolicy Bypass -File .\launch.ps1 `
   -DiagIslandUrl https://example.com -ExitAfterMs 12000
 ```
 
+PressReader has a separate credential-safe diagnostic. Named profiles load the
+real library entry point but never submit saved Vault credentials:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\launch.ps1 `
+  -Config release -Generator Ninja -NoHelper `
+  -Profile pressreader-smoke -DiagFitMode -DiagPressReader `
+  -ExitAfterMs 18000
+```
+
+The dedicated spotlight capture is saved as `diag-web-island.png` below the
+selected profile.
+
 Renderer selection defaults to `auto`, which selects the reliable Windows
 D3D11 RHI backend. Use `-Renderer vulkan` only for an intentional Vulkan test
 on a machine with a working Vulkan runtime.

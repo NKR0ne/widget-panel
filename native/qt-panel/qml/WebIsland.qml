@@ -5,7 +5,7 @@ import QtPanel.Native
 Rectangle {
     id: island
 
-    visible: Panel.islandOpen
+    visible: Panel.islandOpen && Panel.islandKind === "web"
     color: "#080a10"
     radius: Theme.radiusPanel
     border.width: 1
@@ -136,22 +136,39 @@ Rectangle {
             webView.url = url
             webView.forceActiveFocus()
         }
-        function onIslandNavigateRequested(url) { webView.url = url }
-        function onIslandReloadRequested() { webView.reload() }
-        function onIslandBackRequested() { webView.goBack() }
-        function onIslandForwardRequested() { webView.goForward() }
+        function onIslandNavigateRequested(url) {
+            if (Panel.islandKind === "web") webView.url = url
+        }
+        function onIslandReloadRequested() {
+            if (Panel.islandKind === "web") webView.reload()
+        }
+        function onIslandBackRequested() {
+            if (Panel.islandKind === "web") webView.goBack()
+        }
+        function onIslandForwardRequested() {
+            if (Panel.islandKind === "web") webView.goForward()
+        }
         function onIslandCloseRequested() {
+            if (Panel.islandKind !== "web") return
             darkRetry.stop()
             webView.stop()
             webView.url = "about:blank"
         }
         function onIslandScriptRequested(id, script) {
+            if (Panel.islandKind !== "web") return
             try {
                 webView.runJavaScript(script, function(result) {
                     Panel.completeIslandScript(id, result, "")
                 })
             } catch (error) {
                 Panel.completeIslandScript(id, null, String(error))
+            }
+        }
+        function onIslandChanged() {
+            if (Panel.islandKind !== "web" && String(webView.url) !== "about:blank") {
+                darkRetry.stop()
+                webView.stop()
+                webView.url = "about:blank"
             }
         }
     }
@@ -277,7 +294,7 @@ Rectangle {
         anchors.bottom: parent.bottom
         profile: WebProfile
         backgroundColor: "#080a10"
-        focus: Panel.islandOpen
+        focus: island.visible
 
         settings.forceDarkMode: true
         settings.javascriptCanOpenWindows: true
