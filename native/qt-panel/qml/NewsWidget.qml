@@ -2,12 +2,15 @@ import QtQuick
 import QtPanel.Native
 
 // One card per OPML category (cat:* widget ids). Items come from NewsService;
-// clicking opens the article in the default browser (native reader card comes
-// in the next increment).
+// article activation either opens Reader directly or delegates to the owning
+// stage so the dedicated News workspace can keep reading in place.
 GlassCard {
     id: card
 
     property string categoryLabel: ""
+    property bool delegateArticleOpening: false
+    property bool forceCarouselPresentation: false
+    signal articleRequested(var item)
 
     title: categoryLabel
     implicitHeight: body.implicitHeight + 24
@@ -43,6 +46,10 @@ GlassCard {
     function openItem(item) {
         if (!item || !item.link)
             return
+        if (delegateArticleOpening) {
+            articleRequested(item)
+            return
+        }
         Reader.open(item.link, item.title || "", item.source || "",
                     item.image || "", item.description || "")
     }
@@ -86,10 +93,11 @@ GlassCard {
         const stored = Store.get("wp-news-carousel", "")
         return stored === "" || stored === true || stored === "1" || stored === "true"
     }
+    readonly property bool carouselPresentation: forceCarouselPresentation || carouselEnabled
     onItemsChanged: carouselIndex = Math.min(carouselIndex, Math.max(0, carouselCount - 1))
 
     Timer {
-        running: card.carouselEnabled && card.carouselCount > 1
+        running: card.carouselPresentation && card.carouselEnabled && card.carouselCount > 1
         repeat: true
         interval: {
             card.storeRev
@@ -178,7 +186,7 @@ GlassCard {
 
         Rectangle {
             id: carouselCard
-            visible: card.carouselEnabled && card.carouselCount > 0
+            visible: card.carouselPresentation && card.carouselCount > 0
             width: parent.width
             height: card.carouselHeight
             radius: 8
@@ -392,7 +400,7 @@ GlassCard {
         }
 
         Repeater {
-            model: card.carouselEnabled ? [] : card.items
+            model: card.carouselPresentation ? [] : card.items
 
             delegate: Item {
                 id: row
