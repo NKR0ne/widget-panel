@@ -95,11 +95,22 @@ Rectangle {
                 spotlight.scheduleProbe(1500)
                 return
             }
-            if (result.proxyMenu && !result.recentInteraction
-                    && PressReader.claimStartReading(signature + "|proxy-menu")) {
-                webView.runJavaScript(PressAutomation.openPressReaderFromMenuScript())
-                spotlight.scheduleProbe(1200)
-                return
+            if (result.proxyMenu && !result.recentInteraction) {
+                if (PressReader.claimStartReading(signature + "|proxy-menu-reset")) {
+                    console.info("[pressreader] proxy menu detected", String(result.url || ""))
+                    webView.runJavaScript(PressAutomation.openPressReaderFromMenuScript(),
+                        function(menuResult) {
+                            console.info("[pressreader] proxy session reset",
+                                         JSON.stringify(menuResult || {}))
+                            spotlight.scheduleProbe(1200)
+                        })
+                    return
+                }
+                if (PressReader.claimStartReading(signature + "|proxy-menu-direct")) {
+                    console.warn("[pressreader] proxy menu persisted; opening direct catalog")
+                    webView.url = "https://www.pressreader.com"
+                    return
+                }
             }
             if (result.hasStartReading && !result.recentInteraction
                     && PressReader.claimStartReading(signature + "|start")) {

@@ -58,7 +58,8 @@ function loginScript(username, passwordValue) {
         "  const setValue = (el,value) => { const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set; el.focus?.(); if (setter) setter.call(el,value); else el.value=value; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); };",
         "  const form = password.form || userInput.form;",
         "  let returnTargetRepaired = false;",
-        "  if (form && location.hostname.toLowerCase()==='ezproxy.bibliothequedequebec.qc.ca') {",
+        "  const loginHost=location.hostname.toLowerCase();",
+        "  if (form && (loginHost==='ezproxy.bibliothequedequebec.qc.ca' || loginHost.endsWith('.ezproxy.bibliothequedequebec.qc.ca'))) {",
         "    let returnInput = form.querySelector('input[type=hidden][name=url]');",
         "    if (!returnInput) { returnInput=document.createElement('input'); returnInput.type='hidden'; returnInput.name='url'; form.appendChild(returnInput); }",
         "    const destination='https://www.pressreader.com';",
@@ -77,13 +78,11 @@ function loginScript(username, passwordValue) {
 function openPressReaderFromMenuScript() {
     return [
         "(() => {",
-        "  const visible = el => { if (!el) return false; const box=el.getBoundingClientRect(); const style=getComputedStyle(el); return box.width>1 && box.height>1 && style.display!=='none' && style.visibility!=='hidden'; };",
-        "  const label = el => (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();",
-        "  if (location.hostname.toLowerCase()!=='ezproxy.bibliothequedequebec.qc.ca') return { ok:false, clicked:false, reason:'unexpected host' };",
-        "  const target=[...document.querySelectorAll('a[href]')].filter(visible).find(el => /^pressreader$/i.test(label(el)) || /pressreader/i.test(el.href || ''));",
-        "  if (!target) return { ok:false, clicked:false, reason:'link unavailable' };",
-        "  target.click();",
-        "  return { ok:true, clicked:true };",
+        "  const isProxyHost = host => host === 'ezproxy.bibliothequedequebec.qc.ca' || host.endsWith('.ezproxy.bibliothequedequebec.qc.ca');",
+        "  if (!isProxyHost(location.hostname.toLowerCase())) return { ok:false, navigated:false, reason:'unexpected host' };",
+        "  const restart='https://ezproxy.bibliothequedequebec.qc.ca/login?url=https%3A%2F%2Fwww.pressreader.com';",
+        "  fetch('/logout',{credentials:'include',cache:'no-store',redirect:'follow'}).finally(() => location.replace(restart));",
+        "  return { ok:true, navigated:true, sessionReset:true };",
         "})()",
     ].join("\n")
 }
