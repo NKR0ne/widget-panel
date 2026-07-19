@@ -153,9 +153,9 @@ but parity, controls, or runtime validation are incomplete.
 | Column and layout editing | Implemented | Base columns have native edge resize handles with persisted widths. The widget manager can save, restore, and reset mode layout presets in addition to enable/disable controls. |
 | Adaptive command surface | Implemented | Renderer text moved out of the primary header, mode controls gained keyboard focus, service state has a dedicated drawer, and common commands have accessible tooltips. |
 | Operational feedback | Implemented | Shared semantic status banners, transient toasts, and a local-only service snapshot drawer cover refresh, layout, connection, and stale-state feedback. The normal status refresh performs no camera or network probes. |
-| Settings navigation | Implemented | The wider native settings sheet has category jump navigation plus density, high-contrast, reduced-motion, and persisted mouse-halo controls. |
+| Settings navigation | Implemented | The wider native settings sheet has category jump navigation plus density, high-contrast, reduced-motion, mouse-halo, surface-lighting, lighting-strength, and shadow-depth controls. |
 | Windows accessibility | Implemented | The native theme polls Windows high-contrast and client-animation settings; OS requests override app presentation preferences. Icon buttons and core mode/settings controls expose keyboard focus and accessible names. |
-| Visual/performance system | Implemented | Semantic status colors, 8px card radii, compact/comfortable spacing, flat detail cards, and hidden-panel shader suspension are centralized in shared tokens. |
+| Visual/performance system | Implemented | Semantic colors, 8px card radii, compact/comfortable spacing, pointer-local card keylines, system-accent shell lighting, static dither, adjustable shadows, tactile controls, mode-selection motion, workspace reveals, spotlight entrances, and hidden-panel shader suspension are centralized in shared tokens. |
 | Runtime UI validation | Partial | Build-time QML compilation remains authoritative for contracts. Interactive keyboard, screen-reader, high-contrast, drag-resize, and all four detail-workspace flows still require a screenshot/runtime pass. |
 
 ## Highest-Value Next Work

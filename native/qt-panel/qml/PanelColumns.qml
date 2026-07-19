@@ -10,6 +10,34 @@ Item {
 
     property string mode: "base"
     readonly property real spotlightX: Math.round(width / 2) + 3
+    opacity: 1
+    transform: Translate { id: modeShift; y: 0 }
+
+    onModeChanged: {
+        modeEntrance.stop()
+        root.opacity = 0
+        modeShift.y = 8
+        modeEntrance.start()
+    }
+
+    ParallelAnimation {
+        id: modeEntrance
+        NumberAnimation {
+            target: root
+            property: "opacity"
+            to: 1
+            duration: Motion.normalMs
+            easing.type: Easing.OutCubic
+        }
+        NumberAnimation {
+            target: modeShift
+            property: "y"
+            to: 0
+            duration: Motion.deliberateMs
+            easing.type: Easing.BezierSpline
+            easing.bezierCurve: Motion.emphasized
+        }
+    }
 
     readonly property var columnOrder: ["left", "monitor", "mid", "feed", "right", "aux"]
     readonly property var workstationIds: [

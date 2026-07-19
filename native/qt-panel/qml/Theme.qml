@@ -9,6 +9,9 @@ QtObject {
     readonly property color panelSolid: "#11151e"
     readonly property color cardFill: Qt.rgba(1, 1, 1, contrastEnabled ? 0.09 : 0.05)
     readonly property color cardStroke: Qt.rgba(1, 1, 1, contrastEnabled ? 0.20 : 0.08)
+    readonly property color cardHoverFill: Qt.rgba(1, 1, 1, contrastEnabled ? 0.13 : 0.075)
+    readonly property color keyline: Qt.rgba(0.91, 0.94, 1.0, contrastEnabled ? 0.34 : 0.16)
+    readonly property color keylineMuted: Qt.rgba(0.72, 0.77, 0.86, 0.08)
     readonly property color skeleton: Qt.rgba(1, 1, 1, 0.07)
     readonly property color hover: Qt.rgba(1, 1, 1, 0.10)
     readonly property color activeFill: Qt.rgba(1, 1, 1, 0.14)

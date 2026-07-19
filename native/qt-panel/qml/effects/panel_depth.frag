@@ -16,6 +16,8 @@ layout(std140, binding = 0) uniform buf {
     float cursorX;
     float cursorY;
     float cursorOn;
+    float lightingStrength;
+    vec4 accentColor;
 };
 
 float hash(vec2 p) {
@@ -41,12 +43,13 @@ void main() {
     float dist = length((uv - focus) * ar);
     float glow = (0.05 + 0.07 * cursorOn) * exp(-3.0 * dist);
 
-    // Dither grain.
-    float grain = (hash(uv * vec2(900.0, 640.0) + time) - 0.5) * 0.016;
+    // Static dither removes banding without producing visible temporal noise.
+    float grain = (hash(uv * vec2(900.0, 640.0)) - 0.5) * 0.012;
 
-    vec3 accent = vec3(0.31, 0.45, 0.97);
-    vec3 col = accent * (depth + sheen + glow) + grain;
-    float a = clamp(depth + sheen + glow + grain, 0.0, 0.55);
+    vec3 accent = mix(vec3(0.84, 0.88, 0.96), accentColor.rgb, 0.72);
+    float energy = (depth + sheen + glow) * lightingStrength;
+    vec3 col = accent * energy + vec3(grain);
+    float a = clamp(energy + grain, 0.0, 0.55);
 
     fragColor = vec4(col, a) * qt_Opacity;
 }

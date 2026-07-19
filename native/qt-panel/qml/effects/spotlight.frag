@@ -14,6 +14,8 @@ layout(std140, binding = 0) uniform buf {
     float cursorX;
     float cursorY;
     float cursorOn;
+    float lightingStrength;
+    vec4 accentColor;
 };
 
 void main() {
@@ -21,7 +23,8 @@ void main() {
     vec2 ar = vec2(aspect, 1.0);
     float dist = length((uv - vec2(cursorX, cursorY)) * ar);
     // Tight bright core + soft falloff.
-    float pool = 0.06 * exp(-6.0 * dist) + 0.03 * exp(-2.0 * dist);
-    vec3 col = vec3(0.65, 0.78, 1.0);
+    float pool = (0.055 * exp(-6.0 * dist) + 0.025 * exp(-2.0 * dist))
+               * lightingStrength;
+    vec3 col = mix(vec3(0.86, 0.89, 0.96), accentColor.rgb, 0.58);
     fragColor = vec4(col * pool, pool) * qt_Opacity * cursorOn;
 }

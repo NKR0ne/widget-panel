@@ -99,14 +99,17 @@ Item {
         ShaderEffect {
             id: depthFx
             anchors.fill: parent
+            visible: Ui.surfaceLighting
             property real time: 0
             property real aspect: width / Math.max(1, height)
             property real cursorX: 0.5
             property real cursorY: 0.3
-            property real cursorOn: Ui.mouseHalo && panelHover.hovered ? 1 : 0
+            property real cursorOn: Ui.surfaceLighting && Ui.mouseHalo && panelHover.hovered ? 1 : 0
+            property real lightingStrength: Ui.lightingStrength
+            property color accentColor: Theme.accent
             fragmentShader: "effects/panel_depth.frag.qsb"
             NumberAnimation on time {
-                running: Panel.panelVisible && Motion.enabled
+                running: Panel.panelVisible && Motion.decorativeEnabled
                 from: 0; to: 100000; duration: 100000000; loops: Animation.Infinite
             }
             Behavior on cursorOn { NumberAnimation { duration: Motion.normalMs } }
@@ -117,11 +120,43 @@ Item {
 
         HoverHandler {
             id: panelHover
-            enabled: Ui.mouseHalo
+            enabled: Ui.surfaceLighting && Ui.mouseHalo
             onPointChanged: {
                 depthFx.cursorX = point.position.x / Math.max(1, chrome.width)
                 depthFx.cursorY = point.position.y / Math.max(1, chrome.height)
             }
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.leftMargin: 14
+            anchors.rightMargin: 14
+            height: 1
+            z: 2
+            visible: Ui.surfaceLighting
+            opacity: 0.55 * Ui.lightingStrength
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: "transparent" }
+                GradientStop { position: 0.18; color: Theme.keylineMuted }
+                GradientStop { position: 0.5; color: Theme.keyline }
+                GradientStop { position: 0.82; color: Theme.keylineMuted }
+                GradientStop { position: 1.0; color: "transparent" }
+            }
+        }
+
+        Rectangle {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.leftMargin: Theme.radiusPanel
+            anchors.rightMargin: Theme.radiusPanel
+            height: 1
+            z: 2
+            visible: Ui.surfaceLighting
+            color: Qt.rgba(0, 0, 0, 0.28 * Math.min(1, Ui.shadowDepth))
         }
 
         ColumnLayout {
@@ -154,25 +189,62 @@ Item {
                         font.pixelSize: Theme.fontSizeCaption
                     }
                 }
-                Item { width: 10; height: 1 }
+                Item { implicitWidth: 10; implicitHeight: 1 }
 
                 // Mode switcher
-                Row {
-                    spacing: 2
-                    Repeater {
-                        model: [
+                Item {
+                    id: modeSwitcher
+                    readonly property var modeIds: ["base", "news", "monitor", "live"]
+                    readonly property int selectedIndex: modeIds.indexOf(surface.panelMode)
+                    implicitWidth: modeRow.implicitWidth
+                    implicitHeight: 20
+
+                    function syncSelection() {
+                        const selected = modeRepeater.itemAt(selectedIndex)
+                        if (!selected)
+                            return
+                        modeSelection.x = selected.x
+                        modeSelection.width = selected.width
+                    }
+
+                    onSelectedIndexChanged: Qt.callLater(syncSelection)
+                    Component.onCompleted: Qt.callLater(syncSelection)
+
+                    Rectangle {
+                        id: modeSelection
+                        x: 0
+                        width: 0
+                        height: parent.height
+                        radius: 5
+                        color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.15)
+                        border.width: 1
+                        border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.30)
+                        Behavior on x {
+                            NumberAnimation { duration: Motion.normalMs; easing.type: Easing.OutCubic }
+                        }
+                        Behavior on width {
+                            NumberAnimation { duration: Motion.normalMs; easing.type: Easing.OutCubic }
+                        }
+                    }
+
+                    Row {
+                        id: modeRow
+                        spacing: 2
+                        Repeater {
+                            id: modeRepeater
+                            model: [
                             { id: "base", label: "Panneau" },
                             { id: "news", label: "Nouvelles" },
                             { id: "monitor", label: "Station" },
                             { id: "live", label: "Direct" },
                         ]
-                        delegate: Rectangle {
+                            delegate: Rectangle {
                             required property var modelData
                             width: modeLabel.implicitWidth + 14
                             height: 20
                             radius: 5
-                            color: surface.panelMode === modelData.id ? Theme.activeFill
-                                 : modeMouse.containsMouse ? Theme.hover : "transparent"
+                            color: surface.panelMode !== modelData.id && modeMouse.containsMouse
+                                   ? Theme.hover : "transparent"
                             border.width: activeFocus ? 1 : 0
                             border.color: Theme.accent
                             activeFocusOnTab: true
@@ -198,6 +270,7 @@ Item {
                             Keys.onReturnPressed: surface.switchMode(modelData.id)
                             Keys.onEnterPressed: surface.switchMode(modelData.id)
                             Keys.onSpacePressed: surface.switchMode(modelData.id)
+                            }
                         }
                     }
                 }
@@ -313,11 +386,13 @@ Item {
         ShaderEffect {
             anchors.fill: parent
             z: 50
-            visible: Ui.mouseHalo
+            visible: Ui.surfaceLighting && Ui.mouseHalo
             property real aspect: width / Math.max(1, height)
             property real cursorX: depthFx.cursorX
             property real cursorY: depthFx.cursorY
             property real cursorOn: depthFx.cursorOn
+            property real lightingStrength: Ui.lightingStrength
+            property color accentColor: Theme.accent
             fragmentShader: "effects/spotlight.frag.qsb"
             blending: true
         }

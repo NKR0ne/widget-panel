@@ -19,6 +19,9 @@ QtObject {
     property bool reducedMotion: false
     property bool highContrast: false
     property bool mouseHalo: true
+    property bool surfaceLighting: true
+    property real lightingStrength: 1.0
+    property real shadowDepth: 0.8
     property string density: "compact"
 
     function openDetail(kind, title, payload) {
@@ -64,6 +67,9 @@ QtObject {
         Store.set("wp-reduced-motion", reducedMotion ? "true" : "false")
         Store.set("wp-high-contrast", highContrast ? "true" : "false")
         Store.set("wp-mouse-halo", mouseHalo ? "true" : "false")
+        Store.set("wp-surface-lighting", surfaceLighting ? "true" : "false")
+        Store.set("wp-lighting-strength", String(lightingStrength))
+        Store.set("wp-shadow-depth", String(shadowDepth))
         Store.set("wp-density", density)
     }
 
@@ -74,6 +80,13 @@ QtObject {
         reducedMotion = Store.get("wp-reduced-motion", "false") === "true"
         highContrast = Store.get("wp-high-contrast", "false") === "true"
         mouseHalo = Store.get("wp-mouse-halo", "true") === "true"
+        surfaceLighting = Store.get("wp-surface-lighting", "true") === "true"
+        const storedLighting = Number(Store.get("wp-lighting-strength", 1.0))
+        if (isFinite(storedLighting))
+            lightingStrength = Math.min(1.5, Math.max(0.35, storedLighting))
+        const storedShadow = Number(Store.get("wp-shadow-depth", 0.8))
+        if (isFinite(storedShadow))
+            shadowDepth = Math.min(1.5, Math.max(0, storedShadow))
         const storedDensity = Store.get("wp-density", "compact")
         density = storedDensity === "comfortable" ? "comfortable" : "compact"
     }

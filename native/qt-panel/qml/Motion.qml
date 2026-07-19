@@ -6,8 +6,10 @@ import QtPanel.Native
 // signature matches the Electron app (and the helper-side timing assumptions).
 QtObject {
     readonly property bool enabled: !Ui.reducedMotion && Sys.animationsEnabled
+    readonly property bool decorativeEnabled: enabled && Ui.surfaceLighting
     readonly property int fastMs: enabled ? 90 : 0
     readonly property int normalMs: enabled ? 210 : 0
+    readonly property int deliberateMs: enabled ? 300 : 0
     readonly property int panelMs: enabled ? 390 : 0
 
     // Bezier control points: c1x, c1y, c2x, c2y, end.

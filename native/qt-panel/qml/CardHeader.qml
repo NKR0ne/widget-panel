@@ -51,13 +51,23 @@ Item {
             height: 20
             radius: 5
             color: Theme.cardFill
-            border.color: Theme.cardStroke
+            border.color: Ui.surfaceLighting
+                          ? Qt.rgba(header.statusColor.r, header.statusColor.g,
+                                    header.statusColor.b, 0.22)
+                          : Theme.cardStroke
             Rectangle {
+                id: statusDot
                 width: 6; height: 6; radius: 3
                 color: header.statusColor
                 anchors.left: parent.left
                 anchors.leftMargin: 5
                 anchors.verticalCenter: parent.verticalCenter
+                SequentialAnimation on opacity {
+                    running: Motion.decorativeEnabled && statusDot.visible
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 1; to: 0.58; duration: 1100; easing.type: Easing.InOutSine }
+                    NumberAnimation { from: 0.58; to: 1; duration: 1100; easing.type: Easing.InOutSine }
+                }
             }
             Text {
                 id: statusLabel

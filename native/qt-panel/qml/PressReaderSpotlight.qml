@@ -6,13 +6,47 @@ import "pressreader/PressReaderAutomation.js" as PressAutomation
 Rectangle {
     id: spotlight
 
-    visible: Panel.islandOpen && Panel.islandKind === "pressreader"
+    readonly property bool presented: Panel.islandOpen && Panel.islandKind === "pressreader"
+    visible: presented || opacity > 0.01
+    enabled: presented
+    opacity: presented ? 1 : 0
     color: "#0c0f14"
     radius: Theme.radiusCard
     border.width: 1
     border.color: Theme.cardStroke
     clip: true
     z: 82
+
+    transform: Translate {
+        id: spotlightShift
+        x: spotlight.presented ? 0 : 14
+        Behavior on x {
+            NumberAnimation {
+                duration: Motion.deliberateMs
+                easing.type: Easing.BezierSpline
+                easing.bezierCurve: Motion.emphasized
+            }
+        }
+    }
+    Behavior on opacity { NumberAnimation { duration: Motion.normalMs } }
+
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.leftMargin: Theme.radiusCard
+        anchors.rightMargin: Theme.radiusCard
+        height: 1
+        z: 10
+        visible: Ui.surfaceLighting
+        opacity: 0.7 * Ui.lightingStrength
+        gradient: Gradient {
+            orientation: Gradient.Horizontal
+            GradientStop { position: 0; color: "transparent" }
+            GradientStop { position: 0.5; color: Theme.keyline }
+            GradientStop { position: 1; color: "transparent" }
+        }
+    }
 
     property int probePass: 0
     property int renderRecoveryCount: 0
@@ -39,17 +73,17 @@ Rectangle {
     }
 
     function scheduleProbe(delay) {
-        if (!visible || webView.loading)
+        if (!presented || webView.loading)
             return
         probeTimer.interval = Math.max(120, delay || 350)
         probeTimer.restart()
     }
 
     function runProbe() {
-        if (!visible || webView.loading)
+        if (!presented || webView.loading)
             return
         webView.runJavaScript(PressAutomation.probeScript(), function(result) {
-            if (!spotlight.visible || !result)
+            if (!spotlight.presented || !result)
                 return
             PressReader.applyProbe(result)
             const signature = String(result.signature || "")
@@ -194,7 +228,7 @@ Rectangle {
         interval: 700
         repeat: false
         onTriggered: {
-            if (spotlight.visible && spotlight.renderRecoveryCount <= 2)
+            if (spotlight.presented && spotlight.renderRecoveryCount <= 2)
                 webView.reload()
         }
     }
@@ -340,7 +374,7 @@ Rectangle {
         anchors.margins: 1
         profile: PressReaderProfile
         backgroundColor: "#0c0f14"
-        focus: spotlight.visible
+        focus: spotlight.presented
 
         settings.forceDarkMode: false
         settings.javascriptCanOpenWindows: true

@@ -294,6 +294,30 @@ Item {
 
             SettingsToggle {
                 width: parent.width
+                label: "\u00c9clairage des surfaces"
+                description: "Active les reflets, les liser\u00e9s et la profondeur"
+                checked: Ui.surfaceLighting
+                onToggled: function(value) { Ui.surfaceLighting = value; Ui.save() }
+            }
+            SettingsSlider {
+                width: parent.width
+                enabled: Ui.surfaceLighting
+                opacity: enabled ? 1 : 0.45
+                label: "Intensit\u00e9 lumineuse"
+                from: 0.35; to: 1.5
+                value: Ui.lightingStrength
+                onMoved: function(value) { Ui.lightingStrength = value; Ui.save() }
+            }
+            SettingsSlider {
+                width: parent.width
+                label: "Profondeur des ombres"
+                from: 0; to: 1.5
+                value: Ui.shadowDepth
+                onMoved: function(value) { Ui.shadowDepth = value; Ui.save() }
+            }
+
+            SettingsToggle {
+                width: parent.width
                 label: "R\u00e9duire les animations"
                 description: "D\u00e9sactive les transitions non essentielles"
                 checked: Ui.reducedMotion
@@ -302,7 +326,9 @@ Item {
             SettingsToggle {
                 width: parent.width
                 label: "Halo du pointeur"
-                description: "Illumine la surface autour du pointeur"
+                description: "Fait suivre la lumi\u00e8re au pointeur"
+                enabled: Ui.surfaceLighting
+                opacity: enabled ? 1 : 0.45
                 checked: Ui.mouseHalo
                 onToggled: function(value) { Ui.mouseHalo = value; Ui.save() }
             }

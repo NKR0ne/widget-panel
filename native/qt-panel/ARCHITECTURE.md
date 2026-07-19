@@ -176,20 +176,22 @@ native/qt-panel/
 - **Glass system**: real translucency comes from DWM
   (`DWMWA_SYSTEMBACKDROP_TYPE = DWMSBT_TRANSIENTWINDOW` acrylic, like today's
   `backgroundMaterial: 'acrylic'`), then in-scene depth is layered on top:
-  per-card `MultiEffect` shadow + a thin specular-edge ShaderEffect + subtle
-  noise grain to kill banding. Card opacity stays user-tunable
-  (`wp-card-opacity`).
+  adjustable per-card `MultiEffect` shadows, pointer-local keylines, a shared
+  system-accent specular pool, and static dither to kill banding without
+  temporal shimmer. Card opacity, lighting strength, surface lighting, and
+  shadow depth stay user-tunable (`wp-card-opacity`, `wp-lighting-strength`,
+  `wp-surface-lighting`, and `wp-shadow-depth`).
 - **Motion spec** (Motion.qml): one easing vocabulary (e.g. emphasized
-  `[0.2, 0.0, 0, 1]`, exit `[0.3, 0, 0.8, 0.15]`), durations 90/210/390ms.
+  `[0.2, 0.0, 0, 1]`, exit `[0.3, 0, 0.8, 0.15]`), durations
+  90/210/300/390ms.
   The shell moves the complete acrylic window for the 390ms panel transition,
   so DWM material and content travel as one surface. The helper-side timing
   assumptions (350ms state notify, +160ms hide fallback) remain unchanged.
-- Entrance/exit: widgets animate via `WidgetHost` Transitions (translate + scale
-  0.96→1 + opacity, 16ms stagger per card); column reorders use displaced
-  transitions; stage-mode expansion animates window bounds (shell) and layout
-  (QML) on the same clock — the shell exposes a `geometryAnimationProgress` so
-  QML and Win32 `SetWindowPos` stay in lockstep instead of today's two-process
-  guesswork.
+- Entrance/exit: widgets animate via `WidgetHost` (translate + scale 0.97→1 +
+  opacity, staggered per card); column reorders use displaced transitions;
+  workspace changes use a short fade/translate reveal, and browser spotlights
+  enter from their source-column edge. The native shell remains responsible
+  for moving and resizing the complete acrylic window.
 - 3D headline stage (NewsMatrixStage) → **Qt Quick 3D** scene embedded in the
   news widget; text via `Text` items rendered to texture or Qt Quick 3D's
   distance-field text (replaces three.js + troika).

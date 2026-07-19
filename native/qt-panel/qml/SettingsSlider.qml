@@ -40,6 +40,9 @@ Item {
             height: parent.height
             radius: parent.radius
             color: Theme.accent
+            Behavior on width {
+                NumberAnimation { duration: Motion.fastMs; easing.type: Easing.OutCubic }
+            }
         }
 
         Rectangle {
@@ -51,11 +54,18 @@ Item {
             color: "#ffffff"
             border.color: Theme.accent
             border.width: 2
+            scale: trackMouse.pressed ? 1.18 : trackMouse.containsMouse ? 1.08 : 1
+            Behavior on scale {
+                NumberAnimation { duration: Motion.fastMs; easing.type: Easing.OutCubic }
+            }
         }
 
         MouseArea {
+            id: trackMouse
             anchors.fill: parent
             anchors.margins: -8
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
             onPressed: mouse => update(mouse.x - 8)
             onPositionChanged: mouse => { if (pressed) update(mouse.x - 8) }
             function update(mx) {

@@ -5,13 +5,47 @@ import QtPanel.Native
 Rectangle {
     id: island
 
-    visible: Panel.islandOpen && Panel.islandKind === "web"
+    readonly property bool presented: Panel.islandOpen && Panel.islandKind === "web"
+    visible: presented || opacity > 0.01
+    enabled: presented
+    opacity: presented ? 1 : 0
     color: "#080a10"
     radius: Theme.radiusPanel
     border.width: 1
     border.color: Theme.cardStroke
     clip: true
     z: 80
+
+    transform: Translate {
+        id: islandShift
+        x: island.presented ? 0 : 14
+        Behavior on x {
+            NumberAnimation {
+                duration: Motion.deliberateMs
+                easing.type: Easing.BezierSpline
+                easing.bezierCurve: Motion.emphasized
+            }
+        }
+    }
+    Behavior on opacity { NumberAnimation { duration: Motion.normalMs } }
+
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.leftMargin: Theme.radiusCard
+        anchors.rightMargin: Theme.radiusCard
+        height: 1
+        z: 10
+        visible: Ui.surfaceLighting
+        opacity: 0.7 * Ui.lightingStrength
+        gradient: Gradient {
+            orientation: Gradient.Horizontal
+            GradientStop { position: 0; color: "transparent" }
+            GradientStop { position: 0.5; color: Theme.keyline }
+            GradientStop { position: 1; color: "transparent" }
+        }
+    }
 
     property int renderRecoveryCount: 0
 
@@ -294,7 +328,7 @@ Rectangle {
         anchors.bottom: parent.bottom
         profile: WebProfile
         backgroundColor: "#080a10"
-        focus: island.visible
+        focus: island.presented
 
         settings.forceDarkMode: true
         settings.javascriptCanOpenWindows: true

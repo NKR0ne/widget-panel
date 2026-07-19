@@ -45,7 +45,9 @@ Item {
         radius: 10
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
-        color: control.checked ? Theme.accent : Qt.rgba(1, 1, 1, 0.12)
+        color: control.checked ? Theme.accent
+             : controlMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.17)
+             : Qt.rgba(1, 1, 1, 0.12)
         border.width: control.activeFocus ? 1 : 0
         border.color: Theme.textPrimary
         Behavior on color { ColorAnimation { duration: Motion.fastMs } }
@@ -53,11 +55,16 @@ Item {
             width: 16; height: 16; radius: 8; y: 2
             x: control.checked ? parent.width - width - 2 : 2
             color: "white"
-            Behavior on x { NumberAnimation { duration: Motion.fastMs } }
+            scale: controlMouse.pressed ? 0.86 : 1
+            Behavior on x {
+                NumberAnimation { duration: Motion.fastMs; easing.type: Easing.OutCubic }
+            }
+            Behavior on scale { NumberAnimation { duration: Motion.fastMs } }
         }
     }
 
     MouseArea {
+        id: controlMouse
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
