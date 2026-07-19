@@ -95,6 +95,12 @@ Rectangle {
                 spotlight.scheduleProbe(1500)
                 return
             }
+            if (result.proxyMenu && !result.recentInteraction
+                    && PressReader.claimStartReading(signature + "|proxy-menu")) {
+                webView.runJavaScript(PressAutomation.openPressReaderFromMenuScript())
+                spotlight.scheduleProbe(1200)
+                return
+            }
             if (result.hasStartReading && !result.recentInteraction
                     && PressReader.claimStartReading(signature + "|start")) {
                 webView.runJavaScript(PressAutomation.startReadingScript())

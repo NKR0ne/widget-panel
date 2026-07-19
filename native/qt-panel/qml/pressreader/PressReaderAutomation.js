@@ -20,9 +20,11 @@ function probeScript() {
         "  const hasStartReading = controls.some(el => /start reading|read now|commencer|lire maintenant|ouvrir la publication/i.test(label(el)));",
         "  const hasAccount = controls.some(el => /deconnexion|sign out|logout|mon compte|my account/i.test(label(el)));",
         "  const contentLinks = [...document.querySelectorAll('a[href]')].filter(visible).filter(el => /pressreader|catalog|publication|magazines|journaux/i.test(el.href || '')).length;",
+        "  const pressReaderLink = [...document.querySelectorAll('a[href]')].filter(visible).find(el => /^pressreader$/i.test(label(el)) || /pressreader/i.test(el.href || ''));",
         "  const visibleImages = [...document.querySelectorAll('img')].filter(visible).length;",
         "  const host = location.hostname.toLowerCase();",
         "  const path = location.pathname.toLowerCase();",
+        "  const proxyMenu = host.includes('ezproxy.bibliothequedequebec.qc.ca') && !password && !!pressReaderLink && /menu\.htm from the docs|default menu of databases|database menu/i.test(body);",
         "  const publication = host.includes('pressreader.com') && (/\\/(?:viewer|reader|issue|newspaper|magazine)\\b/.test(path) || !!document.querySelector('canvas'));",
         "  const hasSessionEvidence = publication || hasStartReading || hasAccount || (!password && host.includes('pressreader.com') && (contentLinks >= 4 || visibleImages >= 8));",
         "  if (!window.__qtPressReaderInteractionTracker) {",
@@ -31,7 +33,7 @@ function probeScript() {
         "  }",
         "  const recentInteraction = Date.now() - Number(window.__qtPressReaderUserClick || 0) < 15000;",
         "  const signature = [location.origin, location.pathname, attr(inputs[0]), attr(password)].join('|');",
-        "  return { ok:true, url:location.href, title:document.title || '', authRejected, hasLogin:!!password, hasStartReading, hasSessionEvidence, publication, recentInteraction, signature };",
+        "  return { ok:true, url:location.href, title:document.title || '', authRejected, hasLogin:!!password, hasStartReading, hasSessionEvidence, publication, proxyMenu, recentInteraction, signature };",
         "})()",
     ].join("\n")
 }
@@ -54,12 +56,34 @@ function loginScript(username, passwordValue) {
         "  const marker = [location.href,document.title || '',document.body?.innerText || '',attr(userInput),attr(password)].join(' ').slice(0,6000);",
         "  if (!/pressreader|ezproxy|connexion|login|biblioth|library|mot de passe|password|usager|card|barcode|identifiant/i.test(marker)) return { ok:false, submitted:false, reason:'untrusted form' };",
         "  const setValue = (el,value) => { const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value')?.set; el.focus?.(); if (setter) setter.call(el,value); else el.value=value; el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); };",
+        "  const form = password.form || userInput.form;",
+        "  let returnTargetRepaired = false;",
+        "  if (form && location.hostname.toLowerCase()==='ezproxy.bibliothequedequebec.qc.ca') {",
+        "    let returnInput = form.querySelector('input[type=hidden][name=url]');",
+        "    if (!returnInput) { returnInput=document.createElement('input'); returnInput.type='hidden'; returnInput.name='url'; form.appendChild(returnInput); }",
+        "    const destination='https://www.pressreader.com';",
+        "    if (String(returnInput.value || '').trim() !== destination) { setValue(returnInput,destination); returnTargetRepaired=true; }",
+        "  }",
         "  setValue(userInput, username);",
         "  setValue(password, passwordValue);",
         "  const controls = [...document.querySelectorAll('button,input[type=submit],input[type=button],input[type=image],[role=button]')].filter(visible);",
         "  const submit = controls.find(el => /connexion|connecter|se connecter|login|log in|sign in|submit|soumettre|valider|continue|continuer|ok/i.test(label(el))) || password.form?.querySelector('button[type=submit],input[type=submit],input[type=image]');",
         "  setTimeout(() => { if (submit) submit.click(); else if (password.form?.requestSubmit) password.form.requestSubmit(); else password.form?.submit?.(); }, 120);",
-        "  return { ok:true, submitted:true };",
+        "  return { ok:true, submitted:true, returnTargetRepaired };",
+        "})()",
+    ].join("\n")
+}
+
+function openPressReaderFromMenuScript() {
+    return [
+        "(() => {",
+        "  const visible = el => { if (!el) return false; const box=el.getBoundingClientRect(); const style=getComputedStyle(el); return box.width>1 && box.height>1 && style.display!=='none' && style.visibility!=='hidden'; };",
+        "  const label = el => (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();",
+        "  if (location.hostname.toLowerCase()!=='ezproxy.bibliothequedequebec.qc.ca') return { ok:false, clicked:false, reason:'unexpected host' };",
+        "  const target=[...document.querySelectorAll('a[href]')].filter(visible).find(el => /^pressreader$/i.test(label(el)) || /pressreader/i.test(el.href || ''));",
+        "  if (!target) return { ok:false, clicked:false, reason:'link unavailable' };",
+        "  target.click();",
+        "  return { ok:true, clicked:true };",
         "})()",
     ].join("\n")
 }
