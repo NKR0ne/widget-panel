@@ -7,6 +7,12 @@ GlassCard {
     signal closeRequested()
 
     property bool active: false
+    property int storeRevision: 0
+    readonly property real textScale: {
+        storeRevision
+        return Math.max(0.85, Math.min(1.6,
+            Number(Store.get("wp-news-reader-scale", 1.0)) || 1.0))
+    }
     readonly property var paragraphs: Reader.article.paragraphs || []
     readonly property var images: {
         const result = []
@@ -23,6 +29,26 @@ GlassCard {
     interactive: false
     color: Qt.rgba(0.035, 0.045, 0.07, 0.78)
 
+    function px(value) {
+        return Math.max(8, Math.round(Number(value) * textScale))
+    }
+
+    function adjustTextScale(delta) {
+        const next = Math.max(0.85, Math.min(1.6,
+            Math.round((textScale + delta) * 20) / 20))
+        if (Math.abs(next - textScale) < 0.001)
+            return
+        Store.set("wp-news-reader-scale", next)
+    }
+
+    Connections {
+        target: Store
+        function onChanged(key) {
+            if (key === "wp-news-reader-scale")
+                pane.storeRevision++
+        }
+    }
+
     Item {
         id: header
         anchors.left: parent.left
@@ -33,7 +59,7 @@ GlassCard {
 
         Column {
             anchors.left: parent.left
-            anchors.right: browserButton.left
+            anchors.right: readerTextControls.left
             anchors.rightMargin: 10
             anchors.verticalCenter: parent.verticalCenter
             spacing: 3
@@ -42,7 +68,7 @@ GlassCard {
                 width: parent.width
                 text: pane.active ? (Reader.article.title || "Article") : "Lecture"
                 color: Theme.textPrimary
-                font.pixelSize: Theme.fontSizeTitle
+                font.pixelSize: pane.px(Theme.fontSizeTitle)
                 font.weight: Font.DemiBold
                 maximumLineCount: 2
                 elide: Text.ElideRight
@@ -54,8 +80,59 @@ GlassCard {
                 text: [Reader.article.sourceLabel || "", Reader.article.source || "",
                        Reader.article.byline || ""].filter(Boolean).join(" | ")
                 color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeCaption
+                font.pixelSize: pane.px(Theme.fontSizeCaption)
                 elide: Text.ElideRight
+            }
+        }
+
+        Row {
+            id: readerTextControls
+            anchors.right: browserButton.left
+            anchors.rightMargin: 4
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 2
+
+            Rectangle {
+                width: 26
+                height: 26
+                radius: 5
+                opacity: pane.textScale > 0.85 ? 1 : 0.35
+                color: readerSmallerMouse.containsMouse ? Theme.hover : "transparent"
+                Text {
+                    anchors.centerIn: parent
+                    text: "A-"
+                    color: Theme.textSecondary
+                    font.pixelSize: 9
+                }
+                MouseArea {
+                    id: readerSmallerMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    enabled: pane.textScale > 0.85
+                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onClicked: pane.adjustTextScale(-0.1)
+                }
+            }
+            Rectangle {
+                width: 26
+                height: 26
+                radius: 5
+                opacity: pane.textScale < 1.6 ? 1 : 0.35
+                color: readerLargerMouse.containsMouse ? Theme.hover : "transparent"
+                Text {
+                    anchors.centerIn: parent
+                    text: "A+"
+                    color: Theme.textSecondary
+                    font.pixelSize: 10
+                }
+                MouseArea {
+                    id: readerLargerMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    enabled: pane.textScale < 1.6
+                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onClicked: pane.adjustTextScale(0.1)
+                }
             }
         }
 
@@ -135,7 +212,7 @@ GlassCard {
         visible: !pane.active
         text: "Aucun article selectionne"
         color: Theme.textSecondary
-        font.pixelSize: Theme.fontSizeBody
+        font.pixelSize: pane.px(Theme.fontSizeBody)
     }
 
     Flickable {
@@ -171,7 +248,7 @@ GlassCard {
                     return parts.join(" | ")
                 }
                 color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeCaption
+                font.pixelSize: pane.px(Theme.fontSizeCaption)
                 elide: Text.ElideRight
             }
 
@@ -196,7 +273,7 @@ GlassCard {
                 visible: Reader.busy
                 text: "Extraction de l'article..."
                 color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeBody
+                font.pixelSize: pane.px(Theme.fontSizeBody)
                 font.italic: true
             }
 
@@ -211,7 +288,7 @@ GlassCard {
                           ? "Le site bloque la lecture integree."
                           : "Le contenu de cet article n'a pas pu etre extrait."
                     color: Theme.textSecondary
-                    font.pixelSize: Theme.fontSizeBody
+                    font.pixelSize: pane.px(Theme.fontSizeBody)
                     wrapMode: Text.WordWrap
                 }
                 Rectangle {
@@ -226,7 +303,7 @@ GlassCard {
                         anchors.centerIn: parent
                         text: "Version archivee"
                         color: Theme.textPrimary
-                        font.pixelSize: Theme.fontSizeCaption
+                        font.pixelSize: pane.px(Theme.fontSizeCaption)
                     }
                     MouseArea {
                         id: archiveMouse
@@ -245,7 +322,7 @@ GlassCard {
                     width: articleBody.width
                     text: modelData
                     color: "#d6dae6"
-                    font.pixelSize: 13
+                    font.pixelSize: pane.px(13)
                     lineHeight: 1.42
                     wrapMode: Text.WordWrap
                 }

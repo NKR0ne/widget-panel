@@ -177,6 +177,15 @@ Item {
         Ui.notify("Disposition r\u00e9initialis\u00e9e", "success")
     }
 
+    function columnCountForMode(mode) {
+        if (mode === "monitor" || mode === "live")
+            return 6
+        const baseCount = Number(Store.get("wp-base-columns", 3)) || 3
+        if (mode === "news")
+            return Number(Store.get("wp-news-columns", baseCount)) || baseCount
+        return baseCount
+    }
+
     function saveLayoutPreset() {
         let widths = {}
         try { widths = JSON.parse(Store.get("wp-col-widths", "{}")) } catch (e) {}
@@ -184,7 +193,7 @@ Item {
         Store.set("wp-layout-preset-" + selectedMode, JSON.stringify({
             columns: cfg.columns || {},
             widths: widths,
-            columnCount: Number(Store.get("wp-base-columns", 3)) || 3
+            columnCount: columnCountForMode(selectedMode)
         }))
         Ui.notify("Disposition enregistr\u00e9e", "success")
     }
@@ -203,8 +212,13 @@ Item {
         const savedCount = preset.columnCount || preset.baseColumns
         if (savedCount) {
             const count = Math.max(3, Math.min(6, Number(savedCount)))
-            Store.set("wp-base-columns", count)
-            Panel.fitMode(selectedMode, count, preset.widths || {})
+            if (selectedMode === "news")
+                Store.set("wp-news-columns", count)
+            else if (selectedMode === "base")
+                Store.set("wp-base-columns", count)
+            Panel.fitMode(selectedMode,
+                          selectedMode === "monitor" || selectedMode === "live" ? 6 : count,
+                          preset.widths || {})
         }
         Ui.notify("Disposition restaur\u00e9e", "success")
     }

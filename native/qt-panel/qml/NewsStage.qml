@@ -18,8 +18,14 @@ Item {
     }
     readonly property int configuredColumns: {
         storeRevision
+        const fallback = Number(Store.get("wp-base-columns", 3)) || 3
         return Math.max(3, Math.min(6,
-            Number(Store.get("wp-base-columns", 3)) || 3))
+            Number(Store.get("wp-news-columns", fallback)) || fallback))
+    }
+    readonly property real uiScale: {
+        storeRevision
+        return Math.max(0.85, Math.min(1.35,
+            Number(Store.get("wp-news-ui-scale", 1.0)) || 1.0))
     }
     readonly property int articleColumns: Math.max(
         1, Math.floor((configuredColumns - 1) / 2))
@@ -47,6 +53,10 @@ Item {
         selectedCategory = label || ""
         selectedUrl = ""
         Reader.close()
+    }
+
+    function uiPx(value) {
+        return Math.max(8, Math.round(Number(value) * uiScale))
     }
 
     function openArticle(item) {
@@ -86,7 +96,8 @@ Item {
     Connections {
         target: Store
         function onChanged(key) {
-            if (key === "wp-base-columns" || key === "wp-news-view-mode")
+            if (key === "wp-base-columns" || key === "wp-news-columns"
+                    || key === "wp-news-view-mode" || key === "wp-news-ui-scale")
                 stage.storeRevision++
         }
     }
@@ -120,7 +131,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 text: "Nouvelles"
                 color: Theme.textPrimary
-                font.pixelSize: Theme.fontSizeTitle
+                font.pixelSize: stage.uiPx(Theme.fontSizeTitle)
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
             }
@@ -154,7 +165,7 @@ Item {
                                 text: parent.modelData.label
                                 color: stage.viewMode === parent.modelData.id
                                        ? Theme.textPrimary : Theme.textSecondary
-                                font.pixelSize: 8
+                                font.pixelSize: stage.uiPx(8)
                             }
                             MouseArea {
                                 id: viewChoiceMouse
@@ -179,7 +190,7 @@ Item {
                     anchors.centerIn: parent
                     text: "Actualiser"
                     color: Theme.textSecondary
-                    font.pixelSize: 9
+                    font.pixelSize: stage.uiPx(9)
                 }
                 MouseArea {
                     id: refreshMouse
@@ -201,7 +212,7 @@ Item {
                     anchors.centerIn: parent
                     text: "OPML"
                     color: Theme.textSecondary
-                    font.pixelSize: 9
+                    font.pixelSize: stage.uiPx(9)
                 }
                 MouseArea {
                     id: importMouse
@@ -230,7 +241,7 @@ Item {
 
                 Rectangle {
                     width: parent.width
-                    height: 36
+                    height: Math.round(36 * stage.uiScale)
                     radius: 6
                     color: stage.selectedCategory === "" ? Theme.activeFill
                          : allMouse.containsMouse ? Theme.hover : "transparent"
@@ -244,7 +255,7 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         text: "Toutes les categories"
                         color: Theme.textPrimary
-                        font.pixelSize: 10
+                        font.pixelSize: stage.uiPx(10)
                         elide: Text.ElideRight
                     }
                     Text {
@@ -254,7 +265,7 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         text: stage.selectedCategory === "" ? stage.selectedItems.length : News.categories.length
                         color: Theme.textSecondary
-                        font.pixelSize: 9
+                        font.pixelSize: stage.uiPx(9)
                     }
                     MouseArea {
                         id: allMouse
@@ -273,7 +284,7 @@ Item {
                     delegate: Rectangle {
                         required property string modelData
                         width: categoryColumn.width
-                        height: 38
+                        height: Math.round(38 * stage.uiScale)
                         radius: 6
                         color: stage.selectedCategory === modelData ? Theme.activeFill
                              : categoryMouse.containsMouse ? Theme.hover : "transparent"
@@ -287,7 +298,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             text: modelData
                             color: Theme.textPrimary
-                            font.pixelSize: 10
+                            font.pixelSize: stage.uiPx(10)
                             elide: Text.ElideRight
                         }
                         Text {
@@ -297,7 +308,7 @@ Item {
                             anchors.verticalCenter: parent.verticalCenter
                             text: News.isLoading(modelData) ? "..." : News.itemsFor(modelData).length
                             color: News.isLoading(modelData) ? Theme.accent : Theme.textSecondary
-                            font.pixelSize: 9
+                            font.pixelSize: stage.uiPx(9)
                         }
                         MouseArea {
                             id: categoryMouse
@@ -333,7 +344,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 text: stage.selectedCategory !== "" ? stage.selectedCategory : "Toutes les nouvelles"
                 color: Theme.textPrimary
-                font.pixelSize: Theme.fontSizeTitle
+                font.pixelSize: stage.uiPx(Theme.fontSizeTitle)
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
             }
@@ -342,7 +353,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 text: stage.selectedItems.length + " articles"
                 color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeCaption
+                font.pixelSize: stage.uiPx(Theme.fontSizeCaption)
             }
         }
 
@@ -363,7 +374,7 @@ Item {
                 required property var modelData
                 required property int index
                 width: ListView.view.width
-                height: 94
+                height: Math.round(94 * stage.uiScale)
                 radius: 6
                 color: stage.selectedUrl === String(modelData.link || "") ? Theme.activeFill
                      : rowMouse.containsMouse ? Theme.hover : Theme.cardFill
@@ -402,7 +413,7 @@ Item {
                         width: parent.width
                         text: articleRow.modelData.title || "Article"
                         color: Theme.textPrimary
-                        font.pixelSize: 11
+                        font.pixelSize: stage.uiPx(11)
                         font.weight: Font.DemiBold
                         maximumLineCount: 2
                         elide: Text.ElideRight
@@ -413,7 +424,7 @@ Item {
                         text: articleRow.modelData.description || ""
                         visible: text !== ""
                         color: Theme.textSecondary
-                        font.pixelSize: 9
+                        font.pixelSize: stage.uiPx(9)
                         maximumLineCount: 2
                         elide: Text.ElideRight
                         wrapMode: Text.WordWrap
@@ -424,7 +435,7 @@ Item {
                               .filter(Boolean).join(" | ")
                         color: Theme.textSecondary
                         opacity: 0.78
-                        font.pixelSize: 8
+                        font.pixelSize: stage.uiPx(8)
                         elide: Text.ElideRight
                     }
                 }
@@ -444,7 +455,7 @@ Item {
                 text: News.categories.length === 0
                       ? "Aucune categorie configuree" : "Aucun article disponible"
                 color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeBody
+                font.pixelSize: stage.uiPx(Theme.fontSizeBody)
             }
         }
     }
@@ -489,7 +500,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 text: "Nouvelles par categorie"
                 color: Theme.textPrimary
-                font.pixelSize: Theme.fontSizeTitle
+                font.pixelSize: stage.uiPx(Theme.fontSizeTitle)
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
             }
@@ -525,7 +536,7 @@ Item {
                                 text: parent.modelData.label
                                 color: stage.viewMode === parent.modelData.id
                                        ? Theme.textPrimary : Theme.textSecondary
-                                font.pixelSize: 9
+                                font.pixelSize: stage.uiPx(9)
                             }
                             MouseArea {
                                 id: carouselChoiceMouse
@@ -552,7 +563,7 @@ Item {
                     anchors.centerIn: parent
                     text: "Actualiser"
                     color: Theme.textSecondary
-                    font.pixelSize: 9
+                    font.pixelSize: stage.uiPx(9)
                 }
                 MouseArea {
                     id: carouselRefreshMouse
@@ -576,7 +587,7 @@ Item {
                     anchors.centerIn: parent
                     text: "OPML"
                     color: Theme.textSecondary
-                    font.pixelSize: 9
+                    font.pixelSize: stage.uiPx(9)
                 }
                 MouseArea {
                     id: carouselImportMouse
@@ -616,6 +627,7 @@ Item {
                         width: categoryGrid.cardWidth
                         height: implicitHeight
                         categoryLabel: modelData
+                        textScale: stage.uiScale
                         delegateArticleOpening: true
                         forceCarouselPresentation: true
                         onArticleRequested: function(item) {
@@ -632,7 +644,7 @@ Item {
                 anchors.topMargin: 80
                 text: "Aucune categorie configuree"
                 color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeBody
+                font.pixelSize: stage.uiPx(Theme.fontSizeBody)
                 horizontalAlignment: Text.AlignHCenter
             }
         }

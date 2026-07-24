@@ -10,6 +10,7 @@ GlassCard {
     property string categoryLabel: ""
     property bool delegateArticleOpening: false
     property bool forceCarouselPresentation: false
+    property real textScale: 1.0
     signal articleRequested(var item)
 
     title: categoryLabel
@@ -30,6 +31,11 @@ GlassCard {
             label: categoryLabel,
             at: Date.now()
         }))
+    }
+
+    function px(value) {
+        const boundedScale = Math.max(0.85, Math.min(1.35, Number(textScale) || 1))
+        return Math.max(8, Math.round(Number(value) * boundedScale))
     }
 
     function newsHeightKey() {
@@ -145,7 +151,7 @@ GlassCard {
                 anchors.verticalCenter: parent.verticalCenter
                 text: card.categoryLabel
                 color: Theme.textSecondary
-                font.pixelSize: Theme.fontSizeCaption
+                font.pixelSize: card.px(Theme.fontSizeCaption)
                 font.capitalization: Font.AllUppercase
                 font.letterSpacing: 1.2
                 elide: Text.ElideRight
@@ -165,7 +171,7 @@ GlassCard {
                     anchors.centerIn: parent
                     text: "Matrix"
                     color: Theme.textSecondary
-                    font.pixelSize: 9
+                    font.pixelSize: card.px(9)
                 }
                 MouseArea {
                     id: matrixMouse
@@ -181,7 +187,7 @@ GlassCard {
             visible: card.items.length === 0
             text: "Chargement des flux…"
             color: Theme.textSecondary
-            font.pixelSize: Theme.fontSizeCaption
+            font.pixelSize: card.px(Theme.fontSizeCaption)
         }
 
         Rectangle {
@@ -249,14 +255,14 @@ GlassCard {
                             width: Math.max(40, parent.width - timeText.width - 8)
                             text: card.activeItem.source || ""
                             color: "#dcdcec"
-                            font.pixelSize: 10
+                            font.pixelSize: card.px(10)
                             elide: Text.ElideRight
                         }
                         Text {
                             id: timeText
                             text: card.activeItem.time || ""
                             color: "#dcdcec"
-                            font.pixelSize: 10
+                            font.pixelSize: card.px(10)
                         }
                     }
 
@@ -264,7 +270,7 @@ GlassCard {
                         width: parent.width
                         text: card.activeItem.title || ""
                         color: "#ffffff"
-                        font.pixelSize: 14
+                        font.pixelSize: card.px(14)
                         font.weight: Font.DemiBold
                         wrapMode: Text.WordWrap
                         maximumLineCount: 3
@@ -277,7 +283,7 @@ GlassCard {
                         width: parent.width
                         text: card.activeItem.description || ""
                         color: Qt.rgba(0.96, 0.98, 1.0, 0.82)
-                        font.pixelSize: 11
+                        font.pixelSize: card.px(11)
                         wrapMode: Text.WordWrap
                         maximumLineCount: 2
                         elide: Text.ElideRight
@@ -326,7 +332,7 @@ GlassCard {
                     anchors.centerIn: parent
                     text: "<"
                     color: Theme.textPrimary
-                    font.pixelSize: 24
+                    font.pixelSize: card.px(24)
                     font.weight: Font.Light
                 }
                 MouseArea {
@@ -352,7 +358,7 @@ GlassCard {
                     anchors.centerIn: parent
                     text: ">"
                     color: Theme.textPrimary
-                    font.pixelSize: 24
+                    font.pixelSize: card.px(24)
                     font.weight: Font.Light
                 }
                 MouseArea {
@@ -448,7 +454,7 @@ GlassCard {
                         width: parent.width
                         text: row.modelData.title
                         color: Theme.textPrimary
-                        font.pixelSize: Theme.fontSizeCaption
+                        font.pixelSize: card.px(Theme.fontSizeCaption)
                         wrapMode: Text.WordWrap
                         maximumLineCount: 2
                         elide: Text.ElideRight
@@ -459,7 +465,7 @@ GlassCard {
                         text: row.modelData.source
                               + (row.modelData.time ? " · " + row.modelData.time : "")
                         color: Theme.textSecondary
-                        font.pixelSize: 9
+                        font.pixelSize: card.px(9)
                         elide: Text.ElideRight
                     }
                 }

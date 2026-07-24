@@ -10,6 +10,7 @@ Item {
 
     property string mode: "base"
     readonly property real spotlightX: Math.round(width / 2) + 3
+    readonly property bool additiveMode: mode === "monitor" || mode === "live"
     opacity: 1
     transform: Translate { id: modeShift; y: 0 }
 
@@ -147,9 +148,12 @@ Item {
     readonly property var visibleColumns: {
         return columnOrder.slice(0, baseColumnCount)
     }
+    readonly property var panelColumns: {
+        return additiveMode ? columnOrder.slice(0, 3) : visibleColumns
+    }
     readonly property bool workstationVisible: {
         storeRev
-        if (mode === "news" || mode === "live")
+        if (mode === "news")
             return false
         if (mode === "monitor") {
             for (const id of workstationIds) {
@@ -262,6 +266,16 @@ Item {
 
     function widgetsForColumn(name) {
         const result = []
+        if (mode === "base" || additiveMode) {
+            for (const entry of registry) {
+                if (!isActive(entry.id))
+                    continue
+                const assigned = savedColumns[entry.id] || entry.column
+                if (assigned === name)
+                    result.push(entry)
+            }
+            return sortWidgets(result)
+        }
         if (mode === "news") {
             // News stage: categories only, round-robin across all columns.
             const cats = registry.filter(e => e.id.startsWith("cat:"))
@@ -282,25 +296,13 @@ Item {
             }
             return sortWidgets(result)
         }
-        for (const entry of registry) {
-            if (!isActive(entry.id))
-                continue
-            let assigned
-            if (mode === "monitor") {
-                assigned = monitorModeColumns[entry.id]
-                if (assigned === undefined)
-                    continue
-            } else {
-                assigned = savedColumns[entry.id] || entry.column
-            }
-            if (assigned === name)
-                result.push(entry)
-        }
         return sortWidgets(result)
     }
 
     Loader {
-        anchors.fill: parent
+        x: root.spotlightX
+        width: Math.max(0, root.width - x)
+        height: root.height
         active: root.mode === "monitor"
         visible: active
         source: "MonitorStage.qml"
@@ -321,7 +323,9 @@ Item {
     }
 
     Loader {
-        anchors.fill: parent
+        x: root.spotlightX
+        width: Math.max(0, root.width - x)
+        height: root.height
         active: root.mode === "live"
         visible: active
         source: "LiveStage.qml"
@@ -332,13 +336,13 @@ Item {
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.bottom: parent.bottom
-        width: root.mode === "base" && Panel.islandOpen
+        width: (root.additiveMode || (root.mode === "base" && Panel.islandOpen))
                ? Math.max(0, root.spotlightX - 6) : root.width
         spacing: 6
-        visible: root.mode === "base"
+        visible: root.mode === "base" || root.additiveMode
 
         Repeater {
-            model: root.mode === "base" ? root.visibleColumns : []
+            model: rowLayout.visible ? root.panelColumns : []
 
             delegate: Flickable {
                 id: columnFlick

@@ -23,13 +23,23 @@ Item {
     property int storeRevision: 0
     readonly property int columnCount: {
         storeRevision
-        return Math.max(3, Math.min(6, Number(Store.get("wp-base-columns", 3)) || 3))
+        if (panelMode === "monitor" || panelMode === "live")
+            return 6
+        const key = panelMode === "news" ? "wp-news-columns" : "wp-base-columns"
+        const fallback = Number(Store.get("wp-base-columns", 3)) || 3
+        return Math.max(3, Math.min(6, Number(Store.get(key, fallback)) || fallback))
+    }
+    readonly property real newsUiScale: {
+        storeRevision
+        return Math.max(0.85, Math.min(1.35,
+            Number(Store.get("wp-news-ui-scale", 1.0)) || 1.0))
     }
 
     Connections {
         target: Store
         function onChanged(key) {
-            if (key === "wp-base-columns")
+            if (key === "wp-base-columns" || key === "wp-news-columns"
+                    || key === "wp-news-ui-scale")
                 surface.storeRevision++
         }
     }
@@ -37,7 +47,12 @@ Item {
     function fitCurrentWindowMode(mode) {
         let widths = {}
         try { widths = JSON.parse(Store.get("wp-col-widths", "{}")) } catch (e) {}
-        return Panel.fitMode(mode, Number(Store.get("wp-base-columns", 3)) || 3, widths)
+        let count = Number(Store.get("wp-base-columns", 3)) || 3
+        if (mode === "news")
+            count = Number(Store.get("wp-news-columns", count)) || count
+        else if (mode === "monitor" || mode === "live")
+            count = 6
+        return Panel.fitMode(mode, Math.max(3, Math.min(6, count)), widths)
     }
 
     function switchMode(mode) {
@@ -62,11 +77,21 @@ Item {
     }
 
     function adjustColumns(delta) {
+        if (panelMode === "monitor" || panelMode === "live")
+            return
         const next = Math.max(3, Math.min(6, columnCount + delta))
         if (next === columnCount)
             return
-        Store.set("wp-base-columns", next)
+        Store.set(panelMode === "news" ? "wp-news-columns" : "wp-base-columns", next)
         fitCurrentWindowMode(panelMode)
+    }
+
+    function adjustNewsUiScale(delta) {
+        const next = Math.max(0.85, Math.min(1.35,
+            Math.round((newsUiScale + delta) * 20) / 20))
+        if (Math.abs(next - newsUiScale) < 0.001)
+            return
+        Store.set("wp-news-ui-scale", next)
     }
 
     function refreshData() {
@@ -286,6 +311,7 @@ Item {
                 Row {
                     spacing: 2
                     Layout.alignment: Qt.AlignVCenter
+                    visible: surface.panelMode === "base" || surface.panelMode === "news"
 
                     Rectangle {
                         width: 20; height: 20; radius: 5
@@ -331,6 +357,51 @@ Item {
                             enabled: surface.columnCount < 6
                             cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                             onClicked: surface.adjustColumns(1)
+                        }
+                    }
+                }
+
+                Row {
+                    visible: surface.panelMode === "news"
+                    spacing: 2
+                    Layout.alignment: Qt.AlignVCenter
+
+                    Rectangle {
+                        width: 26; height: 20; radius: 5
+                        opacity: surface.newsUiScale > 0.85 ? 1 : 0.35
+                        color: smallerNewsMouse.containsMouse ? Theme.hover : "transparent"
+                        Text {
+                            anchors.centerIn: parent
+                            text: "A-"
+                            color: Theme.textSecondary
+                            font.pixelSize: 9
+                        }
+                        MouseArea {
+                            id: smallerNewsMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            enabled: surface.newsUiScale > 0.85
+                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: surface.adjustNewsUiScale(-0.1)
+                        }
+                    }
+                    Rectangle {
+                        width: 26; height: 20; radius: 5
+                        opacity: surface.newsUiScale < 1.35 ? 1 : 0.35
+                        color: largerNewsMouse.containsMouse ? Theme.hover : "transparent"
+                        Text {
+                            anchors.centerIn: parent
+                            text: "A+"
+                            color: Theme.textSecondary
+                            font.pixelSize: 10
+                        }
+                        MouseArea {
+                            id: largerNewsMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            enabled: surface.newsUiScale < 1.35
+                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: surface.adjustNewsUiScale(0.1)
                         }
                     }
                 }

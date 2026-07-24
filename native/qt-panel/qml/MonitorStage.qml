@@ -2,17 +2,13 @@ import QtQuick
 import QtQuick.Layouts
 import QtPanel.Native
 
-// Dedicated Station workspace. It fills the shared configured column span;
-// supporting context uses one column and telemetry consumes the remainder.
+// Additive Station stage for columns 4-6. Supporting context uses one column
+// and telemetry consumes the remaining two.
 Item {
     id: stage
 
     property int storeRevision: 0
-    readonly property int configuredColumns: {
-        storeRevision
-        return Math.max(3, Math.min(6,
-            Number(Store.get("wp-base-columns", 3)) || 3))
-    }
+    readonly property int configuredColumns: 3
     readonly property var allowedIds: [
         "clock", "weather", "stocks", "workstation-cpu", "workstation-gpu",
         "workstation-ram", "workstation-disk", "workstation-network",
@@ -57,7 +53,7 @@ Item {
     Connections {
         target: Store
         function onChanged(key) {
-            if (key === "wp-config" || key === "wp-base-columns")
+            if (key === "wp-config")
                 stage.storeRevision++
         }
     }

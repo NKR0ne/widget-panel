@@ -450,9 +450,15 @@ int main(int argc, char* argv[])
             if (widthsDocument.isObject())
                 columnWidths = widthsDocument.object().toVariantMap();
         }
-        controller.fitMode(startMode,
-                           settings.getInt(QStringLiteral("wp-base-columns"), 3),
-                           columnWidths);
+        const int baseColumns = settings.getInt(QStringLiteral("wp-base-columns"), 3);
+        int startColumns = baseColumns;
+        if (startMode == QStringLiteral("news")) {
+            startColumns = settings.getInt(QStringLiteral("wp-news-columns"), baseColumns);
+        } else if (startMode == QStringLiteral("monitor")
+                   || startMode == QStringLiteral("live")) {
+            startColumns = 6;
+        }
+        controller.fitMode(startMode, startColumns, columnWidths);
     }
     if (!diagIslandUrl.isEmpty()) {
         QTimer::singleShot(350, &controller,
