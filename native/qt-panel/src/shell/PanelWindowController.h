@@ -61,6 +61,9 @@ public:
     // Port of the panel-fit-mode IPC: 'base' sizes to the visible columns,
     // stage modes (news/monitor/live) expand to the full work area.
     Q_INVOKABLE bool fitMode(const QString& mode, int columnCount, const QVariantMap& colWidths);
+    // Active layout mode, remembered so hide/show re-applies the width that
+    // belongs to the mode currently on screen instead of the base width.
+    QString mode() const { return m_mode; }
     // Web spotlight: expands to the six-column surface and embeds Qt WebEngine
     // in columns four through six.
     Q_INVOKABLE void openIsland(const QString& url);
@@ -135,6 +138,13 @@ private:
     QString autostartCommand() const;
     double pinnedOpacity() const;
     int storedWidth() const;
+    // Column count the given mode renders (mirrors PanelSurface.columnCount):
+    // monitor/live are always 6, news has its own key, base uses wp-base-columns.
+    int columnsForMode(const QString& mode) const;
+    // Width that belongs to a mode — used on show so the panel returns at the
+    // size of the mode on screen, not whatever base last stored.
+    int widthForMode(const QString& mode) const;
+    QVariantMap storedColumnWidths() const;
     int fullPanelWidth() const;
     int basePanelWidth(int baseColumnCount, const QVariantMap& colWidths) const;
 
@@ -168,6 +178,7 @@ private:
     bool m_islandCanGoForward = false;
     QString m_islandReadyState;
     int m_islandPanelWidth = 0;
+    QString m_mode = QStringLiteral("base");
     int m_islandRestoreWidth = 0;
     qint64 m_geometryLockUntil = 0;
     QString m_graphicsApiName = QStringLiteral("starting");

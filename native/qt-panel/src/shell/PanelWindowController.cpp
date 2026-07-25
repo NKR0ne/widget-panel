@@ -306,7 +306,9 @@ void PanelWindowController::endResize()
     if (!m_resizeTimer.isActive())
         return;
     m_resizeTimer.stop();
-    if (m_window)
+    // Only base remembers a dragged width. Stage modes are sized from their own
+    // column count, so storing their width here would widen base as well.
+    if (m_window && m_mode == QLatin1String("base"))
         m_settings->set(QStringLiteral("wp-width"), m_window->width());
 }
 
@@ -317,6 +319,12 @@ bool PanelWindowController::fitMode(const QString& mode, int columnCount, const 
     const bool stage = mode != QLatin1String("base");
     const int width = basePanelWidth(columnCount, colWidths);
     m_geometryLockUntil = QDateTime::currentMSecsSinceEpoch() + 700;
+    // Remember which mode is on screen so a hide/show cycle restores this
+    // mode's width instead of falling back to the base-mode width.
+    if (m_mode != mode) {
+        m_mode = mode;
+        m_settings->set(QStringLiteral("wp-panel-mode"), mode);
+    }
     if (!stage)
         m_settings->set(QStringLiteral("wp-width"), width);
     const QRect wa = m_workArea.workArea();
@@ -732,13 +740,17 @@ void PanelWindowController::applyWorkArea()
         return;
     const QRect wa = m_workArea.workArea();
     const QRect screen = m_workArea.screenGeometry();
+    // While visible keep the current width (a manual resize is authoritative);
+    // otherwise — the show path — size for the mode that is actually on screen.
     const int current = (m_panelVisible && m_window->width() >= kMinPanelWidth)
         ? m_window->width()
-        : storedWidth();
+        : widthForMode(m_mode);
     const int width = qBound(kMinPanelWidth, current, fullPanelWidth());
     m_window->setGeometry(screen.x() + kPanelHorizontalGap,
                           wa.y() + kPanelVerticalGap,
                           width, wa.height() - kPanelVerticalGap * 2);
+    qInfo() << "[panel] apply-geometry mode=" << m_mode << "width=" << width
+            << "visible=" << m_panelVisible;
 }
 
 void PanelWindowController::notifyHelperHwnds()
@@ -784,21 +796,41 @@ double PanelWindowController::pinnedOpacity() const
     return qBound(0.05, value, 1.0);
 }
 
+QVariantMap PanelWindowController::storedColumnWidths() const
+{
+    const QVariant rawWidths = m_settings->get(QStringLiteral("wp-col-widths"));
+    if (rawWidths.canConvert<QVariantMap>())
+        return rawWidths.toMap();
+    const QJsonDocument doc = QJsonDocument::fromJson(rawWidths.toString().toUtf8());
+    return doc.isObject() ? doc.object().toVariantMap() : QVariantMap();
+}
+
+int PanelWindowController::columnsForMode(const QString& mode) const
+{
+    // Mirrors PanelSurface.columnCount so C++ can size any mode on its own.
+    const int base = m_settings->getInt(QStringLiteral("wp-base-columns"), 3);
+    if (mode == QLatin1String("monitor") || mode == QLatin1String("live"))
+        return 6;
+    if (mode == QLatin1String("news"))
+        return qBound(3, m_settings->getInt(QStringLiteral("wp-news-columns"), base), 6);
+    return qBound(3, base, 6);
+}
+
+int PanelWindowController::widthForMode(const QString& mode) const
+{
+    const QVariantMap colWidths = storedColumnWidths();
+    const int layout = basePanelWidth(columnsForMode(mode), colWidths);
+    // Only base keeps a user-dragged width; stage modes are sized purely by
+    // their own column count, so switching away and back cannot inflate them.
+    if (mode != QLatin1String("base"))
+        return qBound(kMinPanelWidth, layout, fullPanelWidth());
+    const int stored = m_settings->getInt(QStringLiteral("wp-width"), layout);
+    return qBound(kMinPanelWidth, qMax(layout, stored), fullPanelWidth());
+}
+
 int PanelWindowController::storedWidth() const
 {
-    QVariantMap colWidths;
-    const QVariant rawWidths = m_settings->get(QStringLiteral("wp-col-widths"));
-    if (rawWidths.canConvert<QVariantMap>()) {
-        colWidths = rawWidths.toMap();
-    } else {
-        const QJsonDocument doc = QJsonDocument::fromJson(rawWidths.toString().toUtf8());
-        if (doc.isObject())
-            colWidths = doc.object().toVariantMap();
-    }
-    const int columns = m_settings->getInt(QStringLiteral("wp-base-columns"), 3);
-    const int layoutMinimum = basePanelWidth(columns, colWidths);
-    const int stored = m_settings->getInt(QStringLiteral("wp-width"), layoutMinimum);
-    return qMax(layoutMinimum, qMax(kMinPanelWidth, stored));
+    return widthForMode(QStringLiteral("base"));
 }
 
 int PanelWindowController::fullPanelWidth() const
