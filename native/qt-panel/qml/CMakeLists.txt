@@ -11,6 +11,7 @@ qt_add_qml_module(qtpanel_ui
         PanelColumns.qml
         WidgetHost.qml
         GlassCard.qml
+        ScrimBackdrop.qml
         IconButton.qml
         CardHeader.qml
         StatusBanner.qml
@@ -56,6 +57,7 @@ qt_add_qml_module(qtpanel_ui
         MsStatePane.qml
     RESOURCES
         web/traffic-map.html
+        textures/acrylic-noise.png
 )
 
 qt_add_shaders(qtpanel_ui "qtpanel_shaders"

@@ -7,6 +7,8 @@ Item {
     id: modal
 
     property bool open: false
+    // Panel content to blur behind the sheet; set by PanelSurface.
+    property Item backdropSource: null
     focus: open
     Keys.onEscapePressed: dismiss()
 
@@ -164,9 +166,11 @@ Item {
         }
     }
 
-    Rectangle {
+    ScrimBackdrop {
         anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.5)
+        source: modal.backdropSource
+        active: modal.open
+        dim: 0.5
         MouseArea {
             anchors.fill: parent
             enabled: modal.open
@@ -298,6 +302,13 @@ Item {
                 description: "Active les reflets, les liser\u00e9s et la profondeur"
                 checked: Ui.surfaceLighting
                 onToggled: function(value) { Ui.surfaceLighting = value; Ui.save() }
+            }
+            SettingsToggle {
+                width: parent.width
+                label: "Fond mica"
+                description: "Teinte le fond d'\u00e9cran au lieu de flouter le bureau (acrylique)"
+                checked: Panel.micaBackdrop
+                onToggled: function(value) { Panel.setMicaBackdrop(value) }
             }
             SettingsSlider {
                 width: parent.width

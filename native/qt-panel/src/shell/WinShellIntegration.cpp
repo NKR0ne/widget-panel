@@ -20,12 +20,32 @@
 
 namespace {
 constexpr int kCornerRound = 2;     // DWMWCP_ROUND
+constexpr int kBackdropMica = 2;    // DWMSBT_MAINWINDOW
 constexpr int kBackdropAcrylic = 3; // DWMSBT_TRANSIENTWINDOW
+
+void applyBackdrop(HWND hwnd, bool mica)
+{
+    int backdrop = mica ? kBackdropMica : kBackdropAcrylic;
+    const HRESULT hr = DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
+    if (FAILED(hr)) {
+        qWarning() << "[shell]" << (mica ? "mica" : "acrylic")
+                   << "system backdrop unavailable, hr =" << hr;
+        // Mica needs Win11 22H2+; fall back rather than leaving the window
+        // with no backdrop at all.
+        if (mica) {
+            backdrop = kBackdropAcrylic;
+            if (SUCCEEDED(DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop))))
+                qInfo() << "[shell] fell back to acrylic backdrop";
+        }
+        return;
+    }
+    qInfo() << "[shell]" << (mica ? "mica" : "acrylic") << "system backdrop applied";
+}
 } // namespace
 
 namespace qtpanel {
 
-void WinShellIntegration::applyPanelChrome(QWindow* window)
+void WinShellIntegration::applyPanelChrome(QWindow* window, bool mica)
 {
     if (!window)
         return;
@@ -49,12 +69,17 @@ void WinShellIntegration::applyPanelChrome(QWindow* window)
     int corner = kCornerRound;
     DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
 
-    int backdrop = kBackdropAcrylic;
-    const HRESULT hr = DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
-    if (FAILED(hr))
-        qWarning() << "[shell] acrylic system backdrop unavailable, hr =" << hr;
-    else
-        qInfo() << "[shell] acrylic backdrop + rounded corners applied";
+    applyBackdrop(hwnd, mica);
+}
+
+void WinShellIntegration::setBackdropMaterial(QWindow* window, bool mica)
+{
+    if (!window)
+        return;
+    const HWND hwnd = reinterpret_cast<HWND>(window->winId());
+    if (!hwnd)
+        return;
+    applyBackdrop(hwnd, mica);
 }
 
 } // namespace qtpanel

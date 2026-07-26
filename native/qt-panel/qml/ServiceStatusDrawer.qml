@@ -5,6 +5,9 @@ import QtPanel.Native
 Item {
     id: drawer
 
+    // Panel content to blur behind the drawer; set by PanelSurface.
+    property Item backdropSource: null
+
     visible: opacity > 0
     opacity: Ui.statusOpen ? 1 : 0
     enabled: Ui.statusOpen
@@ -37,9 +40,11 @@ Item {
             : state === "setup" ? Theme.info : Theme.warning
     }
 
-    Rectangle {
+    ScrimBackdrop {
         anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.52)
+        source: drawer.backdropSource
+        active: Ui.statusOpen
+        dim: 0.52
         MouseArea { anchors.fill: parent; onClicked: Ui.closeStatus() }
     }
 

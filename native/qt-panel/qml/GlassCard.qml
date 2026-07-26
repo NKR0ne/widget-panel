@@ -38,6 +38,21 @@ Rectangle {
         onPointChanged: card.lightX = Math.max(18, Math.min(card.width - 18, point.position.x))
     }
 
+    // Grain, shared with the acrylic transient layers. No blur here on purpose:
+    // what sits behind a card is the panel background, not app content, so a
+    // per-card live blur would cost per-frame GPU on dozens of always-on cards
+    // and obscure nothing. Grain is the part of the material recipe that
+    // actually makes a card read as a surface rather than a flat wash.
+    // Squared off at the corners, which is invisible at this opacity.
+    Image {
+        anchors.fill: parent
+        z: 38
+        visible: !card.flat && Ui.surfaceLighting && Theme.grainOpacity > 0
+        source: "textures/acrylic-noise.png"
+        fillMode: Image.Tile
+        opacity: Theme.grainOpacity
+    }
+
     Rectangle {
         id: pointerKeyline
         width: Math.min(128, Math.max(48, card.width * 0.36))

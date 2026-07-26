@@ -40,6 +40,7 @@ class PanelWindowController : public QObject {
     Q_PROPERTY(bool islandCanGoBack READ islandCanGoBack NOTIFY islandChanged)
     Q_PROPERTY(bool islandCanGoForward READ islandCanGoForward NOTIFY islandChanged)
     Q_PROPERTY(QString islandReadyState READ islandReadyState NOTIFY islandChanged)
+    Q_PROPERTY(bool micaBackdrop READ micaBackdrop WRITE setMicaBackdrop NOTIFY micaBackdropChanged)
 
 public:
     PanelWindowController(SettingsStore* settings, HelperServer* helper,
@@ -89,6 +90,10 @@ public:
     Q_INVOKABLE void setPinnedOpacity(double value);
     Q_INVOKABLE bool autostart() const;
     Q_INVOKABLE void setAutostart(bool enabled);
+    // DWM system backdrop: mica (docked, wallpaper-tinted) vs acrylic
+    // (live desktop blur). Applies immediately and persists.
+    bool micaBackdrop() const { return m_micaBackdrop; }
+    Q_INVOKABLE void setMicaBackdrop(bool mica);
     Q_INVOKABLE void quit();
 
     bool islandOpen() const { return m_islandOpen; }
@@ -105,6 +110,7 @@ public:
 
 signals:
     void pinnedChanged();
+    void micaBackdropChanged();
     void panelVisibleChanged();
     void graphicsApiNameChanged();
     void islandChanged();
@@ -164,6 +170,7 @@ private:
     FocusPolicy m_focus;
 
     bool m_pinned = false;
+    bool m_micaBackdrop = true;
     bool m_panelVisible = false;
     bool m_showAnimating = false;
     bool m_hiding = false;

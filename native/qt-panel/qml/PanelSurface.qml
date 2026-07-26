@@ -482,25 +482,30 @@ Item {
     ReaderOverlay {
         anchors.fill: parent
         presentationEnabled: surface.panelMode !== "news"
+        backdropSource: chrome
     }
 
     NewsMatrixOverlay {
         anchors.fill: parent
+        backdropSource: chrome
     }
 
     SettingsModal {
         id: settingsModal
         anchors.fill: parent
+        backdropSource: chrome
     }
 
     ManageWidgetsModal {
         id: manageModal
         anchors.fill: parent
+        backdropSource: chrome
     }
 
     ServiceStatusDrawer {
         anchors.fill: parent
         z: 90
+        backdropSource: chrome
     }
 
     ToastOverlay {

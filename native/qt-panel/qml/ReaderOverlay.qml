@@ -9,6 +9,8 @@ Item {
 
     property bool presentationEnabled: true
     property bool open: false
+    // Panel content to blur behind the reader; set by PanelSurface.
+    property Item backdropSource: null
     property var articleImages: {
         const out = []
         const hero = Reader.article.image || ""
@@ -77,9 +79,11 @@ Item {
     }
 
     // Scrim — click outside the card closes.
-    Rectangle {
+    ScrimBackdrop {
         anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.55)
+        source: overlay.backdropSource
+        active: overlay.open
+        dim: 0.55
         MouseArea {
             anchors.fill: parent
             enabled: overlay.open

@@ -106,7 +106,14 @@ void PanelWindowController::attach(QQuickWindow* window)
     window->setFlags(Qt::FramelessWindowHint | Qt::Tool | Qt::WindowStaysOnTopHint);
     window->setColor(Qt::transparent);
     applyWorkArea();
-    WinShellIntegration::applyPanelChrome(window);
+    m_micaBackdrop = m_settings->get(QStringLiteral("wp-backdrop-material"),
+                                     QStringLiteral("mica")).toString()
+                     != QLatin1String("acrylic");
+    WinShellIntegration::applyPanelChrome(window, m_micaBackdrop);
+    // attach() can run after the QML engine has already bound micaBackdrop at
+    // its default, so announce the stored value rather than leaving Theme's
+    // tint out of step with the material actually on screen.
+    emit micaBackdropChanged();
 
     connect(window, &QWindow::activeChanged, this, &PanelWindowController::onActiveChanged);
     connect(window, &QQuickWindow::sceneGraphInitialized,
@@ -726,6 +733,18 @@ void PanelWindowController::setAutostart(bool enabled)
         run.remove(QStringLiteral("qt-panel"));
     }
     qInfo() << "[settings] autostart" << (enabled ? "enabled" : "disabled");
+}
+
+void PanelWindowController::setMicaBackdrop(bool mica)
+{
+    if (m_micaBackdrop == mica)
+        return;
+    m_micaBackdrop = mica;
+    m_settings->set(QStringLiteral("wp-backdrop-material"),
+                    mica ? QStringLiteral("mica") : QStringLiteral("acrylic"));
+    if (m_window)
+        WinShellIntegration::setBackdropMaterial(m_window, mica);
+    emit micaBackdropChanged();
 }
 
 void PanelWindowController::quit()

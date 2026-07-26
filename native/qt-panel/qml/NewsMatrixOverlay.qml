@@ -7,6 +7,8 @@ Item {
     id: overlay
 
     property bool open: false
+    // Panel content to blur behind the matrix; set by PanelSurface.
+    property Item backdropSource: null
     property string categoryLabel: ""
     property var items: []
     property var feedLabels: []
@@ -97,9 +99,11 @@ Item {
         }
     }
 
-    Rectangle {
+    ScrimBackdrop {
         anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.62)
+        source: overlay.backdropSource
+        active: overlay.open
+        dim: 0.62
         MouseArea {
             anchors.fill: parent
             enabled: overlay.open

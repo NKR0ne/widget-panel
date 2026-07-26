@@ -11,6 +11,8 @@ Item {
     opacity: open ? 1 : 0
 
     property bool open: false
+    // Panel content to blur behind the sheet; set by PanelSurface.
+    property Item backdropSource: null
     property string selectedMode: "base"
     property int rev: 0
 
@@ -233,9 +235,11 @@ Item {
         }
     }
 
-    Rectangle {
+    ScrimBackdrop {
         anchors.fill: parent
-        color: Qt.rgba(0, 0, 0, 0.62)
+        source: modal.backdropSource
+        active: modal.open
+        dim: 0.62
         MouseArea { anchors.fill: parent; enabled: modal.open; onClicked: modal.dismiss() }
     }
 
