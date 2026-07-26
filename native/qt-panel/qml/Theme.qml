@@ -1,6 +1,7 @@
 pragma Singleton
 import QtQuick
 import QtPanel.Native
+import "acrylic.js" as Acrylic
 
 // Design tokens — single source of truth for color, radius, and spacing.
 QtObject {
@@ -21,12 +22,30 @@ QtObject {
     // darkened backdrop, not the colour Start ends up reading as — used
     // directly it lands far too light. AccentDark2 is where Start actually
     // sits once composited.
-    readonly property color surfaceTint: systemMaterial
-        ? Qt.darker(Sys.accentPalette[5], 1.3) : baseTint
+    // Interpolated between the shell's own two darkest accent shades rather
+    // than invented. AccentDark2 alone composites to #384156 against Start's
+    // #2E3542, because Windows applies its tint inside the acrylic pipeline
+    // while we can only tint over the finished composite — our process never
+    // sees the DWM backdrop. A quarter-step toward AccentDark3 closes that.
+    readonly property color surfaceTint: {
+        if (!systemMaterial)
+            return baseTint
+        const a = Sys.accentPalette[5]
+        const b = Sys.accentPalette[6]
+        const t = 0.25
+        return Qt.rgba(a.r + (b.r - a.r) * t,
+                       a.g + (b.g - a.g) * t,
+                       a.b + (b.b - a.b) * t, 1)
+    }
     // Start is a flat surface: no animated sheen, no cursor-tracked glow. The
     // decorative lighting is scaled back rather than switched off so the panel
     // keeps its own depth cues without reading as a different material.
     readonly property real lightingScale: systemMaterial ? 0.55 : 1.0
+    // Fluent's default tint opacity before its own suppression curve is applied.
+    readonly property real systemTintOpacity: 0.8
+    readonly property real systemTintAlpha: systemMaterial
+        ? Acrylic.compositeTintAlpha(surfaceTint, systemTintOpacity) : 1.0
+
     // Shell accent ramp: 3 is the base accent, 4 is Start's darker shade.
     readonly property color accentBase: systemMaterial ? Sys.accentPalette[3] : accent
     readonly property color accentLight: systemMaterial ? Sys.accentPalette[2] : accent
@@ -42,13 +61,13 @@ QtObject {
         // Start is close to opaque: the desktop reads as a faint influence
         // behind it, not as visible content. A light tint over acrylic looks
         // nothing like it.
-        // Opacity here is a noise control, not just a colour control: the DWM
-        // backdrop carries its own grain, so every point of transparency lets
-        // more of it through. Measured, 0.84 nearly doubled the visible noise
-        // over 0.9. Luminosity comes from the depth gradient instead, which is
-        // how Start manages to look both smooth and lit.
+        // Derived by Fluent's own curve rather than picked by hand — see
+        // acrylic.js. For this accent it lands near 0.72, well below the 0.92
+        // that was guessed, which is most of why the surface read as a flat
+        // slab instead of a lit one: the extra opacity was covering the DWM
+        // acrylic underneath rather than tinting it.
         if (systemMaterial)
-            return Qt.rgba(t.r, t.g, t.b, 0.92)
+            return Qt.rgba(t.r, t.g, t.b, systemTintAlpha)
         // Acrylic live-blurs the desktop and needs a heavier tint to stay
         // legible; mica is a static wallpaper sample and needs far less.
         return Qt.rgba(t.r, t.g, t.b, Panel.micaBackdrop ? 0.28 : 0.45)
@@ -86,9 +105,9 @@ QtObject {
         : Qt.rgba(1, 1, 1, 0.18)
     // Grain strength shared by every material surface (cards and the acrylic
     // transient layers), so they age the same way.
-    // Following the system leans on DWM's own acrylic grain rather than adding
-    // much of our own; stacking both is what made the surface look coarse.
-    readonly property real grainOpacity: contrastEnabled ? 0 : (systemMaterial ? 0.012 : 0.03)
+    // Fluent's sc_noiseOpacity, verbatim. Both the 0.03 used before and the
+    // 0.012 guessed for system mode were wrong in opposite directions.
+    readonly property real grainOpacity: contrastEnabled ? 0 : 0.02
     readonly property color textPrimary: "#e8eaf2"
     readonly property color textSecondary: contrastEnabled ? "#c9cfda" : "#9aa3b5"
     // Matches the Windows accent color (falls back to blue).

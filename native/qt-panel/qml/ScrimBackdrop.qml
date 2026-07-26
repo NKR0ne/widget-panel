@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Effects
+import QtQuick.Window
 import QtPanel.Native
 
 // Acrylic material for a transient layer (modal, drawer, overlay), replacing
@@ -84,16 +85,15 @@ Item {
         autoPaddingEnabled: false
         blurEnabled: true
         blur: scrim.blurAmount
-        // blurMax alone tops out well short of frosted glass; blurMultiplier is
-        // what pushes the sampling distance far enough that body text stops
-        // being readable, which is the point — the layer behind must read as
-        // material, not as content competing for attention. Tuned so the large
-        // colour pools still show through and the layer stays legible as place.
-        blurMax: 64
-        blurMultiplier: 0.8
-        // Blur washes colour out; Fluent compensates by pushing saturation back
-        // up rather than letting the material go grey.
-        saturation: 0.32
+        // Fluent's sc_blurRadius is 30px. The source is captured at half
+        // resolution, so the radius is halved against that texture before the
+        // DPI factor is applied.
+        blurMax: Math.max(8, Math.round(30 * Math.max(1, Screen.devicePixelRatio) / 2))
+        blurMultiplier: 0
+        // Fluent's sc_saturation is 1.25, and MultiEffect's saturation is an
+        // offset from 1.0. Blur washes colour out and the material is meant to
+        // push it back rather than go grey.
+        saturation: 0.25
     }
 
     // Tint wash.

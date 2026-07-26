@@ -13,6 +13,7 @@ qt_add_qml_module(qtpanel_ui
         GlassCard.qml
         ScrimBackdrop.qml
         GrainOverlay.qml
+        acrylic.js
         IconButton.qml
         CardHeader.qml
         StatusBanner.qml
