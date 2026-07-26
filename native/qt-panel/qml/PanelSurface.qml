@@ -130,7 +130,7 @@ Item {
             property real cursorX: 0.5
             property real cursorY: 0.3
             property real cursorOn: Ui.surfaceLighting && Ui.mouseHalo && panelHover.hovered ? 1 : 0
-            property real lightingStrength: Ui.lightingStrength
+            property real lightingStrength: Ui.lightingStrength * Theme.lightingScale
             property color accentColor: Theme.accent
             fragmentShader: "effects/panel_depth.frag.qsb"
             NumberAnimation on time {
@@ -462,7 +462,7 @@ Item {
             property real cursorX: depthFx.cursorX
             property real cursorY: depthFx.cursorY
             property real cursorOn: depthFx.cursorOn
-            property real lightingStrength: Ui.lightingStrength
+            property real lightingStrength: Ui.lightingStrength * Theme.lightingScale
             property color accentColor: Theme.accent
             fragmentShader: "effects/spotlight.frag.qsb"
             blending: true
