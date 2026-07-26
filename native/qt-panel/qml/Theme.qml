@@ -26,7 +26,7 @@ QtObject {
     // Start is a flat surface: no animated sheen, no cursor-tracked glow. The
     // decorative lighting is scaled back rather than switched off so the panel
     // keeps its own depth cues without reading as a different material.
-    readonly property real lightingScale: systemMaterial ? 0.3 : 1.0
+    readonly property real lightingScale: systemMaterial ? 0.55 : 1.0
     // Shell accent ramp: 3 is the base accent, 4 is Start's darker shade.
     readonly property color accentBase: systemMaterial ? Sys.accentPalette[3] : accent
     readonly property color accentLight: systemMaterial ? Sys.accentPalette[2] : accent
@@ -42,8 +42,13 @@ QtObject {
         // Start is close to opaque: the desktop reads as a faint influence
         // behind it, not as visible content. A light tint over acrylic looks
         // nothing like it.
+        // Opacity here is a noise control, not just a colour control: the DWM
+        // backdrop carries its own grain, so every point of transparency lets
+        // more of it through. Measured, 0.84 nearly doubled the visible noise
+        // over 0.9. Luminosity comes from the depth gradient instead, which is
+        // how Start manages to look both smooth and lit.
         if (systemMaterial)
-            return Qt.rgba(t.r, t.g, t.b, 0.9)
+            return Qt.rgba(t.r, t.g, t.b, 0.92)
         // Acrylic live-blurs the desktop and needs a heavier tint to stay
         // legible; mica is a static wallpaper sample and needs far less.
         return Qt.rgba(t.r, t.g, t.b, Panel.micaBackdrop ? 0.28 : 0.45)
@@ -81,7 +86,9 @@ QtObject {
         : Qt.rgba(1, 1, 1, 0.18)
     // Grain strength shared by every material surface (cards and the acrylic
     // transient layers), so they age the same way.
-    readonly property real grainOpacity: contrastEnabled ? 0 : 0.03
+    // Following the system leans on DWM's own acrylic grain rather than adding
+    // much of our own; stacking both is what made the surface look coarse.
+    readonly property real grainOpacity: contrastEnabled ? 0 : (systemMaterial ? 0.012 : 0.03)
     readonly property color textPrimary: "#e8eaf2"
     readonly property color textSecondary: contrastEnabled ? "#c9cfda" : "#9aa3b5"
     // Matches the Windows accent color (falls back to blue).

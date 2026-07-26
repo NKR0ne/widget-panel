@@ -12,6 +12,7 @@ qt_add_qml_module(qtpanel_ui
         WidgetHost.qml
         GlassCard.qml
         ScrimBackdrop.qml
+        GrainOverlay.qml
         IconButton.qml
         CardHeader.qml
         StatusBanner.qml

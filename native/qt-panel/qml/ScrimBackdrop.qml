@@ -105,12 +105,10 @@ Item {
 
     // Grain. Breaks up banding across the blur gradient and is most of what
     // makes the material read as a physical surface rather than a gradient.
-    Image {
+    GrainOverlay {
         anchors.fill: parent
         visible: scrim.blurActive
-        source: "textures/acrylic-noise.png"
-        fillMode: Image.Tile
-        opacity: 0.035
+        amount: Theme.grainOpacity
     }
 
     // Fallback when surface lighting is off: the plain dim this replaced.

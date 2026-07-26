@@ -44,13 +44,10 @@ Rectangle {
     // and obscure nothing. Grain is the part of the material recipe that
     // actually makes a card read as a surface rather than a flat wash.
     // Squared off at the corners, which is invisible at this opacity.
-    Image {
+    GrainOverlay {
         anchors.fill: parent
         z: 38
-        visible: !card.flat && Ui.surfaceLighting && Theme.grainOpacity > 0
-        source: "textures/acrylic-noise.png"
-        fillMode: Image.Tile
-        opacity: Theme.grainOpacity
+        visible: !card.flat && Ui.surfaceLighting && amount > 0
     }
 
     Rectangle {

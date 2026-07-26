@@ -44,7 +44,16 @@ void main() {
     float glow = (0.05 + 0.07 * cursorOn) * exp(-3.0 * dist);
 
     // Static dither removes banding without producing visible temporal noise.
-    float grain = (hash(uv * vec2(900.0, 640.0)) - 0.5) * 0.012;
+    // Hashed on gl_FragCoord, not uv: scaling uv by a fixed constant quantises
+    // the noise to whatever that constant works out to against the panel's
+    // real size — around 2x3 device pixels here, which reads as coarse
+    // pixelisation rather than grain. Fragment coordinates are one cell per
+    // device pixel by definition, at any size or DPI.
+    // Kept low on purpose: the DWM backdrop underneath already carries its own
+    // grain, so this only has to break banding in our gradient. Matching the
+    // amplitude we would use over an opaque surface double-noises the result,
+    // which is what reads as coarse pixelisation next to the shell's acrylic.
+    float grain = (hash(gl_FragCoord.xy) - 0.5) * 0.0035;
 
     vec3 accent = mix(vec3(0.84, 0.88, 0.96), accentColor.rgb, 0.72);
     float energy = (depth + sheen + glow) * lightingStrength;
