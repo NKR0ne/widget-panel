@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Effects
 import QtQuick.Window
 import QtPanel.Native
+import "acrylic.js" as Acrylic
 
 // Acrylic material for a transient layer (modal, drawer, overlay), replacing
 // the flat dim rectangles those layers used to draw.
@@ -94,6 +95,18 @@ Item {
         // offset from 1.0. Blur washes colour out and the material is meant to
         // push it back rather than go grey.
         saturation: 0.25
+    }
+
+    // Exclusion layer. Fluent blends white at 26/255 in Exclusion mode here to
+    // suppress muddy mid-greys; for a white layer that is algebraically
+    // identical to a mid-grey fill at twice the alpha, so no blend mode is
+    // needed — the derivation is in acrylic.js. Sits above the blur and below
+    // the tint, which is Fluent's order.
+    Rectangle {
+        anchors.fill: parent
+        visible: scrim.blurActive
+        color: Qt.rgba(Acrylic.exclusionGrey, Acrylic.exclusionGrey,
+                       Acrylic.exclusionGrey, Acrylic.exclusionOpacity)
     }
 
     // Tint wash.

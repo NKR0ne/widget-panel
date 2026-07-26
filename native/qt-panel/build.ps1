@@ -268,7 +268,17 @@ if ($Tests) {
 
 if (-not (Test-Path $exe)) { Write-Error "Build succeeded but exe not at: $exe" }
 
-if ($Deploy) {
+# A build directory can hold a perfectly good exe with no Qt runtime beside it,
+# and nothing says so. That combination fails in ways that do not point at the
+# cause: launched directly it reports a missing Qt DLL, and launched with Qt on
+# PATH it starts but writes no log and never produces --diag captures. Deploy
+# automatically when the runtime is absent; windeployqt is idempotent and only
+# costs time the first time.
+$runtimeMissing = -not (Test-Path (Join-Path $build 'Qt6Core.dll'))
+if ($runtimeMissing -and -not $Deploy) {
+    Write-Host 'Qt runtime missing next to the exe - deploying (use -Deploy to silence this).' -ForegroundColor Yellow
+}
+if ($Deploy -or $runtimeMissing) {
     Write-Host 'Deploying Qt runtime...' -ForegroundColor Cyan
     Invoke-NativeCommand -FilePath "$QtDir\bin\windeployqt.exe" -Arguments @('--qmldir', (Join-Path $root 'qml'), $exe) -WorkingDirectory $root -TimeoutSeconds 120
 }

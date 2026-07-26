@@ -9,6 +9,25 @@
 // saturated ones. Picking a number by hand lands somewhere this curve never
 // would, which is why a hand-tuned surface reads as "close but not it".
 
+// AcrylicBrush.h: sc_exclusionColor { 26, 255, 255, 255 } — white at 26/255,
+// blended in Exclusion mode over the blurred, saturated backdrop.
+//
+// Qt Quick exposes no exclusion blend mode, but for a *white* layer it does not
+// need one. Exclusion is B(base, layer) = base + layer - 2·base·layer, so with
+// layer = 1 it collapses to (1 - base), and applying that at opacity a gives:
+//
+//   out = (1-a)·base + a·(1-base) = base·(1-2a) + a
+//
+// A normal alpha blend of colour C at opacity b gives out = (1-b)·base + b·C.
+// Equating the two: b = 2a and C = 0.5. So Fluent's exclusion layer is exactly
+// a mid-grey fill at twice the exclusion alpha — a plain Rectangle.
+//
+// Exact within a single blending space. Qt Quick composites in sRGB; if Windows
+// runs its effect graph linearly the composited result differs slightly.
+var exclusionAlpha = 26 / 255;              // 0.10196…
+var exclusionGrey = 0.5;
+var exclusionOpacity = exclusionAlpha * 2;  // 0.20392…
+
 function rgbToHsv(r, g, b) {
     const max = Math.max(r, Math.max(g, b));
     const min = Math.min(r, Math.min(g, b));
