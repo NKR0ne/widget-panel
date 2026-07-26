@@ -92,15 +92,17 @@ function effectiveTintAlpha(color, tintOpacity) {
     return Math.min(1, Math.max(0, tintOpacity * tintOpacityModifier(color)));
 }
 
-// Fluent stacks a luminosity layer under the tint layer. We cannot reproduce
-// the luminosity *blend mode* in plain QML, so this folds the two same-hued
-// layers into the single alpha that alpha-compositing would produce. It is an
-// approximation of the blend, but of the right magnitude rather than a guess.
-function compositeTintAlpha(color, tintOpacity) {
-    const aTint = effectiveTintAlpha(color, tintOpacity);
-    const aLum = luminosityColor(color, tintOpacity).a;
-    return 1 - ((1 - aLum) * (1 - aTint));
-}
+// DO NOT fold the luminosity layer into the tint alpha. It was tried, as
+// 1 - (1-aLum)*(1-aTint), and it is wrong: a luminosity blend contributes no
+// opacity whatsoever. It takes hue and saturation from the backdrop and
+// re-maps only its luminance, which is precisely why acrylic keeps bright
+// things behind it bright and colourful instead of flattening them under the
+// tint. Treating it as coverage pushed the surface to 0.96 opaque, killing
+// both the transparency and the light response — the tint alone is 0.72 here.
+//
+// Reproducing the blend needs the backdrop as a texture. That is possible for
+// our in-scene acrylic (ScrimBackdrop captures it) but not for the window
+// backdrop, which DWM composites behind us and this process never sees.
 
 // AcrylicBrush::GetLuminosityColor with no explicit TintLuminosityOpacity.
 // Returns { r, g, b, a } with components in 0..1.

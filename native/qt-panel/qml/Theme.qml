@@ -22,29 +22,24 @@ QtObject {
     // darkened backdrop, not the colour Start ends up reading as — used
     // directly it lands far too light. AccentDark2 is where Start actually
     // sits once composited.
-    // Interpolated between the shell's own two darkest accent shades rather
-    // than invented. AccentDark2 alone composites to #384156 against Start's
-    // #2E3542, because Windows applies its tint inside the acrylic pipeline
-    // while we can only tint over the finished composite — our process never
-    // sees the DWM backdrop. A quarter-step toward AccentDark3 closes that.
-    readonly property color surfaceTint: {
-        if (!systemMaterial)
-            return baseTint
-        const a = Sys.accentPalette[5]
-        const b = Sys.accentPalette[6]
-        const t = 0.25
-        return Qt.rgba(a.r + (b.r - a.r) * t,
-                       a.g + (b.g - a.g) * t,
-                       a.b + (b.b - a.b) * t, 1)
-    }
+    // AccentDark2, unmodified. It was previously interpolated a quarter-step
+    // toward AccentDark3 to hit Start's measured colour, but that was
+    // compensating for a tint alpha that was too high; with the alpha correct
+    // the compensation would only re-darken what the transparency is for.
+    readonly property color surfaceTint: systemMaterial ? Sys.accentPalette[5] : baseTint
     // Start is a flat surface: no animated sheen, no cursor-tracked glow. The
     // decorative lighting is scaled back rather than switched off so the panel
     // keeps its own depth cues without reading as a different material.
     readonly property real lightingScale: systemMaterial ? 0.55 : 1.0
-    // Fluent's default tint opacity before its own suppression curve is applied.
-    readonly property real systemTintOpacity: 0.8
+    // NOT Fluent's 0.8. DWMSBT_TRANSIENTWINDOW is already a finished acrylic
+    // surface — DWM has done the blur, luminosity, tint and noise inside its
+    // own pipeline. Painting Fluent's full tint on top applies the recipe a
+    // second time, which is what flattened the light and killed the
+    // transparency. What belongs here is only the accent wash the shell adds
+    // when ColorPrevalence is set, over a material that is already correct.
+    readonly property real systemTintOpacity: 0.25
     readonly property real systemTintAlpha: systemMaterial
-        ? Acrylic.compositeTintAlpha(surfaceTint, systemTintOpacity) : 1.0
+        ? Acrylic.effectiveTintAlpha(surfaceTint, systemTintOpacity) : 1.0
 
     // Shell accent ramp: 3 is the base accent, 4 is Start's darker shade.
     readonly property color accentBase: systemMaterial ? Sys.accentPalette[3] : accent
