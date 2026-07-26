@@ -8,6 +8,26 @@
 #include <windows.h>
 #endif
 
+namespace {
+#ifdef Q_OS_WIN
+// QSettings hands REG_BINARY back as text here, so toByteArray() yields the
+// UTF-8 of a string rather than the raw bytes. Read it through Win32.
+QByteArray readRegBinary(const wchar_t* subKey, const wchar_t* valueName)
+{
+    DWORD size = 0;
+    if (RegGetValueW(HKEY_CURRENT_USER, subKey, valueName, RRF_RT_REG_BINARY,
+                     nullptr, nullptr, &size) != ERROR_SUCCESS || size == 0)
+        return {};
+    QByteArray buffer(static_cast<int>(size), Qt::Uninitialized);
+    if (RegGetValueW(HKEY_CURRENT_USER, subKey, valueName, RRF_RT_REG_BINARY,
+                     nullptr, buffer.data(), &size) != ERROR_SUCCESS)
+        return {};
+    buffer.resize(static_cast<int>(size));
+    return buffer;
+}
+#endif
+} // namespace
+
 namespace qtpanel {
 
 SystemTheme::SystemTheme(QObject* parent)
@@ -109,6 +129,31 @@ void SystemTheme::refreshPersonalization()
     if (start.isValid() && start != m_startTint) {
         m_startTint = start;
         qInfo() << "[theme] start menu tint" << start.name();
+        emit accentChanged();
+    }
+
+    // AccentPalette is 8 RGBA quads. Verified against the named values: entry 3
+    // equals AccentColorMenu and entry 4 equals StartColorMenu, which is what
+    // pins the byte order down as RGBA rather than the BGRA used elsewhere.
+#ifdef Q_OS_WIN
+    const QByteArray blob = readRegBinary(
+        L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Accent",
+        L"AccentPalette");
+#else
+    const QByteArray blob;
+#endif
+    if (blob.size() < 32)
+        return;
+    QVariantList palette;
+    for (int i = 0; i + 3 < blob.size(); i += 4) {
+        palette.append(QColor(static_cast<quint8>(blob[i]),
+                              static_cast<quint8>(blob[i + 1]),
+                              static_cast<quint8>(blob[i + 2])));
+    }
+    if (palette != m_accentPalette) {
+        m_accentPalette = palette;
+        qInfo() << "[theme] accent palette" << palette.size() << "entries, base"
+                << palette.at(3).value<QColor>().name();
         emit accentChanged();
     }
 }

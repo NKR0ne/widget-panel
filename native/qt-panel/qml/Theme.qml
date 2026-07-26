@@ -15,8 +15,12 @@ QtObject {
     // with, but only when the user actually asked for accent on those surfaces
     // (ColorPrevalence); otherwise Windows itself uses a neutral, so we do too.
     readonly property color baseTint: Qt.rgba(0.043, 0.055, 0.09, 1)
-    readonly property color surfaceTint: (Ui.followSystemMaterial && Sys.accentOnSurfaces)
-        ? Sys.startTint : baseTint
+    readonly property bool systemMaterial: Ui.followSystemMaterial && Sys.accentOnSurfaces
+                                           && Sys.accentPalette.length >= 8
+    readonly property color surfaceTint: systemMaterial ? Sys.startTint : baseTint
+    // Shell accent ramp: 3 is the base accent, 4 is Start's darker shade.
+    readonly property color accentBase: systemMaterial ? Sys.accentPalette[3] : accent
+    readonly property color accentLight: systemMaterial ? Sys.accentPalette[2] : accent
 
     // Mica is a static, desaturated wallpaper sample, so the tint over it can
     // be much lighter than the one needed to tame acrylic's live desktop blur.
@@ -26,6 +30,8 @@ QtObject {
         if (!materialEnabled)
             return panelSolid
         const t = surfaceTint
+        // Acrylic live-blurs the desktop and needs a heavier tint to stay
+        // legible; mica is a static wallpaper sample and needs far less.
         return Qt.rgba(t.r, t.g, t.b, Panel.micaBackdrop ? 0.28 : 0.45)
     }
     readonly property color panelSolid: "#11151e"
@@ -39,8 +45,15 @@ QtObject {
     readonly property color keyline: Qt.rgba(0.91, 0.94, 1.0, contrastEnabled ? 0.34 : 0.16)
     readonly property color keylineMuted: Qt.rgba(0.72, 0.77, 0.86, 0.08)
     readonly property color skeleton: Qt.rgba(1, 1, 1, 0.07)
-    readonly property color hover: Qt.rgba(1, 1, 1, 0.10)
-    readonly property color activeFill: Qt.rgba(1, 1, 1, 0.18)
+    // Highlights. Start tints its hover and selection with the accent ramp
+    // rather than neutral white, so following the system does the same — this
+    // is most of what makes list rows and buttons read as shell surfaces.
+    readonly property color hover: systemMaterial
+        ? Qt.rgba(accentLight.r, accentLight.g, accentLight.b, 0.16)
+        : Qt.rgba(1, 1, 1, 0.10)
+    readonly property color activeFill: systemMaterial
+        ? Qt.rgba(accentBase.r, accentBase.g, accentBase.b, 0.42)
+        : Qt.rgba(1, 1, 1, 0.18)
     // Grain strength shared by every material surface (cards and the acrylic
     // transient layers), so they age the same way.
     readonly property real grainOpacity: contrastEnabled ? 0 : 0.03

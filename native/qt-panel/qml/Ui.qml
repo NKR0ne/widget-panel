@@ -27,6 +27,9 @@ QtObject {
     // and the accent-on-surfaces preference) instead of the app's own palette.
     // The system transparency toggle is honoured either way.
     property bool followSystemMaterial: false
+    // Start uses acrylic, so following the system swaps the window backdrop
+    // too — not just the tint.
+    onFollowSystemMaterialChanged: Panel.setFollowSystemMaterial(followSystemMaterial)
 
     function openDetail(kind, title, payload) {
         detailKind = kind || ""

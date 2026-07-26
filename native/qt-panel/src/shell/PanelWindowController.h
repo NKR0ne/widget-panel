@@ -98,6 +98,10 @@ public:
     // (live desktop blur). Applies immediately and persists.
     bool micaBackdrop() const { return m_micaBackdrop; }
     Q_INVOKABLE void setMicaBackdrop(bool mica);
+    // While following the system material the backdrop is forced to acrylic,
+    // because that is what Start and the shell flyouts use. The stored mica
+    // preference is left untouched so it returns when the mode is turned off.
+    Q_INVOKABLE void setFollowSystemMaterial(bool follow);
     Q_INVOKABLE void quit();
 
     bool islandOpen() const { return m_islandOpen; }
@@ -175,9 +179,12 @@ private:
 
     bool systemTransparency() const;
 
+    bool effectiveMica() const { return m_micaBackdrop && !m_followSystemMaterial; }
+
     SystemTheme* m_systemTheme = nullptr;
     bool m_pinned = false;
     bool m_micaBackdrop = true;
+    bool m_followSystemMaterial = false;
     bool m_panelVisible = false;
     bool m_showAnimating = false;
     bool m_hiding = false;

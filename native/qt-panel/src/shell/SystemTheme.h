@@ -2,6 +2,7 @@
 
 #include <QColor>
 #include <QObject>
+#include <QVariantList>
 
 namespace qtpanel {
 
@@ -20,6 +21,11 @@ class SystemTheme : public QObject {
     Q_OBJECT
     Q_PROPERTY(QColor accent READ accent NOTIFY accentChanged)
     Q_PROPERTY(QColor startTint READ startTint NOTIFY accentChanged)
+    // The shell's own accent ramp, lightest to darkest: indices 0-2 are the
+    // light variants, 3 is the base accent (AccentColorMenu), 4-6 the dark
+    // variants (4 is StartColorMenu), 7 a complement. Using these instead of
+    // deriving our own shades is what keeps highlights matching the shell.
+    Q_PROPERTY(QVariantList accentPalette READ accentPalette NOTIFY accentChanged)
     Q_PROPERTY(bool highContrast READ highContrast NOTIFY appearanceChanged)
     Q_PROPERTY(bool animationsEnabled READ animationsEnabled NOTIFY appearanceChanged)
     // Settings > Personalization > Colors > Transparency effects. When the user
@@ -36,6 +42,7 @@ public:
 
     QColor accent() const { return m_accent; }
     QColor startTint() const { return m_startTint; }
+    QVariantList accentPalette() const { return m_accentPalette; }
     bool highContrast() const { return m_highContrast; }
     bool animationsEnabled() const { return m_animationsEnabled; }
     bool transparencyEnabled() const { return m_transparencyEnabled; }
@@ -52,6 +59,7 @@ private:
 
     QColor m_accent;
     QColor m_startTint;
+    QVariantList m_accentPalette;
     bool m_highContrast = false;
     bool m_animationsEnabled = true;
     bool m_transparencyEnabled = true;

@@ -110,7 +110,12 @@ void PanelWindowController::attach(QQuickWindow* window)
     m_micaBackdrop = m_settings->get(QStringLiteral("wp-backdrop-material"),
                                      QStringLiteral("mica")).toString()
                      != QLatin1String("acrylic");
-    WinShellIntegration::applyPanelChrome(window, m_micaBackdrop, systemTransparency());
+    m_followSystemMaterial =
+        m_settings->get(QStringLiteral("wp-follow-system-material")).toString()
+        == QLatin1String("true");
+    qInfo() << "[shell] follow-system-material" << m_followSystemMaterial
+            << "mica-pref" << m_micaBackdrop << "effective-mica" << effectiveMica();
+    WinShellIntegration::applyPanelChrome(window, effectiveMica(), systemTransparency());
     // attach() can run after the QML engine has already bound micaBackdrop at
     // its default, so announce the stored value rather than leaving Theme's
     // tint out of step with the material actually on screen.
@@ -750,7 +755,7 @@ void PanelWindowController::setSystemTheme(SystemTheme* theme)
     // in Windows Settings takes hold without restarting the panel.
     connect(theme, &SystemTheme::appearanceChanged, this, [this] {
         if (m_window)
-            WinShellIntegration::setBackdropMaterial(m_window, m_micaBackdrop,
+            WinShellIntegration::setBackdropMaterial(m_window, effectiveMica(),
                                                      systemTransparency());
     });
 }
@@ -763,7 +768,17 @@ void PanelWindowController::setMicaBackdrop(bool mica)
     m_settings->set(QStringLiteral("wp-backdrop-material"),
                     mica ? QStringLiteral("mica") : QStringLiteral("acrylic"));
     if (m_window)
-        WinShellIntegration::setBackdropMaterial(m_window, mica, systemTransparency());
+        WinShellIntegration::setBackdropMaterial(m_window, effectiveMica(), systemTransparency());
+    emit micaBackdropChanged();
+}
+
+void PanelWindowController::setFollowSystemMaterial(bool follow)
+{
+    if (m_followSystemMaterial == follow)
+        return;
+    m_followSystemMaterial = follow;
+    if (m_window)
+        WinShellIntegration::setBackdropMaterial(m_window, effectiveMica(), systemTransparency());
     emit micaBackdropChanged();
 }
 
