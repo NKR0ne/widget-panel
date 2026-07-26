@@ -15,10 +15,12 @@ namespace qtpanel {
 // change the contrast under body copy.
 class WinShellIntegration {
 public:
-    static void applyPanelChrome(QWindow* window, bool mica = true);
-    // Swap the backdrop at runtime so the two materials can be compared from
-    // settings without restarting the app.
-    static void setBackdropMaterial(QWindow* window, bool mica);
+    // transparency mirrors the system "Transparency effects" preference; when
+    // it is off both materials give way to a solid backdrop.
+    static void applyPanelChrome(QWindow* window, bool mica = true, bool transparency = true);
+    // Swap the backdrop at runtime so the materials can be compared from
+    // settings, and so the system preference can be followed live.
+    static void setBackdropMaterial(QWindow* window, bool mica, bool transparency);
 };
 
 } // namespace qtpanel

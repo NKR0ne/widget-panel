@@ -42,11 +42,13 @@ Item {
     // than flat ones, so this is scaled down heavily when the blur is live.
     property real dim: 0.5
     property real blurAmount: 1.0
-    // Material identity. Uses the panel's own colour rather than Fluent's
-    // neutral grey so the layer reads as part of this app.
-    property color tint: Theme.panelSolid
+    // Material identity. Follows Windows when asked to, otherwise uses the
+    // panel's own colour rather than Fluent's neutral grey so the layer reads
+    // as part of this app.
+    property color tint: Theme.surfaceTint
 
-    readonly property bool blurActive: Ui.surfaceLighting && source !== null
+    readonly property bool blurActive: Ui.surfaceLighting && Theme.materialEnabled
+                                       && source !== null
 
     onActiveChanged: if (active) snapshot.scheduleUpdate()
     onWidthChanged: if (active) snapshot.scheduleUpdate()

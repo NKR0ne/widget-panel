@@ -1,5 +1,6 @@
 #include "SystemTheme.h"
 
+#include <QDebug>
 #include <QSettings>
 #include <QTimer>
 
@@ -41,6 +42,10 @@ void SystemTheme::refresh()
     }
 #endif
 
+    // Ahead of the accent read below, which bails out early on unreadable or
+    // out-of-range values — personalization state must refresh regardless.
+    refreshPersonalization();
+
     // HKCU\Software\Microsoft\Windows\DWM\ColorizationColor is 0xAARRGGBB.
     QSettings dwm(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\DWM"),
                   QSettings::NativeFormat);
@@ -55,6 +60,55 @@ void SystemTheme::refresh()
         return;
     if (c != m_accent) {
         m_accent = c;
+        if (!m_startTint.isValid())
+            m_startTint = c;
+        emit accentChanged();
+    }
+}
+
+void SystemTheme::refreshPersonalization()
+{
+    QSettings personalize(
+        QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows"
+                       "\\CurrentVersion\\Themes\\Personalize"),
+        QSettings::NativeFormat);
+    // Absent keys mean the shell default: transparency on, accent off surfaces.
+    const bool transparency =
+        personalize.value(QStringLiteral("EnableTransparency"), 1).toInt() != 0;
+    const bool prevalence =
+        personalize.value(QStringLiteral("ColorPrevalence"), 0).toInt() != 0;
+    const bool light =
+        personalize.value(QStringLiteral("AppsUseLightTheme"), 0).toInt() != 0;
+
+    if (m_transparencyEnabled != transparency || m_accentOnSurfaces != prevalence
+        || m_lightTheme != light) {
+        m_transparencyEnabled = transparency;
+        m_accentOnSurfaces = prevalence;
+        m_lightTheme = light;
+        qInfo() << "[theme] transparency" << transparency
+                << "accentOnSurfaces" << prevalence << "lightTheme" << light;
+        emit appearanceChanged();
+    }
+
+    // StartColorMenu is the shade the shell actually paints Start and the menu
+    // surfaces with, which is what we want to tint against — it is already
+    // darkened relative to the raw accent. Note the byte order differs from
+    // DWM's ColorizationColor above: this key is ABGR, that one is ARGB.
+    QSettings explorerAccent(
+        QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows"
+                       "\\CurrentVersion\\Explorer\\Accent"),
+        QSettings::NativeFormat);
+    bool startOk = false;
+    const quint32 abgr =
+        explorerAccent.value(QStringLiteral("StartColorMenu")).toUInt(&startOk);
+    if (!startOk)
+        return;
+    const QColor start(static_cast<int>(abgr & 0xFFu),
+                       static_cast<int>((abgr >> 8) & 0xFFu),
+                       static_cast<int>((abgr >> 16) & 0xFFu));
+    if (start.isValid() && start != m_startTint) {
+        m_startTint = start;
+        qInfo() << "[theme] start menu tint" << start.name();
         emit accentChanged();
     }
 }

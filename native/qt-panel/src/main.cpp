@@ -382,6 +382,7 @@ int main(int argc, char* argv[])
         qCritical() << "QML root object is not a window";
         return 1;
     }
+    controller.setSystemTheme(&systemTheme);
     controller.attach(window);
     qInfo() << "[startup] QML root attached";
 

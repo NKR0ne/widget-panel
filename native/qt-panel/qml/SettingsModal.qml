@@ -310,6 +310,23 @@ Item {
                 checked: Panel.micaBackdrop
                 onToggled: function(value) { Panel.setMicaBackdrop(value) }
             }
+            SettingsToggle {
+                width: parent.width
+                label: "Mat\u00e9riau Windows"
+                description: Sys.accentOnSurfaces
+                    ? "Utilise la teinte du menu D\u00e9marrer"
+                    : "Sans effet : couleur d'accentuation d\u00e9sactiv\u00e9e pour D\u00e9marrer"
+                checked: Ui.followSystemMaterial
+                onToggled: function(value) { Ui.followSystemMaterial = value; Ui.save() }
+            }
+            Text {
+                width: parent.width
+                visible: !Sys.transparencyEnabled
+                text: "Effets de transparence d\u00e9sactiv\u00e9s dans Windows : surfaces opaques."
+                color: Theme.textSecondary
+                font.pixelSize: 9
+                wrapMode: Text.WordWrap
+            }
             SettingsSlider {
                 width: parent.width
                 enabled: Ui.surfaceLighting

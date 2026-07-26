@@ -5,10 +5,29 @@ import QtPanel.Native
 // Design tokens — single source of truth for color, radius, and spacing.
 QtObject {
     readonly property bool contrastEnabled: Ui.highContrast || Sys.highContrast
+    // Windows drops acrylic and mica to solid when the user turns off
+    // transparency effects; a panel that kept blurring would stand out as the
+    // one surface ignoring the preference — and it is a perf/accessibility
+    // setting, not a cosmetic one.
+    readonly property bool materialEnabled: Sys.transparencyEnabled && !contrastEnabled
+
+    // Surface tint. Following the system uses the shade the shell paints Start
+    // with, but only when the user actually asked for accent on those surfaces
+    // (ColorPrevalence); otherwise Windows itself uses a neutral, so we do too.
+    readonly property color baseTint: Qt.rgba(0.043, 0.055, 0.09, 1)
+    readonly property color surfaceTint: (Ui.followSystemMaterial && Sys.accentOnSurfaces)
+        ? Sys.startTint : baseTint
+
     // Mica is a static, desaturated wallpaper sample, so the tint over it can
     // be much lighter than the one needed to tame acrylic's live desktop blur.
-    readonly property color bgTint: Qt.rgba(0.043, 0.055, 0.09,
-        contrastEnabled ? 0.82 : (Panel.micaBackdrop ? 0.28 : 0.45))
+    readonly property color bgTint: {
+        if (contrastEnabled)
+            return Qt.rgba(0.043, 0.055, 0.09, 0.82)
+        if (!materialEnabled)
+            return panelSolid
+        const t = surfaceTint
+        return Qt.rgba(t.r, t.g, t.b, Panel.micaBackdrop ? 0.28 : 0.45)
+    }
     readonly property color panelSolid: "#11151e"
     // Elevation ladder. These used to sit within ~9% of each other, which read
     // as one flat plane; the steps below are deliberately further apart so

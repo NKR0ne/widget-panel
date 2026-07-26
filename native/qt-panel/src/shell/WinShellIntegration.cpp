@@ -20,11 +20,20 @@
 
 namespace {
 constexpr int kCornerRound = 2;     // DWMWCP_ROUND
+constexpr int kBackdropNone = 1;    // DWMSBT_NONE
 constexpr int kBackdropMica = 2;    // DWMSBT_MAINWINDOW
 constexpr int kBackdropAcrylic = 3; // DWMSBT_TRANSIENTWINDOW
 
-void applyBackdrop(HWND hwnd, bool mica)
+void applyBackdrop(HWND hwnd, bool mica, bool transparency)
 {
+    if (!transparency) {
+        // The user turned off transparency effects; the shell drops its own
+        // surfaces to solid and so do we.
+        int none = kBackdropNone;
+        DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &none, sizeof(none));
+        qInfo() << "[shell] transparency disabled; solid backdrop";
+        return;
+    }
     int backdrop = mica ? kBackdropMica : kBackdropAcrylic;
     const HRESULT hr = DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdrop, sizeof(backdrop));
     if (FAILED(hr)) {
@@ -45,7 +54,7 @@ void applyBackdrop(HWND hwnd, bool mica)
 
 namespace qtpanel {
 
-void WinShellIntegration::applyPanelChrome(QWindow* window, bool mica)
+void WinShellIntegration::applyPanelChrome(QWindow* window, bool mica, bool transparency)
 {
     if (!window)
         return;
@@ -69,17 +78,17 @@ void WinShellIntegration::applyPanelChrome(QWindow* window, bool mica)
     int corner = kCornerRound;
     DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE, &corner, sizeof(corner));
 
-    applyBackdrop(hwnd, mica);
+    applyBackdrop(hwnd, mica, transparency);
 }
 
-void WinShellIntegration::setBackdropMaterial(QWindow* window, bool mica)
+void WinShellIntegration::setBackdropMaterial(QWindow* window, bool mica, bool transparency)
 {
     if (!window)
         return;
     const HWND hwnd = reinterpret_cast<HWND>(window->winId());
     if (!hwnd)
         return;
-    applyBackdrop(hwnd, mica);
+    applyBackdrop(hwnd, mica, transparency);
 }
 
 } // namespace qtpanel

@@ -23,6 +23,10 @@ QtObject {
     property real lightingStrength: 1.0
     property real shadowDepth: 0.8
     property string density: "compact"
+    // Drive the material from Windows personalization (Start's own tint shade
+    // and the accent-on-surfaces preference) instead of the app's own palette.
+    // The system transparency toggle is honoured either way.
+    property bool followSystemMaterial: false
 
     function openDetail(kind, title, payload) {
         detailKind = kind || ""
@@ -71,6 +75,7 @@ QtObject {
         Store.set("wp-lighting-strength", String(lightingStrength))
         Store.set("wp-shadow-depth", String(shadowDepth))
         Store.set("wp-density", density)
+        Store.set("wp-follow-system-material", followSystemMaterial ? "true" : "false")
     }
 
     Component.onCompleted: {
@@ -89,5 +94,6 @@ QtObject {
             shadowDepth = Math.min(1.5, Math.max(0, storedShadow))
         const storedDensity = Store.get("wp-density", "compact")
         density = storedDensity === "comfortable" ? "comfortable" : "compact"
+        followSystemMaterial = Store.get("wp-follow-system-material", "false") === "true"
     }
 }

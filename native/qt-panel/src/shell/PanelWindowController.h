@@ -19,6 +19,7 @@ namespace qtpanel {
 
 class HelperServer;
 class SettingsStore;
+class SystemTheme;
 
 // Owns the panel window lifecycle: geometry (gap inset, work-area height,
 // fit modes, drag resize), native-window slide choreography, pin state,
@@ -47,6 +48,9 @@ public:
                           QQuickWebEngineProfile* webProfile, QObject* parent = nullptr);
 
     void attach(QQuickWindow* window);
+    // Lets the backdrop follow the system transparency preference live. Must be
+    // called before attach() so the first chrome application already honours it.
+    void setSystemTheme(SystemTheme* theme);
 
     bool pinned() const { return m_pinned; }
     bool panelVisible() const { return m_panelVisible; }
@@ -169,6 +173,9 @@ private:
     WorkAreaWatcher m_workArea;
     FocusPolicy m_focus;
 
+    bool systemTransparency() const;
+
+    SystemTheme* m_systemTheme = nullptr;
     bool m_pinned = false;
     bool m_micaBackdrop = true;
     bool m_panelVisible = false;
