@@ -6,20 +6,30 @@ import "pressreader/PressReaderAutomation.js" as PressAutomation
 Rectangle {
     id: spotlight
 
-    readonly property bool presented: Panel.islandOpen && Panel.islandKind === "pressreader"
+    // Set by a host that seats this surface inside one of its panes (news mode
+    // content pane). Inline mode drops the floating-overlay treatment so the
+    // web content reads as pane content instead of a slab over the panel.
+    property bool inlineRequest: false
+
+    readonly property bool presented: inlineRequest
+        || (Panel.islandOpen && Panel.islandKind === "pressreader")
     visible: presented || opacity > 0.01
     enabled: presented
     opacity: presented ? 1 : 0
-    color: "#0c0f14"
+    // Inline: match the surrounding panes. Overlay: keep the darker slab.
+    color: inlineRequest ? Theme.cardFill : "#0c0f14"
     radius: Theme.radiusCard
     border.width: 1
-    border.color: Theme.cardStroke
+    border.color: inlineRequest ? Theme.keyline : Theme.cardStroke
+    // Always clipped to the host rect so web content never paints over the
+    // panel border, the divider or the rounded corners.
     clip: true
-    z: 82
+    z: inlineRequest ? 0 : 82
 
     transform: Translate {
         id: spotlightShift
-        x: spotlight.presented ? 0 : 14
+        // No slide-in when inline; it is part of the pane, not an overlay.
+        x: (spotlight.presented || spotlight.inlineRequest) ? 0 : 14
         Behavior on x {
             NumberAnimation {
                 duration: Motion.deliberateMs

@@ -34,6 +34,9 @@ public:
     // Re-read wp-config (categories + mode-specific active ids) and refetch. Called when the
     // manage panel toggles categories or imports a new OPML.
     Q_INVOKABLE void reload();
+    // Reorder the rail: indices are positions in the active category list.
+    // Persists into wp-config.categories so the order survives restarts.
+    Q_INVOKABLE void moveCategory(int from, int to);
     // Parse a Feedly OPML file and replace wp-config.categories. Returns the
     // number of categories imported.
     Q_INVOKABLE int importOpml(const QUrl& fileUrl);

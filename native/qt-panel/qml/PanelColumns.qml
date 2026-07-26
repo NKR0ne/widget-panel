@@ -316,6 +316,7 @@ Item {
     }
 
     Loader {
+        id: newsStageLoader
         anchors.fill: parent
         active: root.mode === "news"
         visible: active
@@ -467,10 +468,20 @@ Item {
         height: root.height
     }
 
+    // One PressReader web view for the whole app. In news mode it is seated
+    // inside the stage's content pane; elsewhere it stays the right-hand
+    // spotlight surface.
     PressReaderSpotlight {
-        x: root.spotlightX
-        y: 0
-        width: Math.max(0, root.width - x)
-        height: root.height
+        id: pressReaderSurface
+        readonly property bool newsInline: root.mode === "news"
+            && newsStageLoader.item !== null
+            && newsStageLoader.item.pressReaderSelected === true
+
+        inlineRequest: newsInline
+        x: newsInline ? newsStageLoader.item.contentPaneX : root.spotlightX
+        y: newsInline ? newsStageLoader.item.contentPaneY : 0
+        width: newsInline ? newsStageLoader.item.contentPaneWidth
+                          : Math.max(0, root.width - x)
+        height: newsInline ? newsStageLoader.item.contentPaneHeight : root.height
     }
 }

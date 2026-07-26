@@ -8,6 +8,7 @@
 #include <QDebug>
 #include <QDomDocument>
 #include <QFile>
+#include <QHash>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QRegularExpression>
@@ -376,6 +377,59 @@ int NewsService::importOpml(const QUrl& fileUrl)
     reload();
     qInfo() << "[news] imported" << categories.size() << "categories from OPML";
     return static_cast<int>(categories.size());
+}
+
+// Reorder the stored category list so the News rail keeps a user-defined
+// order. `from`/`to` are indices into the *active* list shown in the rail;
+// they are mapped onto the full wp-config.categories array so disabled
+// categories keep their relative placement.
+void NewsService::moveCategory(int from, int to)
+{
+    const int activeCount = static_cast<int>(m_categoryLabels.size());
+    if (from < 0 || to < 0 || from >= activeCount || to >= activeCount || from == to)
+        return;
+
+    const QString movedLabel = m_categoryLabels.at(from).toString();
+    const QString targetLabel = m_categoryLabels.at(to).toString();
+
+    const QJsonObject cfg = QJsonDocument::fromJson(
+        m_settings->get(QStringLiteral("wp-config")).toString().toUtf8()).object();
+    QVariantMap config = cfg.toVariantMap();
+    QVariantList categories = config.value(QStringLiteral("categories")).toList();
+
+    auto indexOfLabel = [&categories](const QString& label) {
+        for (int i = 0; i < categories.size(); ++i) {
+            if (TextFix::repairMojibake(categories.at(i).toMap()
+                    .value(QStringLiteral("label")).toString()) == label)
+                return i;
+        }
+        return -1;
+    };
+
+    const int storedFrom = indexOfLabel(movedLabel);
+    const int storedTo = indexOfLabel(targetLabel);
+    if (storedFrom < 0 || storedTo < 0 || storedFrom == storedTo)
+        return;
+
+    categories.move(storedFrom, storedTo);
+    config.insert(QStringLiteral("categories"), categories);
+    m_settings->set(QStringLiteral("wp-config"),
+                    QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(config))
+                                          .toJson(QJsonDocument::Compact)));
+
+    // loadCategories() rebuilds the list from the store and would drop the
+    // articles already fetched, so carry them across the reorder.
+    QHash<QString, QVariantList> fetched;
+    for (const Category& category : m_categories)
+        fetched.insert(category.label, category.items);
+    loadCategories();
+    for (Category& category : m_categories) {
+        const auto it = fetched.constFind(category.label);
+        if (it != fetched.constEnd())
+            category.items = *it;
+    }
+    emit categoriesChanged();
+    qInfo() << "[news] moved category" << movedLabel << "to position" << to;
 }
 
 QVariantList NewsService::itemsFor(const QString& label) const

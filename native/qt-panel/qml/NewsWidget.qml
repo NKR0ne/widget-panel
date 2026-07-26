@@ -11,6 +11,10 @@ GlassCard {
     property bool delegateArticleOpening: false
     property bool forceCarouselPresentation: false
     property real textScale: 1.0
+    // Card-size multiplier from the Cartes size control. Scales the card body
+    // only — text keeps its own scale (textScale) and the per-category height
+    // the user dragged stays untouched in the store.
+    property real sizeScale: 1.0
     signal articleRequested(var item)
 
     title: categoryLabel
@@ -19,7 +23,11 @@ GlassCard {
     property var items: News.itemsFor(categoryLabel)
     property int storeRev: 0
     property int carouselIndex: 0
-    property real carouselHeight: clampCarouselHeight(Number(Store.get(newsHeightKey(), 210)) || 210)
+    // Stored height is the user's own per-category size; the size control
+    // scales it for display without overwriting it.
+    property real storedCarouselHeight: clampCarouselHeight(Number(Store.get(newsHeightKey(), 210)) || 210)
+    readonly property real carouselHeight: clampCarouselHeight(
+        storedCarouselHeight * Math.max(0.6, Math.min(1.8, Number(sizeScale) || 1)))
     property int flipDirection: 1
     readonly property int carouselCount: items.length
     readonly property var activeItem: carouselCount > 0
@@ -89,7 +97,7 @@ GlassCard {
             if (key === "wp-news-carousel" || key === "wp-news-carousel-ms")
                 card.storeRev++
             if (key === card.newsHeightKey())
-                card.carouselHeight = card.clampCarouselHeight(Number(Store.get(key, 210)) || 210)
+                card.storedCarouselHeight = card.clampCarouselHeight(Number(Store.get(key, 210)) || 210)
         }
     }
 
@@ -393,14 +401,18 @@ GlassCard {
                     property real startH: 0
                     onPressed: function(mouse) {
                         startY = mouse.y
-                        startH = card.carouselHeight
+                        startH = card.storedCarouselHeight
                     }
                     onPositionChanged: function(mouse) {
                         if (!pressed)
                             return
-                        card.carouselHeight = card.clampCarouselHeight(startH + mouse.y - startY)
+                        // Drag deltas are in displayed pixels; divide by the
+                        // size scale so the stored height stays scale-neutral.
+                        const scale = Math.max(0.6, Math.min(1.8, Number(card.sizeScale) || 1))
+                        card.storedCarouselHeight = card.clampCarouselHeight(
+                            startH + (mouse.y - startY) / scale)
                     }
-                    onReleased: Store.set(card.newsHeightKey(), Math.round(card.carouselHeight))
+                    onReleased: Store.set(card.newsHeightKey(), Math.round(card.storedCarouselHeight))
                 }
             }
         }
