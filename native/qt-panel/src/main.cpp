@@ -439,14 +439,37 @@ const QCommandLineOption diagPressReaderOption(
         // through the material instead of washing over it. Removing it entirely
         // took the blue out with the slab, which was one correction too many.
         // The opacities stay untouched at Windows' own 0.0 / 0.9.
-        auto applyTint = [&systemTheme, &compositionHost] {
-            const QVariantList palette = systemTheme.accentPalette();
-            const QColor tint = palette.size() >= 6 ? palette.at(5).value<QColor>()
-                                                    : QColor(0x34, 0x3C, 0x51);
-            compositionHost->setTintColor(tint);
+        // Whether to tint at all is a real trade-off, so it follows the existing
+        // "Matériau Windows" setting rather than being decided here.
+        //
+        // ON  -- touch nothing. Windows' near-neutral dark tint lets the
+        //        BACKDROP'S OWN HUE survive the luminosity blend, so the surface
+        //        picks up whatever is behind it and shifts warm over a warm
+        //        wallpaper. That is exact Start parity, and it is the difference
+        //        that is hard to name when comparing them side by side.
+        // OFF -- tint with AccentDark2. TintColor feeds the luminosity colour
+        //        even at tint opacity 0, so this recolours the material blue
+        //        regardless of what is behind it. Wrong against Start, but it is
+        //        the panel's own identity.
+        //
+        // Decided once at startup: TintColor cannot be un-set afterwards, and
+        // Windows' dark default is resolved internally rather than being
+        // readable through the property, so there is nothing to restore it to.
+        const bool neutralMaterial =
+            settings.get(QStringLiteral("wp-follow-system-material")).toString()
+            == QLatin1String("true");
+        auto applyTint = [&systemTheme, &compositionHost, neutralMaterial] {
+            if (neutralMaterial) {
+                qInfo() << "[composition] Windows' own tint (backdrop hue preserved)";
+            } else {
+                const QVariantList palette = systemTheme.accentPalette();
+                const QColor tint = palette.size() >= 6 ? palette.at(5).value<QColor>()
+                                                        : QColor(0x34, 0x3C, 0x51);
+                compositionHost->setTintColor(tint);
+                qInfo() << "[composition] accent tint" << tint.name()
+                        << "(overrides backdrop hue)";
+            }
             compositionHost->setDarkTheme(!systemTheme.lightTheme());
-            qInfo() << "[composition] tint" << tint.name()
-                    << "at Windows' own 0.0/0.9; dark" << !systemTheme.lightTheme();
         };
         applyTint();
         // Follow accent and light/dark changes live, the same way the in-scene
