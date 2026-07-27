@@ -30,6 +30,29 @@ Item {
         radius: 8
     }
 
+    // INPUT probe. Grey until the pointer arrives, blue on hover, red while
+    // pressed -- so "did input reach Qt" is a pixel value, not a judgement call.
+    Rectangle {
+        id: inputProbe
+        x: 380; y: 60
+        width: 220; height: 160
+        radius: 8
+        color: hitArea.pressed ? "#FF0000"
+             : hitArea.containsMouse ? "#0000FF"
+             : "#808080"
+        MouseArea {
+            id: hitArea
+            anchors.fill: parent
+            hoverEnabled: true
+        }
+        Text {
+            anchors.centerIn: parent
+            text: hitArea.pressed ? "PRESSED" : hitArea.containsMouse ? "HOVER" : "no input"
+            color: "white"
+            font.pixelSize: 16
+        }
+    }
+
     // Left bare so the sampler has a region of pure material to read.
     Text {
         x: 60; y: 380

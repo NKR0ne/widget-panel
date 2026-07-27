@@ -41,6 +41,7 @@
 #include <winrt/Microsoft.UI.Composition.h>
 #include <winrt/Microsoft.UI.Composition.SystemBackdrops.h>
 #include <winrt/Microsoft.UI.Content.h>
+#include <winrt/Microsoft.UI.Input.h>
 #include <winrt/Microsoft.UI.Composition.Interop.h>
 
 #include <QGuiApplication>
@@ -55,12 +56,15 @@
 #include <QUrl>
 #include <QDir>
 #include <QDebug>
+#include <QMouseEvent>
+#include <QCoreApplication>
 
 #include <cstdio>
 
 namespace mucomp = winrt::Microsoft::UI::Composition;
 namespace backdrops = winrt::Microsoft::UI::Composition::SystemBackdrops;
 namespace content = winrt::Microsoft::UI::Content;
+namespace muinput = winrt::Microsoft::UI::Input;
 namespace mgdx = winrt::Microsoft::Graphics::DirectX;
 
 namespace {
@@ -79,11 +83,81 @@ struct Stage {
 Stage g_stage;
 content::DesktopChildSiteBridge g_bridge{ nullptr };
 
+int g_hostMouseMsgs = 0;
+void renderFrameFwd();
+
 LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    // Diagnostic: separates "the island is the wrong input source" from "no
+    // mouse message is being pumped to this thread at all". Those need
+    // completely different fixes and look identical from the island's side.
+    if (msg == WM_MOUSEMOVE || msg == WM_LBUTTONDOWN || msg == WM_NCMOUSEMOVE) {
+        // Report the first few immediately. Reporting only every N messages
+        // cannot distinguish "none arrived" from "fewer than N arrived", and
+        // that difference is the entire question.
+        if (++g_hostMouseMsgs <= 3)
+            std::printf("[qtspike] host mouse msg #%d (0x%04X)\n", g_hostMouseMsgs, msg);
+    }
+    if (msg == WM_TIMER) { renderFrameFwd(); return 0; }
     if (msg == WM_DESTROY) { PostQuitMessage(0); return 0; }
     if (msg == WM_KEYDOWN && wp == VK_ESCAPE) { DestroyWindow(hwnd); return 0; }
     return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+// Input arrives in island coordinates, which are DIPs; Qt's scene is sized in
+// render-target pixels. One scale factor converts between them.
+double g_inputScale = 1.0;
+int g_pointerEvents = 0;
+
+// The host HWND never sees any of this: DesktopChildSiteBridge creates its own
+// child window on top, so hit-testing resolves to the bridge and the host's
+// wndProc is never called for pointer input. Forwarding Win32 messages from the
+// host -- the obvious approach -- silently receives nothing. Input has to be
+// taken from the island via InputPointerSource instead.
+void dispatchMouse(QEvent::Type type, const winrt::Windows::Foundation::Point& pos,
+                   Qt::MouseButton button, Qt::MouseButtons buttons)
+{
+    if (!g_stage.quickWindow) return;
+    ++g_pointerEvents;
+    const QPointF local(pos.X * g_inputScale, pos.Y * g_inputScale);
+    QMouseEvent ev(type, local, local, local, button, buttons, Qt::NoModifier);
+    QCoreApplication::sendEvent(g_stage.quickWindow, &ev);
+}
+
+// Must outlive wireInput(). As a local it is released the moment the function
+// returns, which takes the handler registrations with it: everything reports
+// success, and not one pointer event is ever delivered.
+muinput::InputPointerSource g_pointerSource{ nullptr };
+
+void wireInput(const content::ContentIsland& island)
+{
+    g_pointerSource = muinput::InputPointerSource::GetForIsland(island);
+    auto& pointer = g_pointerSource;
+
+    pointer.PointerMoved([](auto&&, const muinput::PointerEventArgs& args) {
+        const auto pt = args.CurrentPoint();
+        dispatchMouse(QEvent::MouseMove, pt.Position(), Qt::NoButton,
+                      pt.Properties().IsLeftButtonPressed() ? Qt::LeftButton : Qt::NoButton);
+    });
+    pointer.PointerPressed([](auto&&, const muinput::PointerEventArgs& args) {
+        dispatchMouse(QEvent::MouseButtonPress, args.CurrentPoint().Position(),
+                      Qt::LeftButton, Qt::LeftButton);
+    });
+    pointer.PointerReleased([](auto&&, const muinput::PointerEventArgs& args) {
+        dispatchMouse(QEvent::MouseButtonRelease, args.CurrentPoint().Position(),
+                      Qt::LeftButton, Qt::NoButton);
+    });
+    // Without an explicit exit, a hovered item stays hovered forever once the
+    // cursor leaves the island.
+    pointer.PointerExited([](auto&&, const muinput::PointerEventArgs& args) {
+        dispatchMouse(QEvent::MouseMove, args.CurrentPoint().Position(),
+                      Qt::NoButton, Qt::NoButton);
+        if (g_stage.quickWindow) {
+            QEvent leave(QEvent::Leave);
+            QCoreApplication::sendEvent(g_stage.quickWindow, &leave);
+        }
+    });
+    std::printf("[qtspike] input wired to island\n");
 }
 
 // One frame: Qt renders into its own texture, then that texture is blitted into
@@ -119,6 +193,8 @@ void renderFrame()
                                            0, g_stage.qtTexture.get(), 0, &box);
     interop->EndDraw();
 }
+
+void renderFrameFwd() { renderFrame(); }
 
 } // namespace
 
@@ -170,6 +246,25 @@ int main(int argc, char** argv)
                                       L"Qt on Windows acrylic", WS_OVERLAPPEDWINDOW,
                                       200, 200, W, H, nullptr, nullptr, wc.hInstance, nullptr);
     if (!hwnd) { std::printf("[qtspike] CreateWindowExW failed\n"); return 1; }
+
+    // --nobridge validates the test harness itself. A plain window with no
+    // bridge, no island and no backdrop MUST count mouse messages when the
+    // cursor moves over it. If it does not, the instrument is broken and every
+    // "0 events" reading above means nothing.
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) != "--nobridge") continue;
+        ShowWindow(hwnd, SW_SHOW);
+        UpdateWindow(hwnd);
+        std::printf("[qtspike] --nobridge: plain window, counting mouse messages\n");
+        MSG m{};
+        int t = 0;
+        while (GetMessageW(&m, nullptr, 0, 0)) {
+            TranslateMessage(&m);
+            DispatchMessageW(&m);
+            if (++t % 40 == 0) std::printf("[qtspike] host mouse msgs: %d\n", g_hostMouseMsgs);
+        }
+        return 0;
+    }
 
     mucomp::Compositor compositor{};
     const winrt::Microsoft::UI::WindowId windowId{ reinterpret_cast<uint64_t>(hwnd) };
@@ -256,6 +351,32 @@ int main(int argc, char** argv)
     bridge.Show();
     std::printf("[qtspike] window shown, bridge visible=%d\n", bridge.IsVisible() ? 1 : 0);
 
+    // Island size is in DIPs; the Qt scene is W pixels wide.
+    const auto islandSize = island.ActualSize();
+    if (islandSize.x > 0) g_inputScale = static_cast<double>(W) / islandSize.x;
+    std::printf("[qtspike] island %.0fx%.0f DIP, input scale %.3f\n",
+                islandSize.x, islandSize.y, g_inputScale);
+    // A transparent island is not hit-tested by default -- and this island is
+    // transparent on purpose, so the acrylic behind it shows through. Without
+    // this, every pointer event lands on nothing: InputPointerSource is wired
+    // correctly, reports success, and simply never fires.
+    island.IsHitTestVisibleWhenTransparent(true);
+    island.IsIslandEnabled(true);
+    island.IsIslandVisible(true);
+    std::printf("[qtspike] island connected=%d enabled=%d visible=%d hitTestTransparent=%d "
+                "siteEnabled=%d siteVisible=%d\n",
+                island.IsConnected() ? 1 : 0, island.IsIslandEnabled() ? 1 : 0,
+                island.IsIslandVisible() ? 1 : 0, island.IsHitTestVisibleWhenTransparent() ? 1 : 0,
+                island.IsSiteEnabled() ? 1 : 0, island.IsSiteVisible() ? 1 : 0);
+    wireInput(island);
+
+    QTimer inputReport;
+    QObject::connect(&inputReport, &QTimer::timeout, [] {
+        std::printf("[qtspike] pointer events: %d   host mouse msgs: %d\n",
+                    g_pointerEvents, g_hostMouseMsgs);
+    });
+    inputReport.start(2000);
+
     backdrops::SystemBackdropConfiguration config{};
     config.IsInputActive(true);
     config.Theme(backdrops::SystemBackdropTheme::Dark);
@@ -274,6 +395,30 @@ int main(int argc, char** argv)
                     acrylic.AddSystemBackdropTarget(target) ? "yes" : "NO");
     } else {
         std::printf("[qtspike] bridge has no ICompositionSupportsSystemBackdrop\n");
+    }
+
+    // --win32loop swaps Qt's event dispatcher for a plain Win32 pump. It exists
+    // to answer one question: whether Qt's dispatcher is what is swallowing
+    // pointer input. Rendering still works under it (renderFrame is driven by
+    // WM_TIMER, and sendEvent is synchronous), but Qt timers and QML animations
+    // do not run, so it is a diagnostic rather than a viable mode.
+    bool win32Loop = false;
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--win32loop") win32Loop = true;
+
+    if (win32Loop) {
+        SetTimer(hwnd, 1, 16, nullptr);
+        std::printf("[qtspike] running under a raw Win32 message loop - Esc to quit\n");
+        MSG msg{};
+        int ticks = 0;
+        while (GetMessageW(&msg, nullptr, 0, 0)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+            if (++ticks % 120 == 0)
+                std::printf("[qtspike] pointer events: %d   host mouse msgs: %d\n",
+                            g_pointerEvents, g_hostMouseMsgs);
+        }
+        return 0;
     }
 
     QTimer timer;
