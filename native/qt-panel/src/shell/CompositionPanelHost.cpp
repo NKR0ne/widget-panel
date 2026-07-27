@@ -88,6 +88,8 @@ struct CompositionPanelHost::Private
     winrt::com_ptr<ID3D11DeviceContext> context;
     winrt::com_ptr<ID3D11Texture2D> qtTexture;
     mucomp::ContainerVisual rootVisual{ nullptr };
+    mucomp::SpriteVisual contentVisual{ nullptr };
+    mucomp::CompositionSurfaceBrush surfaceBrush{ nullptr };
 
     winrt::Microsoft::UI::Dispatching::DispatcherQueueController dq{ nullptr };
     mucomp::Compositor compositor{ nullptr };
@@ -267,7 +269,6 @@ bool CompositionPanelHost::createCompositionTree()
 
     auto root = d->compositor.CreateContainerVisual();
     d->rootVisual = root;
-    root.RelativeSizeAdjustment({ 1.0f, 1.0f });
     d->island = content::ContentIsland::Create(root);
     d->bridge.Connect(d->island);
 
@@ -292,8 +293,18 @@ bool CompositionPanelHost::createCompositionTree()
         mgdx::DirectXAlphaMode::Premultiplied);
 
     auto contentVisual = d->compositor.CreateSpriteVisual();
-    contentVisual.RelativeSizeAdjustment({ 1.0f, 1.0f });
-    contentVisual.Brush(d->compositor.CreateSurfaceBrush(d->surface));
+    d->contentVisual = contentVisual;
+    // Sized explicitly in resizeToIsland, NOT by RelativeSizeAdjustment: that is
+    // relative to the PARENT, and the root visual of an island has no parent, so
+    // the root stays 0x0 and everything under it inherits a size that never
+    // matches the window. Any disagreement between the visual size and the
+    // surface size shows up as content drawn at a different scale from where
+    // input believes it is -- clicks landing somewhere other than the cursor.
+    d->surfaceBrush = d->compositor.CreateSurfaceBrush(d->surface);
+    // Fill, so the surface maps 1:1 onto the visual rather than being drawn at
+    // its own pixel size inside it.
+    d->surfaceBrush.Stretch(mucomp::CompositionStretch::Fill);
+    contentVisual.Brush(d->surfaceBrush);
     root.Children().InsertAtTop(contentVisual);
 
     d->island.StateChanged([this](const content::ContentIsland&,
@@ -469,7 +480,20 @@ void CompositionPanelHost::resizeToIsland()
         m_rootItem->setWidth(dip.x);
         m_rootItem->setHeight(dip.y);
     }
+    // Composition visuals live in the island's DIP space, so both take the DIP
+    // size while the surface underneath is the pixel size. Getting this wrong is
+    // invisible in a screenshot -- the content still fills the window -- but
+    // input and pixels stop agreeing.
+    if (d->rootVisual) d->rootVisual.Size({ dip.x, dip.y });
+    if (d->contentVisual) d->contentVisual.Size({ dip.x, dip.y });
+
     d->needsRender = true;
+    qInfo() << "[composition] sized: island DIP" << dip.x << dip.y
+            << "| scale" << scale
+            << "| surface px" << pxW << pxH
+            << "| qt window" << m_quickWindow->size()
+            << "| root visual" << (d->rootVisual ? d->rootVisual.Size().x : -1)
+                               << (d->rootVisual ? d->rootVisual.Size().y : -1);
     emit sizeChanged(QSize(qRound(dip.x), qRound(dip.y)), scale);
 }
 
