@@ -108,6 +108,28 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 // render-target pixels. One scale factor converts between them.
 double g_inputScale = 1.0;
 int g_pointerEvents = 0;
+int g_moved = 0, g_pressed = 0, g_released = 0;
+
+// Launched from Explorer there is no console, so stdout goes nowhere and the
+// result of a manual pointer test is whatever the tester remembers seeing.
+// The counters go to a file next to the exe so the outcome can be read back
+// instead of relayed.
+void logResult()
+{
+    const QString path = QDir(QCoreApplication::applicationDirPath()).filePath("input-test.log");
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, reinterpret_cast<const wchar_t*>(path.utf16()), L"w") != 0 || !f) return;
+    std::fprintf(f, "pointer events : %d\n", g_pointerEvents);
+    std::fprintf(f, "PointerMoved   : %d\n", g_moved);
+    std::fprintf(f, "PointerPressed : %d\n", g_pressed);
+    std::fprintf(f, "PointerReleased: %d\n", g_released);
+    std::fprintf(f, "host mouse msgs: %d\n", g_hostMouseMsgs);
+    std::fprintf(f, "VERDICT        : %s\n",
+                 g_moved > 0 ? (g_pressed > 0 ? "PASS - move and press both reach Qt"
+                                              : "PARTIAL - move reaches Qt, no press seen")
+                             : "FAIL - no pointer input reached Qt");
+    std::fclose(f);
+}
 
 // The host HWND never sees any of this: DesktopChildSiteBridge creates its own
 // child window on top, so hit-testing resolves to the bridge and the host's
@@ -135,17 +157,23 @@ void wireInput(const content::ContentIsland& island)
     auto& pointer = g_pointerSource;
 
     pointer.PointerMoved([](auto&&, const muinput::PointerEventArgs& args) {
+        ++g_moved;
         const auto pt = args.CurrentPoint();
         dispatchMouse(QEvent::MouseMove, pt.Position(), Qt::NoButton,
                       pt.Properties().IsLeftButtonPressed() ? Qt::LeftButton : Qt::NoButton);
+        logResult();
     });
     pointer.PointerPressed([](auto&&, const muinput::PointerEventArgs& args) {
+        ++g_pressed;
         dispatchMouse(QEvent::MouseButtonPress, args.CurrentPoint().Position(),
                       Qt::LeftButton, Qt::LeftButton);
+        logResult();
     });
     pointer.PointerReleased([](auto&&, const muinput::PointerEventArgs& args) {
+        ++g_released;
         dispatchMouse(QEvent::MouseButtonRelease, args.CurrentPoint().Position(),
                       Qt::LeftButton, Qt::NoButton);
+        logResult();
     });
     // Without an explicit exit, a hovered item stays hovered forever once the
     // cursor leaves the island.
@@ -157,6 +185,10 @@ void wireInput(const content::ContentIsland& island)
             QCoreApplication::sendEvent(g_stage.quickWindow, &leave);
         }
     });
+    // Write once up front so the file exists even for a run that receives
+    // nothing: an absent log means the build never ran, which is a different
+    // failure from a run that got no input.
+    logResult();
     std::printf("[qtspike] input wired to island\n");
 }
 
