@@ -423,17 +423,34 @@ Item {
                     }
                 }
 
-                Rectangle {
+                // Straddles the gap between columns rather than sitting inside
+                // the left one. It used to be 5px anchored to parent.right,
+                // which put the whole grab area to the LEFT of the 6px spacing
+                // -- so the cursor had to be off the visible seam to catch it.
+                // Centred on parent.right + half the spacing puts it on the
+                // seam, and a wider hit area than visual makes it catchable
+                // without drawing a thick bar.
+                Item {
                     id: columnResizeHandle
                     visible: columnFlick.index < root.visibleColumns.length - 1
-                    width: 5
+                    width: 12
                     anchors.top: parent.top
                     anchors.bottom: parent.bottom
-                    anchors.right: parent.right
-                    color: columnResize.active || columnResizeHover.hovered
-                           ? Theme.accent : "transparent"
-                    opacity: columnResize.active ? 0.8 : 0.35
+                    anchors.horizontalCenter: parent.right
+                    anchors.horizontalCenterOffset: rowLayout.spacing / 2
                     z: 20
+
+                    Rectangle {
+                        anchors.centerIn: parent
+                        width: 2
+                        height: parent.height
+                        radius: 1
+                        color: Theme.accent
+                        opacity: columnResize.active ? 0.9
+                               : columnResizeHover.hovered ? 0.55 : 0
+                        Behavior on opacity { NumberAnimation { duration: Motion.fastMs } }
+                    }
+
                     HoverHandler { id: columnResizeHover; cursorShape: Qt.SizeHorCursor }
                     DragHandler {
                         id: columnResize

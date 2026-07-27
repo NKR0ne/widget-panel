@@ -95,6 +95,8 @@ struct CompositionPanelHost::Private
     muinput::InputKeyboardSource keyboardSource{ nullptr };
 
     RenderLoopAnimationDriver* animationDriver = nullptr;
+    Qt::CursorShape lastCursorShape = Qt::ArrowCursor;
+    HCURSOR lastCursor = nullptr;
     int pixelWidth = 0;
     int pixelHeight = 0;
     bool needsRender = true;
@@ -116,6 +118,31 @@ LRESULT CALLBACK hostWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     // instead, in setInputActive.
     if (msg == WM_DESTROY) { PostQuitMessage(0); return 0; }
     return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+// QML sets cursorShape on its QQuickWindow, and Qt applies it to that window's
+// native handle. Here there isn't one -- the scene lives in an offscreen window
+// -- so the shape never reaches the OS and the pointer stays an arrow over
+// resize handles, text fields and links. Mapping it across by hand is what
+// restores the feedback that tells you a drag will resize.
+HCURSOR cursorForShape(Qt::CursorShape shape)
+{
+    const wchar_t* id = IDC_ARROW;
+    switch (shape) {
+    case Qt::SizeHorCursor:   case Qt::SplitHCursor: id = IDC_SIZEWE;   break;
+    case Qt::SizeVerCursor:   case Qt::SplitVCursor: id = IDC_SIZENS;   break;
+    case Qt::SizeFDiagCursor:                        id = IDC_SIZENWSE; break;
+    case Qt::SizeBDiagCursor:                        id = IDC_SIZENESW; break;
+    case Qt::SizeAllCursor:                          id = IDC_SIZEALL;  break;
+    case Qt::IBeamCursor:                            id = IDC_IBEAM;    break;
+    case Qt::PointingHandCursor:                     id = IDC_HAND;     break;
+    case Qt::WaitCursor:                             id = IDC_WAIT;     break;
+    case Qt::BusyCursor:                             id = IDC_APPSTARTING; break;
+    case Qt::ForbiddenCursor:                        id = IDC_NO;       break;
+    case Qt::CrossCursor:                            id = IDC_CROSS;    break;
+    default: break;
+    }
+    return LoadCursorW(nullptr, id);
 }
 
 // Modifier state comes from the OS rather than the event: KeyEventArgs carries
@@ -302,17 +329,30 @@ void CompositionPanelHost::wireInput()
     auto send = [this](QEvent::Type type, const winrt::Windows::Foundation::Point& pos,
                        Qt::MouseButton button, Qt::MouseButtons buttons) {
         if (!m_quickWindow) return;
-        // Island coordinates and Qt logical coordinates are both DIPs, so no
-        // conversion is needed.
+        // Island coordinates and Qt logical coordinates are both DIPs, verified
+        // by measurement: the pointer reached 1109.71 against a 1112 DIP window,
+        // and presses resolved to the item under the cursor. No conversion.
         const QPointF p(pos.X, pos.Y);
         QMouseEvent ev(type, p, p, p, button, buttons, Qt::NoModifier);
         QCoreApplication::sendEvent(m_quickWindow, &ev);
     };
 
-    d->pointerSource.PointerMoved([send](auto&&, const muinput::PointerEventArgs& args) {
+    d->pointerSource.PointerMoved([this, send](auto&&, const muinput::PointerEventArgs& args) {
         const auto pt = args.CurrentPoint();
         send(QEvent::MouseMove, pt.Position(), Qt::NoButton,
              pt.Properties().IsLeftButtonPressed() ? Qt::LeftButton : Qt::NoButton);
+        // AFTER dispatching: sendEvent is synchronous, so QML has already
+        // updated hover state and therefore the window's cursor by this point.
+        // Applying it here also lands after the system's own WM_SETCURSOR for
+        // this move, which would otherwise put the arrow back.
+        if (m_quickWindow) {
+            const Qt::CursorShape shape = m_quickWindow->cursor().shape();
+            if (shape != d->lastCursorShape) {
+                d->lastCursorShape = shape;
+                d->lastCursor = cursorForShape(shape);
+            }
+            if (d->lastCursor) SetCursor(d->lastCursor);
+        }
     });
     d->pointerSource.PointerPressed([send](auto&&, const muinput::PointerEventArgs& args) {
         send(QEvent::MouseButtonPress, args.CurrentPoint().Position(),
