@@ -138,6 +138,27 @@ $build     = Join-Path $root "build\$buildName"
 $buildType = if ($Config -eq 'debug') { 'Debug' } else { 'Release' }
 $qtPrefix  = $QtDir -replace '\\', '/'
 
+# C++/WinRT projections for the composition backdrop path, generated from the
+# winmd committed under native/winappsdk-runtime. Vendored rather than restored
+# so a fresh clone builds with no NuGet package and nothing installed -- see
+# that folder's README for why the bootstrapper route was not usable here.
+$vendorSdk  = Join-Path (Split-Path -Parent $root) 'winappsdk-runtime'
+$winrtOut   = Join-Path $build 'winrt-generated'
+$cppwinrt   = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\cppwinrt.exe'
+if ((Test-Path $vendorSdk) -and
+    -not (Test-Path (Join-Path $winrtOut 'winrt\Microsoft.UI.Composition.SystemBackdrops.h'))) {
+    if (-not (Test-Path $cppwinrt)) { Write-Error "cppwinrt.exe not found at $cppwinrt" }
+    Write-Host 'Generating C++/WinRT projections...' -ForegroundColor Cyan
+    New-Item -ItemType Directory -Force $winrtOut | Out-Null
+    # `local` is the Windows SDK metadata; without it Microsoft.UI types that
+    # reference Windows.* fail to resolve.
+    & $cppwinrt -in "$vendorSdk\winmd\uap10.0" `
+                -in "$vendorSdk\winmd\uap10.0.18362" `
+                -in "$vendorSdk\winmd\uap10.0.17763" `
+                -in local -out $winrtOut
+    if ($LASTEXITCODE -ne 0) { Write-Error "cppwinrt failed ($LASTEXITCODE)" }
+}
+
 if (-not $SkipKill) {
     Write-Host 'Clearing stale qt-panel build processes...' -ForegroundColor Cyan
     & (Join-Path $root 'kill-build-processes.ps1') -Quiet
