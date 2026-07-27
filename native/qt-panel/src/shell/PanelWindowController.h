@@ -54,6 +54,11 @@ class PanelWindowController : public QObject {
     // behind the scene is real acrylic, and an opaque fill on top of it would
     // reintroduce exactly the problem this path exists to solve.
     Q_PROPERTY(bool compositionMode READ compositionMode CONSTANT)
+    // True while any modal sheet is open. QML uses it to stand down the widget
+    // drag zones: a DragHandler takes a passive grab even under a modal, and
+    // activating steals the grab from whatever button was pressed, cancelling
+    // the click and dragging a card that is not even visible.
+    Q_PROPERTY(bool modalOpen READ modalOpen NOTIFY modalOpenChanged)
 
 public:
     PanelWindowController(SettingsStore* settings, HelperServer* helper,
@@ -71,6 +76,7 @@ public:
     int surfaceX() const;
     void setSurfaceX(int x);
 
+    bool modalOpen() const { return m_modalOpen; }
     bool compositionMode() const { return m_compositionMode; }
     void setCompositionMode(bool on) { m_compositionMode = on; }
     // Lets the backdrop follow the system transparency preference live. Must be
@@ -143,6 +149,7 @@ public:
 
 signals:
     void pinnedChanged();
+    void modalOpenChanged();
     void micaBackdropChanged();
     void panelVisibleChanged();
     void graphicsApiNameChanged();
@@ -205,6 +212,7 @@ private:
     // Owned; created by attach() or attachTarget().
     std::unique_ptr<PanelSurfaceTarget> m_target;
     bool m_compositionMode = false;
+    bool m_modalOpen = false;
     WorkAreaWatcher m_workArea;
     FocusPolicy m_focus;
 

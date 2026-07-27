@@ -311,6 +311,10 @@ void PanelWindowController::setModalOpen(bool open)
         m_focus.noteModalOpened();
     else
         m_focus.noteModalClosed();
+    if (m_modalOpen != open) {
+        m_modalOpen = open;
+        emit modalOpenChanged();
+    }
 }
 
 void PanelWindowController::onActiveChanged()

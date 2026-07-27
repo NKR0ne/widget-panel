@@ -112,7 +112,13 @@ Item {
         anchors.topMargin: 6
         width: Math.max(72, Math.min(parent.width * 0.55, parent.width - 112))
         height: 20
-        visible: host.dragEnabled && host.titleDragEnabled
+        // Not while a modal is open. A DragHandler takes a passive grab even
+        // when the press landed on a modal above it, and once it passes its 4px
+        // threshold it steals the grab -- cancelling the click on whatever
+        // button was actually pressed and dragging a card hidden behind the
+        // sheet. That is why the settings X did nothing while a column-3 card
+        // jumped on press and snapped back on release.
+        visible: host.dragEnabled && host.titleDragEnabled && !Panel.modalOpen
         z: 2
 
         DragHandler {
@@ -121,6 +127,7 @@ Item {
             target: null
             dragThreshold: 4
             onActiveChanged: {
+                console.log("[probe] drag", active ? "STARTED" : "ended", host.widgetId)
                 if (!active && host.columns)
                     host.columns.dropWidget(host.widgetId,
                                             dragHandler.centroid.scenePosition.x,
