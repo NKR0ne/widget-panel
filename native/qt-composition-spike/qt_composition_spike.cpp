@@ -82,6 +82,67 @@ struct Stage {
 
 Stage g_stage;
 content::DesktopChildSiteBridge g_bridge{ nullptr };
+content::ContentIsland g_island{ nullptr };
+QQuickItem* g_rootItem = nullptr;
+bool g_needsRender = true;
+
+// Island coordinates are DIPs. Once the scene is laid out in DIPs too this is
+// 1.0, but it stays a variable so the mapping is explicit rather than assumed.
+double g_inputScale = 1.0;
+
+// Rebuilds the render target for a new size or DPI. The scene is laid out in
+// DIPs and rasterized at ActualSize * RasterizationScale, so QML metrics match
+// the rest of the app and text lands on whole device pixels instead of being
+// resampled -- which is what a fixed-size surface stretched into a
+// differently-sized visual was doing.
+void resizeStage()
+{
+    if (!g_island || !g_stage.quickWindow) return;
+
+    const auto dip = g_island.ActualSize();
+    const float scale = g_island.RasterizationScale();
+    const int pxW = qMax(1, qRound(dip.x * scale));
+    const int pxH = qMax(1, qRound(dip.y * scale));
+    if (pxW == g_stage.width && pxH == g_stage.height) return;
+
+    g_stage.width = pxW;
+    g_stage.height = pxH;
+
+    D3D11_TEXTURE2D_DESC td{};
+    td.Width = static_cast<UINT>(pxW);
+    td.Height = static_cast<UINT>(pxH);
+    td.MipLevels = 1; td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_DEFAULT;
+    td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    winrt::com_ptr<ID3D11Texture2D> tex;
+    if (FAILED(g_stage.device->CreateTexture2D(&td, nullptr, tex.put()))) {
+        std::printf("[qtspike] resize: CreateTexture2D failed\n");
+        return;
+    }
+    g_stage.qtTexture = tex;
+
+    if (g_stage.surface) {
+        auto si = g_stage.surface.as<mucomp::ICompositionDrawingSurfaceInterop>();
+        SIZE s{ pxW, pxH };
+        si->Resize(s);
+    }
+
+    auto rt = QQuickRenderTarget::fromD3D11Texture(
+        g_stage.qtTexture.get(), DXGI_FORMAT_B8G8R8A8_UNORM, QSize(pxW, pxH), 1);
+    rt.setDevicePixelRatio(scale);
+    g_stage.quickWindow->setRenderTarget(rt);
+    g_stage.quickWindow->setGeometry(0, 0, qRound(dip.x), qRound(dip.y));
+    if (g_rootItem) { g_rootItem->setWidth(dip.x); g_rootItem->setHeight(dip.y); }
+
+    // Island coordinates and Qt logical coordinates are both DIPs now, so
+    // pointer positions need no conversion at all.
+    g_inputScale = 1.0;
+    g_needsRender = true;
+    std::printf("[qtspike] resized: %.0fx%.0f DIP at scale %.2f -> %dx%d px\n",
+                dip.x, dip.y, scale, pxW, pxH);
+}
 
 int g_hostMouseMsgs = 0;
 void renderFrameFwd();
@@ -104,9 +165,6 @@ LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
-// Input arrives in island coordinates, which are DIPs; Qt's scene is sized in
-// render-target pixels. One scale factor converts between them.
-double g_inputScale = 1.0;
 int g_pointerEvents = 0;
 int g_moved = 0, g_pressed = 0, g_released = 0;
 
@@ -197,6 +255,8 @@ void wireInput(const content::ContentIsland& island)
 void renderFrame()
 {
     if (!g_stage.renderControl || !g_stage.surface) return;
+    if (!g_needsRender) return;
+    g_needsRender = false;
 
     g_stage.renderControl->polishItems();
     g_stage.renderControl->beginFrame();
@@ -373,8 +433,18 @@ int main(int argc, char** argv)
     auto* rootItem = qobject_cast<QQuickItem*>(component.create());
     if (!rootItem) { std::printf("[qtspike] QML root is not a QQuickItem\n"); return 1; }
     rootItem->setParentItem(quickWindow->contentItem());
+    g_rootItem = rootItem;
     rootItem->setWidth(W);
     rootItem->setHeight(H);
+
+    // Render on demand rather than every 16ms. Qt raises these whenever the
+    // scene actually needs redrawing -- including each step of a running
+    // animation -- so an idle panel costs nothing instead of burning a GPU
+    // blit and a full scene-graph sync sixty times a second forever.
+    QObject::connect(renderControl, &QQuickRenderControl::renderRequested,
+                     [] { g_needsRender = true; });
+    QObject::connect(renderControl, &QQuickRenderControl::sceneChanged,
+                     [] { g_needsRender = true; });
     std::printf("[qtspike] QML loaded from %s\n", qPrintable(qmlPath));
 
     // --- backdrop, after the window is on screen -----------------------------
@@ -384,14 +454,23 @@ int main(int argc, char** argv)
     std::printf("[qtspike] window shown, bridge visible=%d\n", bridge.IsVisible() ? 1 : 0);
 
     // Island size is in DIPs; the Qt scene is W pixels wide.
-    const auto islandSize = island.ActualSize();
-    if (islandSize.x > 0) g_inputScale = static_cast<double>(W) / islandSize.x;
-    std::printf("[qtspike] island %.0fx%.0f DIP, input scale %.3f\n",
-                islandSize.x, islandSize.y, g_inputScale);
+    // Adopt the island's real size and DPI now that everything is connected;
+    // the W x H used up to this point was only a placeholder to get a target
+    // allocated before the island could report anything.
+    resizeStage();
     // A transparent island is not hit-tested by default -- and this island is
     // transparent on purpose, so the acrylic behind it shows through. Without
     // this, every pointer event lands on nothing: InputPointerSource is wired
     // correctly, reports success, and simply never fires.
+    g_island = island;
+    // The island is the authority on both size and DPI. Driving off WM_SIZE
+    // instead would miss a DPI change that does not resize the window, and
+    // would race the bridge's own resize policy.
+    island.StateChanged([](const content::ContentIsland&,
+                           const content::ContentIslandStateChangedEventArgs& args) {
+        if (args.DidActualSizeChange() || args.DidRasterizationScaleChange())
+            resizeStage();
+    });
     island.IsHitTestVisibleWhenTransparent(true);
     island.IsIslandEnabled(true);
     island.IsIslandVisible(true);
