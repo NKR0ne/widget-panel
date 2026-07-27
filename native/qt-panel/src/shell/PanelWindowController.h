@@ -49,6 +49,11 @@ class PanelWindowController : public QObject {
     // because the composition path has no QWindow to animate -- one slide
     // implementation serves both.
     Q_PROPERTY(int surfaceX READ surfaceX WRITE setSurfaceX)
+    // True when the panel is hosted on the Windows composition backdrop. QML
+    // reads this to stop painting its own background: in this mode the material
+    // behind the scene is real acrylic, and an opaque fill on top of it would
+    // reintroduce exactly the problem this path exists to solve.
+    Q_PROPERTY(bool compositionMode READ compositionMode CONSTANT)
 
 public:
     PanelWindowController(SettingsStore* settings, HelperServer* helper,
@@ -65,6 +70,9 @@ public:
 
     int surfaceX() const;
     void setSurfaceX(int x);
+
+    bool compositionMode() const { return m_compositionMode; }
+    void setCompositionMode(bool on) { m_compositionMode = on; }
     // Lets the backdrop follow the system transparency preference live. Must be
     // called before attach() so the first chrome application already honours it.
     void setSystemTheme(SystemTheme* theme);
@@ -196,6 +204,7 @@ private:
     // of the geometry, slide and pin logic instead of duplicating it.
     // Owned; created by attach() or attachTarget().
     std::unique_ptr<PanelSurfaceTarget> m_target;
+    bool m_compositionMode = false;
     WorkAreaWatcher m_workArea;
     FocusPolicy m_focus;
 

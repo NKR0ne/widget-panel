@@ -83,6 +83,8 @@ private:
     QPointer<QQuickItem> m_rootItem;
     bool m_valid = false;
 
+    bool initializeInner(QQmlEngine* engine, const QString& rootItemUri,
+                         const QString& rootItemName, const QSize& initialSize);
     bool createHostWindow(const QSize& size);
     bool createCompositionTree();
     bool createQtRenderPath();

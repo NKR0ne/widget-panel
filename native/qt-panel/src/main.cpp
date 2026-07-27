@@ -40,6 +40,8 @@
 #include "services/workstation/WorkstationClient.h"
 #include "shell/HelperServer.h"
 #include "shell/PanelWindowController.h"
+#include "shell/CompositionPanelHost.h"
+#include "shell/PanelSurfaceTarget.h"
 
 using namespace qtpanel;
 
@@ -94,7 +96,11 @@ int main(int argc, char* argv[])
         QStringLiteral("diag-island-url"),
         QStringLiteral("Open a URL in the embedded web island for bounded diagnostics."),
         QStringLiteral("url"));
-    const QCommandLineOption diagPressReaderOption(
+    const QCommandLineOption compositionOption(
+    QStringLiteral("composition"),
+    QStringLiteral("Host the panel on the Windows composition backdrop "
+                   "(DesktopAcrylicController) instead of the DWM window backdrop."));
+const QCommandLineOption diagPressReaderOption(
         QStringLiteral("diag-pressreader"),
         QStringLiteral("Open the dedicated PressReader spotlight without automatic login."));
     parser.addOption(noHelperOption);
@@ -105,6 +111,7 @@ int main(int argc, char* argv[])
     parser.addOption(startModeOption);
     parser.addOption(diagIslandUrlOption);
     parser.addOption(diagPressReaderOption);
+    parser.addOption(compositionOption);
     parser.process(app);
 
     const QString startMode = parser.value(startModeOption).trimmed().toLower();
@@ -371,20 +378,77 @@ int main(int argc, char* argv[])
     engine.addImageProvider(QStringLiteral("camera"), cameraProvider);
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
                      [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
-    engine.loadFromModule("QtPanel", "Main");
-    if (engine.rootObjects().isEmpty()) {
-        qCritical() << "failed to load QML root";
-        return 1;
+    // --composition hosts the scene in a Windows composition tree so the panel
+    // sits on DesktopAcrylicController's material -- the shell's own acrylic,
+    // including the luminosity blend our in-scene stack cannot reproduce.
+    // Both paths coexist so they can be compared at runtime; the windowed path
+    // stays the default until this one has earned it.
+    // The scene's window in both modes. In composition mode it is offscreen and
+    // must never be shown; it is still the right object for the QML context and
+    // for the renderer interface.
+    QQuickWindow* window = nullptr;
+    std::unique_ptr<CompositionPanelHost> compositionHost;
+    if (parser.isSet(compositionOption)) {
+        controller.setCompositionMode(true);
+        compositionHost = std::make_unique<CompositionPanelHost>();
+        // PanelSurface, not Main: QQuickRenderControl needs an Item root, and
+        // Main.qml is only a Window wrapper around exactly this item.
+        if (!compositionHost->initialize(&engine, QStringLiteral("QtPanel"),
+                                         QStringLiteral("PanelSurface"),
+                                         QSize(715, 1166))) {
+            // Fall back rather than refusing to start: a panel on the ordinary
+            // backdrop is far better than no panel, and the reason is logged.
+            qWarning() << "[composition] unavailable - falling back to the windowed path";
+            compositionHost.reset();
+            controller.setCompositionMode(false);
+        }
     }
+    if (compositionHost) {
+        window = compositionHost->quickWindow();
+        controller.setSystemTheme(&systemTheme);
+        controller.attachTarget(new CompositionSurfaceTarget(compositionHost.get()),
+                                window);
+        // Drive the acrylic from the shell's own palette. AccentDark2 is where
+        // the Start menu actually sits once composited -- StartColorMenu is a
+        // tint the shell composites at high opacity over a darkened backdrop,
+        // and used directly it lands far too light (#586579 -> #515B6B against
+        // Start's measured #2E3542).
+        //
+        // Unlike the in-scene path, these are Fluent's own constants used as
+        // intended: DesktopAcrylicController applies the recipe once, itself,
+        // so there is no double-tinting to compensate for.
+        auto applyTint = [&systemTheme, &compositionHost] {
+            const QVariantList palette = systemTheme.accentPalette();
+            const QColor tint = palette.size() >= 6 ? palette.at(5).value<QColor>()
+                                                    : QColor(0x34, 0x3C, 0x51);
+            compositionHost->setTint(tint, 0.8f, 0.85f);
+            compositionHost->setDarkTheme(!systemTheme.lightTheme());
+            qInfo() << "[composition] tint" << tint.name()
+                    << "dark" << !systemTheme.lightTheme();
+        };
+        applyTint();
+        // Follow accent and light/dark changes live, the same way the in-scene
+        // material does.
+        QObject::connect(&systemTheme, &SystemTheme::accentChanged, &controller, applyTint);
+        QObject::connect(&systemTheme, &SystemTheme::appearanceChanged, &controller, applyTint);
 
-    auto* window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
-    if (!window) {
-        qCritical() << "QML root object is not a window";
-        return 1;
+        qInfo() << "[startup] composition host attached";
+    } else {
+        engine.loadFromModule("QtPanel", "Main");
+        if (engine.rootObjects().isEmpty()) {
+            qCritical() << "failed to load QML root";
+            return 1;
+        }
+
+        window = qobject_cast<QQuickWindow*>(engine.rootObjects().constFirst());
+        if (!window) {
+            qCritical() << "QML root object is not a window";
+            return 1;
+        }
+        controller.setSystemTheme(&systemTheme);
+        controller.attach(window);
+        qInfo() << "[startup] QML root attached";
     }
-    controller.setSystemTheme(&systemTheme);
-    controller.attach(window);
-    qInfo() << "[startup] QML root attached";
 
     QObject::connect(&instanceServer, &QLocalServer::newConnection, &controller, [&] {
         while (QLocalSocket* peer = instanceServer.nextPendingConnection()) {

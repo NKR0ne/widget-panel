@@ -10,7 +10,11 @@ QtObject {
     // transparency effects; a panel that kept blurring would stand out as the
     // one surface ignoring the preference — and it is a perf/accessibility
     // setting, not a cosmetic one.
+    // In composition mode the blur/tint/grain stack is Windows' job, so the
+    // in-scene reconstruction switches off rather than compositing a second
+    // recipe over a surface that already has one.
     readonly property bool materialEnabled: Sys.transparencyEnabled && !contrastEnabled
+                                            && !Panel.compositionMode
 
     // Surface tint. Following the system uses the shade the shell paints Start
     // with, but only when the user actually asked for accent on those surfaces
@@ -47,7 +51,17 @@ QtObject {
 
     // Mica is a static, desaturated wallpaper sample, so the tint over it can
     // be much lighter than the one needed to tame acrylic's live desktop blur.
+    // On the composition path the material behind the scene is Windows' own
+    // acrylic, produced by DesktopAcrylicController with its tint, blur and
+    // luminosity already applied. Anything we paint here lands on top of it and
+    // covers it -- which is precisely the failure that path exists to escape.
+    // So the background becomes fully transparent and the material is left to
+    // Windows.
+    readonly property bool compositionMaterial: Panel.compositionMode
+
     readonly property color bgTint: {
+        if (compositionMaterial)
+            return Qt.rgba(0, 0, 0, 0)
         if (contrastEnabled)
             return Qt.rgba(0.043, 0.055, 0.09, 0.82)
         if (!materialEnabled)

@@ -349,6 +349,26 @@ void CompositionPanelHost::setDarkTheme(bool dark)
 bool CompositionPanelHost::initialize(QQmlEngine* engine, const QString& rootItemUri,
                                       const QString& rootItemName, const QSize& initialSize)
 {
+    // Every WinRT activation in here throws on failure, and an uncaught
+    // hresult_error terminates the process rather than unwinding. A missing
+    // activation manifest yields REGDB_E_CLASSNOTREG (0x80040154) and would
+    // otherwise take the whole app down at startup instead of falling back to
+    // the windowed path.
+    try {
+        return initializeInner(engine, rootItemUri, rootItemName, initialSize);
+    } catch (const winrt::hresult_error& e) {
+        qWarning() << "[composition] failed:" << Qt::hex << static_cast<uint32_t>(e.code().value)
+                   << QString::fromWCharArray(e.message().c_str());
+        return false;
+    } catch (const std::exception& e) {
+        qWarning() << "[composition] failed:" << e.what();
+        return false;
+    }
+}
+
+bool CompositionPanelHost::initializeInner(QQmlEngine* engine, const QString& rootItemUri,
+                                           const QString& rootItemName, const QSize& initialSize)
+{
     if (!createHostWindow(initialSize)) return false;
     if (!createCompositionTree()) return false;
     if (!createQtRenderPath()) return false;

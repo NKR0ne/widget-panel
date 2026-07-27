@@ -304,6 +304,46 @@ if ($Deploy -or $runtimeMissing) {
     Invoke-NativeCommand -FilePath "$QtDir\bin\windeployqt.exe" -Arguments @('--qmldir', (Join-Path $root 'qml'), $exe) -WorkingDirectory $root -TimeoutSeconds 120
 }
 
+# WindowsAppSDK runtime for --composition. Without both halves of this the
+# composition path dies with REGDB_E_CLASSNOTREG (0x80040154) the moment it
+# activates a Compositor: the DLLs alone are not enough, because unpackaged
+# WinRT activation resolves through a registration-free manifest, not the
+# registry.
+if (Test-Path (Join-Path $vendorSdk 'x64\wuceffectsi.dll')) {
+    Copy-Item (Join-Path $vendorSdk 'x64\*.dll') $build -Force
+
+    $mt = 'C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\mt.exe'
+    $merged = Join-Path $build 'winappsdk-activation.manifest'
+    Invoke-NativeCommand -FilePath $mt -Arguments @(
+        '-nologo',
+        '-manifest', (Join-Path $vendorSdk 'manifests\Microsoft.WindowsAppSdk.Foundation.manifest'),
+                     (Join-Path $vendorSdk 'manifests\Microsoft.InteractiveExperiences.manifest'),
+        "-out:$merged") -WorkingDirectory $build -TimeoutSeconds 60
+
+    # mt.exe emits a nameless <file> when merging these two. An empty name is
+    # invalid SxS and the loader rejects the whole assembly for it -- the exe
+    # then fails at CreateProcess with "side-by-side configuration is
+    # incorrect", before a line of main() runs.
+    [xml]$mx = Get-Content $merged
+    $nsm = New-Object System.Xml.XmlNamespaceManager($mx.NameTable)
+    $nsm.AddNamespace('a', 'urn:schemas-microsoft-com:asm.v1')
+    $dropped = 0
+    foreach ($n in @($mx.SelectNodes('//a:file', $nsm))) {
+        if ([string]::IsNullOrWhiteSpace($n.GetAttribute('name'))) {
+            $n.ParentNode.RemoveChild($n) | Out-Null; $dropped++
+        }
+    }
+    if ($dropped) { $mx.Save($merged) }
+
+    # Merge INTO the existing embedded manifest rather than replacing it: Qt's
+    # manifest carries the DPI-awareness and comctl32 declarations, and losing
+    # those would break the windowed path in order to fix the composition one.
+    Invoke-NativeCommand -FilePath $mt -Arguments @(
+        '-nologo', "-inputresource:$exe;#1", '-manifest', $merged,
+        "-outputresource:$exe;#1") -WorkingDirectory $build -TimeoutSeconds 60
+    Write-Host 'WindowsAppSDK runtime staged, activation manifest embedded.' -ForegroundColor DarkGray
+}
+
 if ($Tests) {
     Write-Host 'Testing...' -ForegroundColor Cyan
     Invoke-NativeCommand -FilePath $CTEST -Arguments @(
