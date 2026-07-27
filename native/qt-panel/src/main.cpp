@@ -452,23 +452,34 @@ const QCommandLineOption diagPressReaderOption(
         // well below Fluent's 0.8: that much wash is what made the surface a
         // slab in the first place.
         //
-        // Measured over a warm (golden) region of the wallpaper, which is where
-        // this panel sits:
-        //   0.00  #50493C  hue 39  B-R -20
-        //   0.18  #4E4942  hue 35  B-R -12
-        //   0.35  #4C4948  hue 15  B-R  -4
+        // Measured from ONE screenshot holding both surfaces at the same moment
+        // -- the only comparison that was ever valid here:
         //
-        // More tint pulls toward blue but does not override the backdrop, which
-        // is the point of acrylic. So a panel over a warm part of the wallpaper
-        // reads warmer than a Start menu over a dark part of it, at identical
-        // settings -- part of any side-by-side difference is WHERE each window
-        // sits, not how it is configured. Worth knowing before chasing the
-        // remainder with tint.
+        //   panel gutter      #41403F  hue  30  sat 0.016  B-R  -2
+        //   start left        #424752  hue 221  sat 0.108  B-R +16
+        //   start right pane  #626672  hue 225  sat 0.075  B-R +16
+        //   start lower       #3F4453  hue 225  sat 0.137  B-R +20
+        //
+        // Brightness matched almost exactly (0.251 vs 0.286), so this was never
+        // about lightness. The panel simply had no colour. And Start holds
+        // B-R +16..+20 across three regions over DIFFERENT parts of the
+        // wallpaper: that consistency means its blue is an applied tint strong
+        // enough to dominate the backdrop, not the backdrop showing through.
+        //
+        // Which means reading TintOpacity 0.0 off a fresh DesktopAcrylicController
+        // said nothing about Start. Those are the property's UNSET defaults; the
+        // shell configures its own. The same caveat was noted for TintColor and
+        // then not applied to the opacities.
+        //
+        // From the sweep over this wallpaper, B-R ~= -20 + 45*t, so B-R +18
+        // needs t ~= 0.84 -- essentially Fluent's sc_defaultTintColor alpha of
+        // 0.8. The constant was right all along; what made the surface a slab
+        // earlier was the decorative sheen shaders, since removed.
         const double tintStrength = [&settings] {
             bool ok = false;
             const double v = settings.get(QStringLiteral("wp-composition-tint"),
-                                          QStringLiteral("0.35")).toString().toDouble(&ok);
-            return ok ? qBound(0.0, v, 0.8) : 0.35;
+                                          QStringLiteral("0.8")).toString().toDouble(&ok);
+            return ok ? qBound(0.0, v, 1.0) : 0.8;
         }();
         auto applyTint = [&systemTheme, &compositionHost, tintStrength] {
             const QVariantList palette = systemTheme.accentPalette();
