@@ -46,8 +46,13 @@ QtObject {
         ? Acrylic.effectiveTintAlpha(surfaceTint, systemTintOpacity) : 1.0
 
     // Shell accent ramp: 3 is the base accent, 4 is Start's darker shade.
-    readonly property color accentBase: systemMaterial ? Sys.accentPalette[3] : accent
-    readonly property color accentLight: systemMaterial ? Sys.accentPalette[2] : accent
+    // The composition path is palette-driven too: its backdrop is the shell's
+    // own acrylic, so neutral white card fills over it read as grey slabs
+    // pasted onto a coloured surface rather than as part of it.
+    readonly property bool paletteDriven: (systemMaterial || compositionMaterial)
+                                          && Sys.accentPalette.length >= 8
+    readonly property color accentBase: paletteDriven ? Sys.accentPalette[3] : accent
+    readonly property color accentLight: paletteDriven ? Sys.accentPalette[2] : accent
 
     // Mica is a static, desaturated wallpaper sample, so the tint over it can
     // be much lighter than the one needed to tame acrylic's live desktop blur.
@@ -91,13 +96,23 @@ QtObject {
     // material deliberately stacks visible card slabs; keeping our fills here
     // is what stopped Windows mode feeling like the shell, far more than the
     // background tint did.
-    readonly property color cardFill: systemMaterial
+    // On the composition path the backdrop is a dark accent acrylic, so cards
+    // carry the LIGHT end of the same ramp. That is what makes them read as
+    // raised surfaces of one material instead of white film over a coloured
+    // one -- the fill is doing the lifting here, not the stroke.
+    readonly property color cardFill: compositionMaterial
+        ? Qt.rgba(accentLight.r, accentLight.g, accentLight.b, contrastEnabled ? 0.22 : 0.15)
+        : systemMaterial
         ? Qt.rgba(1, 1, 1, 0.035)
         : Qt.rgba(1, 1, 1, contrastEnabled ? 0.09 : 0.075)
-    readonly property color cardStroke: systemMaterial
+    readonly property color cardStroke: compositionMaterial
+        ? Qt.rgba(accentLight.r, accentLight.g, accentLight.b, contrastEnabled ? 0.30 : 0.18)
+        : systemMaterial
         ? Qt.rgba(1, 1, 1, 0.055)
         : Qt.rgba(1, 1, 1, contrastEnabled ? 0.20 : 0.10)
-    readonly property color cardHoverFill: systemMaterial
+    readonly property color cardHoverFill: compositionMaterial
+        ? Qt.rgba(accentLight.r, accentLight.g, accentLight.b, contrastEnabled ? 0.30 : 0.22)
+        : systemMaterial
         ? Qt.rgba(1, 1, 1, 0.07)
         : Qt.rgba(1, 1, 1, contrastEnabled ? 0.13 : 0.11)
     readonly property color keyline: Qt.rgba(0.91, 0.94, 1.0, contrastEnabled ? 0.34 : 0.16)

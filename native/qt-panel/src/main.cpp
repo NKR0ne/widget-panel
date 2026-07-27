@@ -419,7 +419,12 @@ const QCommandLineOption diagPressReaderOption(
         // so there is no double-tinting to compensate for.
         auto applyTint = [&systemTheme, &compositionHost] {
             const QVariantList palette = systemTheme.accentPalette();
-            const QColor tint = palette.size() >= 6 ? palette.at(5).value<QColor>()
+            // AccentDark3 rather than AccentDark2: the cards now carry the light
+            // end of the same ramp, so the backdrop takes the dark end to give
+            // them something to sit against. AccentDark2 is what matched Start's
+            // bare surface, but Start has no stacked card slabs over it.
+            const QColor tint = palette.size() >= 7 ? palette.at(6).value<QColor>()
+                              : palette.size() >= 6 ? palette.at(5).value<QColor>()
                                                     : QColor(0x34, 0x3C, 0x51);
             compositionHost->setTint(tint, 0.8f, 0.85f);
             compositionHost->setDarkTheme(!systemTheme.lightTheme());

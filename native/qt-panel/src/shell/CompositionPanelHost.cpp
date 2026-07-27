@@ -15,8 +15,10 @@
 #include <winrt/Microsoft.UI.Input.h>
 #include <winrt/Microsoft.UI.Composition.Interop.h>
 
+#include <QAnimationDriver>
 #include <QColor>
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QDebug>
 #include <QMouseEvent>
 #include <QQmlComponent>
@@ -37,7 +39,33 @@ namespace mgdx = winrt::Microsoft::Graphics::DirectX;
 namespace {
 constexpr wchar_t kWindowClass[] = L"WidgetPanelCompositionHost";
 CompositionPanelHost* g_activeHost = nullptr;
-}
+
+// Qt drives animations from the render loop of a real QQuickWindow. A
+// QQuickRenderControl window has no swap chain and therefore no such clock, so
+// without this every QML animation AND the panel slide fall back to a generic
+// timer that is not synchronised with when we actually present -- which reads
+// exactly as "less instant, less smooth" even though the frame rate looks fine.
+class RenderLoopAnimationDriver : public QAnimationDriver
+{
+public:
+    explicit RenderLoopAnimationDriver(QObject* parent = nullptr) : QAnimationDriver(parent)
+    {
+        m_timer.start();
+    }
+
+    void advance() override
+    {
+        m_elapsed = m_timer.elapsed();
+        advanceAnimation();
+    }
+
+    qint64 elapsed() const override { return m_elapsed; }
+
+private:
+    QElapsedTimer m_timer;
+    qint64 m_elapsed = 0;
+};
+} // namespace
 
 // WinRT types are kept out of the header so translation units that merely
 // include this class do not need the C++/WinRT projections on their include
@@ -62,6 +90,7 @@ struct CompositionPanelHost::Private
     // still reports success while no event is ever delivered.
     muinput::InputPointerSource pointerSource{ nullptr };
 
+    RenderLoopAnimationDriver* animationDriver = nullptr;
     int pixelWidth = 0;
     int pixelHeight = 0;
     bool needsRender = true;
@@ -291,6 +320,13 @@ void CompositionPanelHost::resizeToIsland()
 void CompositionPanelHost::renderFrame()
 {
     if (!m_renderControl || !d->surface || !d->qtTexture) return;
+
+    // Advance animations in step with presentation, before deciding whether
+    // anything changed: advancing is what MAKES the scene change while an
+    // animation is running, so doing it after the needsRender check would stall
+    // every animation the moment the scene went quiet.
+    if (d->animationDriver) d->animationDriver->advance();
+
     if (!d->needsRender) return;
     d->needsRender = false;
 
@@ -416,6 +452,12 @@ bool CompositionPanelHost::initializeInner(QQmlEngine* engine, const QString& ro
     } else {
         qWarning() << "[composition] bridge has no ICompositionSupportsSystemBackdrop";
     }
+
+    // Installed only once the scene is live. Qt takes ownership of the driver
+    // as the application's animation clock; ours advances from renderFrame so
+    // animation time and presentation time cannot drift apart.
+    d->animationDriver = new RenderLoopAnimationDriver(this);
+    d->animationDriver->install();
 
     auto* timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, &CompositionPanelHost::renderFrame);
