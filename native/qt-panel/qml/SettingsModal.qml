@@ -279,6 +279,13 @@ Item {
                 label: "Opacité du panneau"
                 from: 0.3; to: 1.0
                 value: Panel.windowOpacity()
+                // The composition backdrop IS the transparency, and it carries
+                // Start's own luminosity blend. This slider can only reach the
+                // Qt content on that path, so using it thins the panel and its
+                // cards over an unchanged backdrop rather than fading the whole
+                // surface.
+                enabled: !Panel.compositionMode
+                disabledNote: "Géré par le matériau Windows"
                 onMoved: value => Panel.setWindowOpacity(value)
             }
             SettingsSlider {
@@ -292,6 +299,8 @@ Item {
                 width: parent.width
                 label: "Opacité épinglée"
                 from: 0.05; to: 1.0
+                enabled: !Panel.compositionMode
+                disabledNote: "Géré par le matériau Windows"
                 value: Panel.pinnedOpacityValue()
                 onMoved: value => Panel.setPinnedOpacity(value)
             }

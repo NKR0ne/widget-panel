@@ -10,13 +10,29 @@ Item {
     property real value: 0
     signal moved(real value)
 
-    implicitHeight: 34
+    // Item.enabled already blocks the MouseArea; these carry it through to
+    // appearance so a control with no effect reads as inert rather than broken.
+    property string disabledNote: ""
+    opacity: slider.enabled ? 1 : 0.45
+    Behavior on opacity { NumberAnimation { duration: Motion.fastMs } }
+
+    implicitHeight: disabledNote !== "" && !enabled ? 46 : 34
 
     Text {
         id: caption
         text: slider.label
         color: Theme.textSecondary
         font.pixelSize: Theme.fontSizeCaption
+    }
+    Text {
+        anchors.top: caption.bottom
+        anchors.topMargin: 1
+        width: parent.width
+        visible: !slider.enabled && slider.disabledNote !== ""
+        text: slider.disabledNote
+        color: Theme.textSecondary
+        font.pixelSize: 9
+        elide: Text.ElideRight
     }
     Text {
         anchors.right: parent.right
@@ -65,7 +81,7 @@ Item {
             anchors.fill: parent
             anchors.margins: -8
             hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
+            cursorShape: slider.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
             onPressed: mouse => update(mouse.x - 8)
             onPositionChanged: mouse => { if (pressed) update(mouse.x - 8) }
             function update(mx) {

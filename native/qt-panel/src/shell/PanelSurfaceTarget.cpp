@@ -83,13 +83,20 @@ void CompositionSurfaceTarget::setX(int x)
                  SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
-void CompositionSurfaceTarget::setOpacity(qreal o)
+void CompositionSurfaceTarget::setOpacity(qreal)
 {
-    // Not SetLayeredWindowAttributes: a layered window has a redirection
-    // surface, which is the opposite of what WS_EX_NOREDIRECTIONBITMAP asks
-    // for, and the two do not combine. Opacity belongs on the composition root
-    // visual, where it also composites correctly against the acrylic behind it.
-    if (m_host) m_host->setRootOpacity(static_cast<float>(o));
+    // Ignored on purpose. In the windowed path QWindow::setOpacity fades the
+    // whole window, backdrop included. Here the only thing it can reach is the
+    // composition root visual, which holds the Qt content -- the acrylic lives
+    // on the bridge behind it and stays at full strength. So the same setting
+    // that used to make the panel evenly translucent instead makes the CONTENT
+    // faint over an unchanged backdrop, and it re-applied on every show, which
+    // is why the panel and cards came back fainter after sliding in and out.
+    //
+    // The acrylic is the transparency mechanism now: it has Start's own
+    // luminosity blend and nothing should be layered on top competing with it.
+    // The sliders are disabled in this mode rather than silently ignored.
+    if (m_host) m_host->setRootOpacity(1.0f);
 }
 
 void CompositionSurfaceTarget::show()
