@@ -417,19 +417,27 @@ const QCommandLineOption diagPressReaderOption(
         // Unlike the in-scene path, these are Fluent's own constants used as
         // intended: DesktopAcrylicController applies the recipe once, itself,
         // so there is no double-tinting to compensate for.
+        // Read out of DesktopAcrylicController itself (composition-spike
+        // --defaults), NOT from documentation or memory:
+        //
+        //   Base (what Start uses)  TintOpacity 0.000  LuminosityOpacity 0.900
+        //   Thin (flyouts, menus)   TintOpacity 0.000  LuminosityOpacity 0.440
+        //
+        // Start applies NO tint wash. Its whole character is the luminosity
+        // blend -- the layer that re-maps the backdrop's brightness rather than
+        // covering it, which is exactly the "amplifies light while blurring"
+        // quality we could never reproduce by compositing over a finished
+        // surface. Overriding these to 0.8/0.85, as this did, is close to
+        // inverting the recipe.
+        //
+        // So: do not override them. Leaving the controller alone means the
+        // material IS Start's material, by construction rather than by
+        // approximation. Only the theme is set, because that is what the
+        // controller resolves its internal colours against.
         auto applyTint = [&systemTheme, &compositionHost] {
-            const QVariantList palette = systemTheme.accentPalette();
-            // AccentDark3 rather than AccentDark2: the cards now carry the light
-            // end of the same ramp, so the backdrop takes the dark end to give
-            // them something to sit against. AccentDark2 is what matched Start's
-            // bare surface, but Start has no stacked card slabs over it.
-            const QColor tint = palette.size() >= 7 ? palette.at(6).value<QColor>()
-                              : palette.size() >= 6 ? palette.at(5).value<QColor>()
-                                                    : QColor(0x34, 0x3C, 0x51);
-            compositionHost->setTint(tint, 0.8f, 0.85f);
             compositionHost->setDarkTheme(!systemTheme.lightTheme());
-            qInfo() << "[composition] tint" << tint.name()
-                    << "dark" << !systemTheme.lightTheme();
+            qInfo() << "[composition] using DesktopAcrylicController defaults; dark"
+                    << !systemTheme.lightTheme();
         };
         applyTint();
         // Follow accent and light/dark changes live, the same way the in-scene

@@ -131,6 +131,46 @@ int run(int argc, char** argv)
 
     std::printf("[spike] self-contained: no bootstrapper, runtime is beside the exe\n");
 
+    // --defaults reads the values Windows itself ships for each acrylic kind,
+    // rather than trusting anybody's recollection of the documentation. Start
+    // uses the Base kind, so these are the numbers to match against.
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) != "--defaults") continue;
+        winrt::init_apartment(winrt::apartment_type::single_threaded);
+        auto dqLocal = winrt::Microsoft::UI::Dispatching::DispatcherQueueController::CreateOnCurrentThread();
+        const struct { backdrops::DesktopAcrylicKind kind; const char* name; } kinds[] = {
+            { backdrops::DesktopAcrylicKind::Base, "Base (Start menu)" },
+            { backdrops::DesktopAcrylicKind::Thin, "Thin" },
+        };
+        // Defaults are theme-dependent, and a controller with no configuration
+        // reports the light-theme ones -- which are not the numbers this panel
+        // needs.
+        const struct { backdrops::SystemBackdropTheme theme; const char* name; } themes[] = {
+            { backdrops::SystemBackdropTheme::Light, "Light" },
+            { backdrops::SystemBackdropTheme::Dark,  "Dark" },
+        };
+        for (const auto& k : kinds) {
+            for (const auto& t : themes) {
+                backdrops::SystemBackdropConfiguration cfg{};
+                cfg.IsInputActive(true);
+                cfg.Theme(t.theme);
+                backdrops::DesktopAcrylicController c{};
+                c.Kind(k.kind);
+                c.SetSystemBackdropConfiguration(cfg);
+                const auto tint = c.TintColor();
+                const auto fallback = c.FallbackColor();
+                std::printf("\n%s / %s\n", k.name, t.name);
+                std::printf("  TintColor          #%02X%02X%02X  alpha %u\n",
+                            tint.R, tint.G, tint.B, tint.A);
+                std::printf("  TintOpacity        %.3f\n", c.TintOpacity());
+                std::printf("  LuminosityOpacity  %.3f\n", c.LuminosityOpacity());
+                std::printf("  FallbackColor      #%02X%02X%02X  alpha %u\n",
+                            fallback.R, fallback.G, fallback.B, fallback.A);
+            }
+        }
+        return 0;
+    }
+
     winrt::init_apartment(winrt::apartment_type::single_threaded);
 
     // A Compositor requires a DispatcherQueue on the calling thread.
