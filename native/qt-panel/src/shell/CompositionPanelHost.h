@@ -63,6 +63,11 @@ public:
     void setTint(const QColor& tint, float tintOpacity, float luminosityOpacity);
     void setDarkTheme(bool dark);
 
+    // Applied to the composition root visual rather than via a layered window:
+    // WS_EX_NOREDIRECTIONBITMAP and WS_EX_LAYERED are mutually exclusive in
+    // practice, and this composites correctly against the backdrop behind it.
+    void setRootOpacity(float opacity);
+
     bool isValid() const { return m_valid; }
 
 signals:

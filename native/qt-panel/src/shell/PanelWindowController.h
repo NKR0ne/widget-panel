@@ -9,9 +9,12 @@
 #include <QPropertyAnimation>
 #include <QVariantMap>
 
+#include <memory>
+
 #include "FocusPolicy.h"
 #include "WorkAreaWatcher.h"
 
+class PanelSurfaceTarget;
 class QQuickWindow;
 class QQuickWebEngineProfile;
 
@@ -42,12 +45,26 @@ class PanelWindowController : public QObject {
     Q_PROPERTY(bool islandCanGoForward READ islandCanGoForward NOTIFY islandChanged)
     Q_PROPERTY(QString islandReadyState READ islandReadyState NOTIFY islandChanged)
     Q_PROPERTY(bool micaBackdrop READ micaBackdrop WRITE setMicaBackdrop NOTIFY micaBackdropChanged)
+    // Drives the slide. A property on the controller rather than on the window,
+    // because the composition path has no QWindow to animate -- one slide
+    // implementation serves both.
+    Q_PROPERTY(int surfaceX READ surfaceX WRITE setSurfaceX)
 
 public:
     PanelWindowController(SettingsStore* settings, HelperServer* helper,
                           QQuickWebEngineProfile* webProfile, QObject* parent = nullptr);
+    // Defined out of line: m_target is a unique_ptr to a forward-declared type,
+    // so the destructor must be emitted where PanelSurfaceTarget is complete.
+    ~PanelWindowController() override;
 
     void attach(QQuickWindow* window);
+
+    // Composition path: the scene is hosted in an HWND with no QWindow, so the
+    // controller is handed a target directly. Takes ownership.
+    void attachTarget(PanelSurfaceTarget* target, QQuickWindow* sceneWindow);
+
+    int surfaceX() const;
+    void setSurfaceX(int x);
     // Lets the backdrop follow the system transparency preference live. Must be
     // called before attach() so the first chrome application already honours it.
     void setSystemTheme(SystemTheme* theme);
@@ -174,6 +191,11 @@ private:
     QQuickWebEngineProfile* m_webProfile = nullptr;
     QHash<QString, QNetworkCookie> m_webCookies;
     QPointer<QQuickWindow> m_window;
+    // Every window operation goes through this rather than m_window directly,
+    // so the composition path (which has no QWindow) shares one implementation
+    // of the geometry, slide and pin logic instead of duplicating it.
+    // Owned; created by attach() or attachTarget().
+    std::unique_ptr<PanelSurfaceTarget> m_target;
     WorkAreaWatcher m_workArea;
     FocusPolicy m_focus;
 

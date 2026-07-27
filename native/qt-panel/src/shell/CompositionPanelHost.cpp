@@ -47,6 +47,7 @@ struct CompositionPanelHost::Private
     winrt::com_ptr<ID3D11Device> device;
     winrt::com_ptr<ID3D11DeviceContext> context;
     winrt::com_ptr<ID3D11Texture2D> qtTexture;
+    mucomp::ContainerVisual rootVisual{ nullptr };
 
     winrt::Microsoft::UI::Dispatching::DispatcherQueueController dq{ nullptr };
     mucomp::Compositor compositor{ nullptr };
@@ -135,6 +136,7 @@ bool CompositionPanelHost::createCompositionTree()
     d->bridge.ResizePolicy(content::ContentSizePolicy::ResizeContentToParentWindow);
 
     auto root = d->compositor.CreateContainerVisual();
+    d->rootVisual = root;
     root.RelativeSizeAdjustment({ 1.0f, 1.0f });
     d->island = content::ContentIsland::Create(root);
     d->bridge.Connect(d->island);
@@ -330,6 +332,11 @@ void CompositionPanelHost::setTint(const QColor& tint, float tintOpacity, float 
         static_cast<uint8_t>(tint.blue()) });
     d->acrylic.TintOpacity(tintOpacity);
     d->acrylic.LuminosityOpacity(luminosityOpacity);
+}
+
+void CompositionPanelHost::setRootOpacity(float opacity)
+{
+    if (d->rootVisual) d->rootVisual.Opacity(qBound(0.0f, opacity, 1.0f));
 }
 
 void CompositionPanelHost::setDarkTheme(bool dark)

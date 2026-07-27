@@ -19,6 +19,8 @@
 #include <QQuickWindow>
 #include <QScreen>
 #include <QSGRendererInterface>
+
+#include "PanelSurfaceTarget.h"
 #include <QSettings>
 #include <QStandardPaths>
 #include <QtWebEngineCore/QWebEngineCookieStore>
@@ -47,7 +49,7 @@ PanelWindowController::PanelWindowController(SettingsStore* settings, HelperServ
     m_hideFallback.setSingleShot(true);
     connect(&m_hideFallback, &QTimer::timeout, this, &PanelWindowController::completeHide);
 
-    m_slideAnimation.setPropertyName("x");
+    m_slideAnimation.setPropertyName("surfaceX");
     connect(&m_slideAnimation, &QPropertyAnimation::finished, this, [this] {
         if (m_hiding)
             completeHide();
@@ -63,7 +65,7 @@ PanelWindowController::PanelWindowController(SettingsStore* settings, HelperServ
     m_helperStateDelay.setSingleShot(true);
     m_helperStateDelay.setInterval(350);
     connect(&m_helperStateDelay, &QTimer::timeout, this, [this] {
-        if (m_helper && m_window && m_window->isVisible()) {
+        if (m_helper && m_target && m_target->isVisible()) {
             m_helper->sendState(true);
             notifyHelperHwnds();
         }
@@ -103,7 +105,12 @@ PanelWindowController::PanelWindowController(SettingsStore* settings, HelperServ
 void PanelWindowController::attach(QQuickWindow* window)
 {
     m_window = window;
-    m_slideAnimation.setTargetObject(window);
+    m_target = std::make_unique<QQuickWindowTarget>(window);
+    // Animate the controller's own surfaceX, not the window's x. The
+    // composition path has no QWindow to animate, and routing both through one
+    // property keeps a single slide implementation instead of two that have to
+    // stay in step.
+    m_slideAnimation.setTargetObject(this);
     window->setFlags(Qt::FramelessWindowHint | Qt::Tool | Qt::WindowStaysOnTopHint);
     window->setColor(Qt::transparent);
     applyWorkArea();
@@ -130,11 +137,11 @@ void PanelWindowController::attach(QQuickWindow* window)
         connect(m_helper, &HelperServer::toggleRequested, this, &PanelWindowController::togglePanel);
         connect(m_helper, &HelperServer::clickOutside, this, &PanelWindowController::onClickOutside);
         connect(m_helper, &HelperServer::helperReady, this, [this] {
-            m_helper->sendState(m_window && m_window->isVisible());
+            m_helper->sendState(m_target && m_target->isVisible());
             notifyHelperHwnds();
         });
         connect(m_helper, &HelperServer::clientConnected, this, [this] {
-            m_helper->sendState(m_window && m_window->isVisible());
+            m_helper->sendState(m_target && m_target->isVisible());
         });
     }
 
@@ -142,31 +149,81 @@ void PanelWindowController::attach(QQuickWindow* window)
     emit pinnedChanged();
 }
 
+PanelWindowController::~PanelWindowController() = default;
+
+int PanelWindowController::surfaceX() const
+{
+    return m_target ? m_target->x() : 0;
+}
+
+void PanelWindowController::setSurfaceX(int x)
+{
+    if (m_target) m_target->setX(x);
+}
+
+void PanelWindowController::attachTarget(PanelSurfaceTarget* target, QQuickWindow* sceneWindow)
+{
+    m_target.reset(target);
+    // Deliberately NOT assigning m_window: it gates the DWM backdrop calls,
+    // which must not run here. In composition mode the material comes from
+    // DesktopAcrylicController, and this scene window has no native surface for
+    // DWM to act on anyway.
+    m_slideAnimation.setTargetObject(this);
+    applyWorkArea();
+
+    m_followSystemMaterial =
+        m_settings->get(QStringLiteral("wp-follow-system-material")).toString()
+        == QLatin1String("true");
+    emit micaBackdropChanged();
+
+    if (sceneWindow) {
+        connect(sceneWindow, &QQuickWindow::sceneGraphInitialized,
+                this, &PanelWindowController::resolveGraphicsApiName, Qt::QueuedConnection);
+    }
+    connect(&m_workArea, &WorkAreaWatcher::workAreaChanged, this, [this] { applyWorkArea(); });
+
+    if (m_helper) {
+        connect(m_helper, &HelperServer::toggleRequested, this, &PanelWindowController::togglePanel);
+        connect(m_helper, &HelperServer::clickOutside, this, &PanelWindowController::onClickOutside);
+        connect(m_helper, &HelperServer::helperReady, this, [this] {
+            m_helper->sendState(m_target && m_target->isVisible());
+            notifyHelperHwnds();
+        });
+        connect(m_helper, &HelperServer::clientConnected, this, [this] {
+            m_helper->sendState(m_target && m_target->isVisible());
+        });
+    }
+
+    m_pinned = m_settings->get(QStringLiteral("wp-pinned"), false).toBool();
+    emit pinnedChanged();
+    qInfo() << "[composition] controller attached to composition target";
+}
+
 void PanelWindowController::showPanel()
 {
-    if (!m_window || m_window->isVisible() || m_showAnimating)
+    if (!m_target || m_target->isVisible() || m_showAnimating)
         return;
     m_showAnimating = true;
     m_hiding = false;
     m_hideFallback.stop();
     m_focus.noteToggle();
 
-    m_window->setOpacity(m_pinned ? pinnedOpacity() : windowOpacity());
+    m_target->setOpacity(m_pinned ? pinnedOpacity() : windowOpacity());
     applyWorkArea();
-    const int restingX = m_window->x();
+    const int restingX = m_target->x();
     const int hiddenX = hiddenWindowX();
     m_slideAnimation.stop();
     m_slideAnimation.setDuration(slideDuration());
     m_slideAnimation.setEasingCurve(QEasingCurve::OutCubic);
     m_slideAnimation.setStartValue(hiddenX);
     m_slideAnimation.setEndValue(restingX);
-    m_window->setX(hiddenX);
-    m_window->show();
-    m_window->raise();
+    m_target->setX(hiddenX);
+    m_target->show();
+    m_target->raise();
     if (!m_pinned) {
         QTimer::singleShot(150, this, [this] {
-            if (m_window && m_window->isVisible())
-                m_window->requestActivate();
+            if (m_target && m_target->isVisible())
+                m_target->requestActivate();
         });
     }
     setPanelVisibleState(true);
@@ -176,7 +233,7 @@ void PanelWindowController::showPanel()
 
 void PanelWindowController::hidePanel(bool force)
 {
-    if (!m_window || !m_window->isVisible() || m_hiding)
+    if (!m_target || !m_target->isVisible() || m_hiding)
         return;
     if (!force && QDateTime::currentMSecsSinceEpoch() < m_geometryLockUntil) {
         qInfo() << "[panel] geometry lock — skip hide";
@@ -190,7 +247,7 @@ void PanelWindowController::hidePanel(bool force)
     m_slideAnimation.stop();
     m_slideAnimation.setDuration(slideDuration());
     m_slideAnimation.setEasingCurve(QEasingCurve::InCubic);
-    m_slideAnimation.setStartValue(m_window->x());
+    m_slideAnimation.setStartValue(m_target->x());
     m_slideAnimation.setEndValue(hiddenWindowX());
     m_slideAnimation.start();
     m_hideFallback.start(slideDuration() + 160);
@@ -203,10 +260,10 @@ void PanelWindowController::completeHide()
     m_hiding = false;
     m_showAnimating = false;
     m_hideFallback.stop();
-    if (!m_window)
+    if (!m_target)
         return;
-    m_window->hide();
-    m_window->setOpacity(m_pinned ? pinnedOpacity() : windowOpacity());
+    m_target->hide();
+    m_target->setOpacity(m_pinned ? pinnedOpacity() : windowOpacity());
     if (m_helper)
         m_helper->sendState(false);
     setPanelVisibleState(false);
@@ -214,11 +271,11 @@ void PanelWindowController::completeHide()
 
 int PanelWindowController::hiddenWindowX() const
 {
-    if (!m_window)
+    if (!m_target)
         return -kMinPanelWidth - 2;
-    const QScreen* screen = m_window->screen();
+    const QScreen* screen = m_target->screen();
     const int screenLeft = screen ? screen->geometry().left() : m_workArea.workArea().left();
-    return screenLeft - m_window->width() - 2;
+    return screenLeft - m_target->width() - 2;
 }
 
 int PanelWindowController::slideDuration() const
@@ -229,10 +286,10 @@ int PanelWindowController::slideDuration() const
 
 void PanelWindowController::togglePanel()
 {
-    if (!m_window)
+    if (!m_target)
         return;
     m_focus.noteToggle();
-    if (m_window->isVisible())
+    if (m_target->isVisible())
         hidePanel();
     else
         showPanel();
@@ -242,8 +299,8 @@ void PanelWindowController::togglePin()
 {
     m_pinned = !m_pinned;
     m_settings->set(QStringLiteral("wp-pinned"), m_pinned);
-    if (m_window && m_window->isVisible())
-        m_window->setOpacity(m_pinned ? pinnedOpacity() : windowOpacity());
+    if (m_target && m_target->isVisible())
+        m_target->setOpacity(m_pinned ? pinnedOpacity() : windowOpacity());
     emit pinnedChanged();
     notifyHelperHwnds();
 }
@@ -258,16 +315,16 @@ void PanelWindowController::setModalOpen(bool open)
 
 void PanelWindowController::onActiveChanged()
 {
-    if (!m_window || m_window->isActive())
+    if (!m_target || m_target->isActive())
         return;
-    if (m_pinned || !m_window->isVisible() || m_hiding || m_islandOpen)
+    if (m_pinned || !m_target->isVisible() || m_hiding || m_islandOpen)
         return;
     if (!m_focus.blurMayHide())
         return;
     QTimer::singleShot(FocusPolicy::kRecheckDelayMs, this, [this] {
-        if (!m_window || !m_window->isVisible() || m_pinned || m_hiding)
+        if (!m_target || !m_target->isVisible() || m_pinned || m_hiding)
             return;
-        if (m_window->isActive())
+        if (m_target->isActive())
             return;
         if (!m_focus.delayedCheckAllowsHide())
             return;
@@ -280,7 +337,7 @@ void PanelWindowController::onClickOutside()
     if (m_pinned)
         return;
     QTimer::singleShot(FocusPolicy::kRecheckDelayMs, this, [this] {
-        if (!m_window || !m_window->isVisible() || m_pinned || m_hiding)
+        if (!m_target || !m_target->isVisible() || m_pinned || m_hiding)
             return;
         if (!m_focus.delayedCheckAllowsHide())
             return;
@@ -290,16 +347,16 @@ void PanelWindowController::onClickOutside()
 
 void PanelWindowController::startResize()
 {
-    if (!m_window || m_resizeTimer.isActive())
+    if (!m_target || m_resizeTimer.isActive())
         return;
     m_resizeStartX = QCursor::pos().x();
-    m_resizeStartW = m_window->width();
+    m_resizeStartW = m_target->width();
     m_resizeTimer.start();
 }
 
 void PanelWindowController::onResizeTick()
 {
-    if (!m_window) {
+    if (!m_target) {
         m_resizeTimer.stop();
         return;
     }
@@ -309,7 +366,7 @@ void PanelWindowController::onResizeTick()
     const int newW = qBound(kMinPanelWidth,
                             m_resizeStartW + (QCursor::pos().x() - m_resizeStartX),
                             maxWidth);
-    m_window->setGeometry(screen.x() + kPanelHorizontalGap,
+    m_target->setGeometry(screen.x() + kPanelHorizontalGap,
                           wa.y() + kPanelVerticalGap,
                           newW, wa.height() - kPanelVerticalGap * 2);
 }
@@ -321,13 +378,13 @@ void PanelWindowController::endResize()
     m_resizeTimer.stop();
     // Only base remembers a dragged width. Stage modes are sized from their own
     // column count, so storing their width here would widen base as well.
-    if (m_window && m_mode == QLatin1String("base"))
-        m_settings->set(QStringLiteral("wp-width"), m_window->width());
+    if (m_target && m_mode == QLatin1String("base"))
+        m_settings->set(QStringLiteral("wp-width"), m_target->width());
 }
 
 bool PanelWindowController::fitMode(const QString& mode, int columnCount, const QVariantMap& colWidths)
 {
-    if (!m_window)
+    if (!m_target)
         return false;
     const bool stage = mode != QLatin1String("base");
     const int width = basePanelWidth(columnCount, colWidths);
@@ -342,17 +399,17 @@ bool PanelWindowController::fitMode(const QString& mode, int columnCount, const 
         m_settings->set(QStringLiteral("wp-width"), width);
     const QRect wa = m_workArea.workArea();
     const QRect screen = m_workArea.screenGeometry();
-    m_window->setGeometry(screen.x() + kPanelHorizontalGap,
+    m_target->setGeometry(screen.x() + kPanelHorizontalGap,
                           wa.y() + kPanelVerticalGap,
                           width, wa.height() - kPanelVerticalGap * 2);
     m_focus.noteToggle();
     notifyHelperHwnds();
-    const bool applied = qAbs(m_window->width() - width) <= 2;
-    const int leftGap = m_window->x() - screen.x();
+    const bool applied = qAbs(m_target->width() - width) <= 2;
+    const int leftGap = m_target->x() - screen.x();
     const int rightGap = screen.x() + screen.width()
-        - (m_window->x() + m_window->width());
+        - (m_target->x() + m_target->width());
     qInfo() << "[panel] fit-mode" << mode << "stage=" << stage
-            << "width=" << width << "actual=" << m_window->width()
+            << "width=" << width << "actual=" << m_target->width()
             << "left-gap=" << leftGap << "right-gap=" << rightGap
             << "screen=" << screen << "work-area=" << wa
             << "ok=" << applied;
@@ -444,7 +501,7 @@ void PanelWindowController::openPressReader(const QString& url)
 
 void PanelWindowController::openSpotlight(const QString& url, const QString& kind)
 {
-    if (!m_window || url.trimmed().isEmpty() || !m_webProfile)
+    if (!m_target || url.trimmed().isEmpty() || !m_webProfile)
         return;
     QString target = url.trimmed();
     if (!target.startsWith(QLatin1String("http"))
@@ -454,13 +511,13 @@ void PanelWindowController::openSpotlight(const QString& url, const QString& kin
     const QRect screen = m_workArea.screenGeometry();
     const int fullWidth = fullPanelWidth();
     if (!m_islandOpen)
-        m_islandRestoreWidth = m_window->width();
+        m_islandRestoreWidth = m_target->width();
     m_islandPanelWidth = fullWidth / 2;
     const int height = wa.height() - kPanelVerticalGap * 2;
 
     m_focus.noteBrowserOpened();
     m_geometryLockUntil = QDateTime::currentMSecsSinceEpoch() + 700;
-    m_window->setGeometry(screen.x() + kPanelHorizontalGap,
+    m_target->setGeometry(screen.x() + kPanelHorizontalGap,
                           wa.y() + kPanelVerticalGap,
                           fullWidth, height);
 
@@ -648,14 +705,14 @@ void PanelWindowController::closeIsland()
     m_islandCanGoForward = false;
     m_islandReadyState.clear();
     emit islandChanged();
-    if (m_window) {
+    if (m_target) {
         const QRect wa = m_workArea.workArea();
         const QRect screen = m_workArea.screenGeometry();
         const int width = qMax(kMinPanelWidth,
                                m_islandRestoreWidth > 0
                                    ? m_islandRestoreWidth
                                    : m_islandPanelWidth);
-        m_window->setGeometry(screen.x() + kPanelHorizontalGap,
+        m_target->setGeometry(screen.x() + kPanelHorizontalGap,
                               wa.y() + kPanelVerticalGap,
                               qMin(width, fullPanelWidth()),
                               wa.height() - kPanelVerticalGap * 2);
@@ -676,16 +733,16 @@ void PanelWindowController::setWindowOpacity(double value)
     const double clamped = qBound(0.1, value, 1.0);
     // Stored as a string for Electron-store compatibility.
     m_settings->set(QStringLiteral("wp-opacity"), QString::number(clamped));
-    if (m_window && m_window->isVisible() && !m_pinned)
-        m_window->setOpacity(clamped);
+    if (m_target && m_target->isVisible() && !m_pinned)
+        m_target->setOpacity(clamped);
 }
 
 void PanelWindowController::setPinnedOpacity(double value)
 {
     const double clamped = qBound(0.05, value, 1.0);
     m_settings->set(QStringLiteral("wp-pinned-opacity"), QString::number(clamped));
-    if (m_window && m_window->isVisible() && m_pinned)
-        m_window->setOpacity(clamped);
+    if (m_target && m_target->isVisible() && m_pinned)
+        m_target->setOpacity(clamped);
 }
 
 bool PanelWindowController::autostart() const
@@ -790,17 +847,17 @@ void PanelWindowController::quit()
 
 void PanelWindowController::applyWorkArea()
 {
-    if (!m_window)
+    if (!m_target)
         return;
     const QRect wa = m_workArea.workArea();
     const QRect screen = m_workArea.screenGeometry();
     // While visible keep the current width (a manual resize is authoritative);
     // otherwise — the show path — size for the mode that is actually on screen.
-    const int current = (m_panelVisible && m_window->width() >= kMinPanelWidth)
-        ? m_window->width()
+    const int current = (m_panelVisible && m_target->width() >= kMinPanelWidth)
+        ? m_target->width()
         : widthForMode(m_mode);
     const int width = qBound(kMinPanelWidth, current, fullPanelWidth());
-    m_window->setGeometry(screen.x() + kPanelHorizontalGap,
+    m_target->setGeometry(screen.x() + kPanelHorizontalGap,
                           wa.y() + kPanelVerticalGap,
                           width, wa.height() - kPanelVerticalGap * 2);
     qInfo() << "[panel] apply-geometry mode=" << m_mode << "width=" << width
@@ -809,8 +866,8 @@ void PanelWindowController::applyWorkArea()
 
 void PanelWindowController::notifyHelperHwnds()
 {
-    if (m_helper && m_window)
-        m_helper->sendHwnds(static_cast<qulonglong>(m_window->winId()));
+    if (m_helper && m_target)
+        m_helper->sendHwnds(static_cast<qulonglong>(m_target->winId()));
 }
 
 void PanelWindowController::setPanelVisibleState(bool visible)
@@ -823,9 +880,9 @@ void PanelWindowController::setPanelVisibleState(bool visible)
 
 void PanelWindowController::resolveGraphicsApiName()
 {
-    if (!m_window)
+    if (!m_target)
         return;
-    const QSGRendererInterface* ri = m_window->rendererInterface();
+    const QSGRendererInterface* ri = m_target->quickWindow() ? m_target->quickWindow()->rendererInterface() : nullptr;
     QString name = QStringLiteral("unknown");
     if (ri) {
         switch (ri->graphicsApi()) {
