@@ -439,37 +439,46 @@ const QCommandLineOption diagPressReaderOption(
         // through the material instead of washing over it. Removing it entirely
         // took the blue out with the slab, which was one correction too many.
         // The opacities stay untouched at Windows' own 0.0 / 0.9.
-        // Whether to tint at all is a real trade-off, so it follows the existing
-        // "Matériau Windows" setting rather than being decided here.
+        // Start DOES tint blue -- with ColorPrevalence on, the shell applies the
+        // accent to it. An earlier theory that Start preserves the backdrop's
+        // own hue was wrong: leaving the controller neutral makes the panel pick
+        // up the wallpaper and read grey-olive next to a Start menu that is
+        // clearly blue. So the accent tint is right, and the difference is
+        // strength rather than colour.
         //
-        // ON  -- touch nothing. Windows' near-neutral dark tint lets the
-        //        BACKDROP'S OWN HUE survive the luminosity blend, so the surface
-        //        picks up whatever is behind it and shifts warm over a warm
-        //        wallpaper. That is exact Start parity, and it is the difference
-        //        that is hard to name when comparing them side by side.
-        // OFF -- tint with AccentDark2. TintColor feeds the luminosity colour
-        //        even at tint opacity 0, so this recolours the material blue
-        //        regardless of what is behind it. Wrong against Start, but it is
-        //        the panel's own identity.
+        // At Windows' default TintOpacity of 0 the accent only reaches the
+        // surface through the luminosity colour, which is a weak path -- enough
+        // to tint, not enough to carry. wp-composition-tint is the lever, held
+        // well below Fluent's 0.8: that much wash is what made the surface a
+        // slab in the first place.
         //
-        // Decided once at startup: TintColor cannot be un-set afterwards, and
-        // Windows' dark default is resolved internally rather than being
-        // readable through the property, so there is nothing to restore it to.
-        const bool neutralMaterial =
-            settings.get(QStringLiteral("wp-follow-system-material")).toString()
-            == QLatin1String("true");
-        auto applyTint = [&systemTheme, &compositionHost, neutralMaterial] {
-            if (neutralMaterial) {
-                qInfo() << "[composition] Windows' own tint (backdrop hue preserved)";
-            } else {
-                const QVariantList palette = systemTheme.accentPalette();
-                const QColor tint = palette.size() >= 6 ? palette.at(5).value<QColor>()
-                                                        : QColor(0x34, 0x3C, 0x51);
-                compositionHost->setTintColor(tint);
-                qInfo() << "[composition] accent tint" << tint.name()
-                        << "(overrides backdrop hue)";
-            }
+        // Measured over a warm (golden) region of the wallpaper, which is where
+        // this panel sits:
+        //   0.00  #50493C  hue 39  B-R -20
+        //   0.18  #4E4942  hue 35  B-R -12
+        //   0.35  #4C4948  hue 15  B-R  -4
+        //
+        // More tint pulls toward blue but does not override the backdrop, which
+        // is the point of acrylic. So a panel over a warm part of the wallpaper
+        // reads warmer than a Start menu over a dark part of it, at identical
+        // settings -- part of any side-by-side difference is WHERE each window
+        // sits, not how it is configured. Worth knowing before chasing the
+        // remainder with tint.
+        const double tintStrength = [&settings] {
+            bool ok = false;
+            const double v = settings.get(QStringLiteral("wp-composition-tint"),
+                                          QStringLiteral("0.35")).toString().toDouble(&ok);
+            return ok ? qBound(0.0, v, 0.8) : 0.35;
+        }();
+        auto applyTint = [&systemTheme, &compositionHost, tintStrength] {
+            const QVariantList palette = systemTheme.accentPalette();
+            const QColor tint = palette.size() >= 6 ? palette.at(5).value<QColor>()
+                                                    : QColor(0x34, 0x3C, 0x51);
+            compositionHost->setTint(tint, static_cast<float>(tintStrength), 0.9f);
             compositionHost->setDarkTheme(!systemTheme.lightTheme());
+            qInfo() << "[composition] tint" << tint.name()
+                    << "strength" << tintStrength << "luminosity 0.9; dark"
+                    << !systemTheme.lightTheme();
         };
         applyTint();
         // Follow accent and light/dark changes live, the same way the in-scene
