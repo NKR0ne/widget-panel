@@ -34,7 +34,11 @@ QtObject {
     // Start is a flat surface: no animated sheen, no cursor-tracked glow. The
     // decorative lighting is scaled back rather than switched off so the panel
     // keeps its own depth cues without reading as a different material.
-    readonly property real lightingScale: systemMaterial ? 0.55 : 1.0
+    // Composition mode goes to zero, not 0.55: the decorative lighting was
+    // calibrated against an opaque background and simply adds white over real
+    // acrylic. Start has no animated sheen or cursor glow.
+    readonly property real lightingScale: compositionMaterial ? 0.0
+                                        : systemMaterial ? 0.55 : 1.0
     // NOT Fluent's 0.8. DWMSBT_TRANSIENTWINDOW is already a finished acrylic
     // surface — DWM has done the blur, luminosity, tint and noise inside its
     // own pipeline. Painting Fluent's full tint on top applies the recipe a

@@ -112,10 +112,14 @@ Item {
     Rectangle {
         id: chrome
         anchors.fill: parent
-        radius: Theme.radiusPanel
+        // On the composition path DWM rounds the window itself, backdrop
+        // included. Drawing our own rounded outline on top of that puts a
+        // rounded border over square-painted content and the corner
+        // tessellation shows as small triangles along the arc.
+        radius: Theme.compositionMaterial ? 0 : Theme.radiusPanel
         color: Theme.bgTint
         border.color: Theme.cardStroke
-        border.width: 1
+        border.width: Theme.compositionMaterial ? 0 : 1
         clip: true
 
         // GPU depth/sheen/grain layer (qsb shader, Vulkan RHI). Behind content;
@@ -124,7 +128,11 @@ Item {
         ShaderEffect {
             id: depthFx
             anchors.fill: parent
-            visible: Ui.surfaceLighting
+            // Off on the composition path. This sheen/glow layer was tuned to
+            // add depth over an opaque bgTint; with the background transparent
+            // it is the brightest thing on the surface and reads as a white
+            // wash over the acrylic. Start has no animated sheen at all.
+            visible: Ui.surfaceLighting && !Theme.compositionMaterial
             property real time: 0
             property real aspect: width / Math.max(1, height)
             property real cursorX: 0.5
@@ -454,10 +462,12 @@ Item {
         }
 
         // Cursor-tracked specular pool over the cards (additive, input-transparent).
+        // Additive, so it only ever adds light -- off on the composition path
+        // for the same reason as the depth layer.
         ShaderEffect {
             anchors.fill: parent
             z: 50
-            visible: Ui.surfaceLighting && Ui.mouseHalo
+            visible: Ui.surfaceLighting && Ui.mouseHalo && !Theme.compositionMaterial
             property real aspect: width / Math.max(1, height)
             property real cursorX: depthFx.cursorX
             property real cursorY: depthFx.cursorY

@@ -1,6 +1,7 @@
 #include "CompositionPanelHost.h"
 
 #include <d3d11.h>
+#include <dwmapi.h>
 
 #include <winrt/base.h>
 #include <winrt/Windows.Foundation.h>
@@ -155,6 +156,17 @@ bool CompositionPanelHost::createHostWindow(const QSize& size)
         qWarning() << "[composition] CreateWindowExW failed:" << GetLastError();
         return false;
     }
+
+    // Round the WINDOW, not the painted surface. The backdrop fills the whole
+    // window rect, so a rounded Rectangle drawn in QML sits over square acrylic
+    // -- the corner tessellation shows through that mismatch as small triangles
+    // on the arc. DWM's own corner preference rounds the window itself,
+    // backdrop included, and gives the same radius the shell uses.
+    const DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
+    const HRESULT hr = DwmSetWindowAttribute(m_hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
+                                             &corner, sizeof(corner));
+    if (FAILED(hr))
+        qWarning() << "[composition] rounded corners unavailable" << Qt::hex << hr;
     return true;
 }
 
