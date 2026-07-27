@@ -103,6 +103,13 @@ LRESULT CALLBACK hostWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     // Pointer input never arrives here: DesktopChildSiteBridge creates its own
     // child window on top, so client-area hit-testing resolves to the bridge.
     // Input comes from InputPointerSource on the island instead.
+    // Acrylic dims to its inactive state when the window is not active, and it
+    // only knows via SystemBackdropConfiguration. Without this the surface
+    // keeps whatever state it was constructed in, so the panel renders one
+    // colour on first launch and a different one once it has been activated --
+    // which reads as the material changing on its own.
+    if (msg == WM_ACTIVATE && g_activeHost)
+        g_activeHost->setInputActive(LOWORD(wp) != WA_INACTIVE);
     if (msg == WM_DESTROY) { PostQuitMessage(0); return 0; }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -112,6 +119,11 @@ LRESULT CALLBACK hostWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 CompositionPanelHost::CompositionPanelHost(QObject* parent)
     : QObject(parent), d(new Private)
 {
+    // Set here, not at the end of initialize(): WM_ACTIVATE can arrive during
+    // ShowWindow, which happens well before initialize() returns, and the
+    // activation state that first message carries is the one the backdrop
+    // starts from.
+    g_activeHost = this;
 }
 
 CompositionPanelHost::~CompositionPanelHost()
@@ -370,6 +382,20 @@ void CompositionPanelHost::setTint(const QColor& tint, float tintOpacity, float 
     d->acrylic.LuminosityOpacity(luminosityOpacity);
 }
 
+void CompositionPanelHost::setTintColor(const QColor& tint)
+{
+    if (!d->acrylic || !tint.isValid()) return;
+    d->acrylic.TintColor(winrt::Windows::UI::Color{
+        255, static_cast<uint8_t>(tint.red()),
+        static_cast<uint8_t>(tint.green()),
+        static_cast<uint8_t>(tint.blue()) });
+}
+
+void CompositionPanelHost::setInputActive(bool active)
+{
+    if (d->config) d->config.IsInputActive(active);
+}
+
 void CompositionPanelHost::setRootOpacity(float opacity)
 {
     if (d->rootVisual) d->rootVisual.Opacity(qBound(0.0f, opacity, 1.0f));
@@ -463,7 +489,9 @@ bool CompositionPanelHost::initializeInner(QQmlEngine* engine, const QString& ro
     connect(timer, &QTimer::timeout, this, &CompositionPanelHost::renderFrame);
     timer->start(8);
 
-    g_activeHost = this;
+    // Seed activation from the real window state rather than assuming active.
+    setInputActive(GetForegroundWindow() == m_hwnd);
+
     m_valid = true;
     qInfo() << "[composition] host ready";
     return true;

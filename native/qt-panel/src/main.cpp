@@ -434,10 +434,19 @@ const QCommandLineOption diagPressReaderOption(
         // material IS Start's material, by construction rather than by
         // approximation. Only the theme is set, because that is what the
         // controller resolves its internal colours against.
+        // TintColor is still set -- it feeds the LUMINOSITY layer as well as the
+        // tint layer, so at Start's tint opacity of 0 it casts the accent
+        // through the material instead of washing over it. Removing it entirely
+        // took the blue out with the slab, which was one correction too many.
+        // The opacities stay untouched at Windows' own 0.0 / 0.9.
         auto applyTint = [&systemTheme, &compositionHost] {
+            const QVariantList palette = systemTheme.accentPalette();
+            const QColor tint = palette.size() >= 6 ? palette.at(5).value<QColor>()
+                                                    : QColor(0x34, 0x3C, 0x51);
+            compositionHost->setTintColor(tint);
             compositionHost->setDarkTheme(!systemTheme.lightTheme());
-            qInfo() << "[composition] using DesktopAcrylicController defaults; dark"
-                    << !systemTheme.lightTheme();
+            qInfo() << "[composition] tint" << tint.name()
+                    << "at Windows' own 0.0/0.9; dark" << !systemTheme.lightTheme();
         };
         applyTint();
         // Follow accent and light/dark changes live, the same way the in-scene

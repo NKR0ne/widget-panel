@@ -60,8 +60,19 @@ public:
 
     // Tint follows the accent palette exactly as the in-scene material does,
     // so the two paths stay visually comparable while both exist.
+    // Colours the material without applying a tint wash. TintColor feeds the
+    // luminosity layer as well as the tint layer, so at Start's own tint
+    // opacity of 0 it still casts colour -- which is how the shell tints
+    // without turning the surface into a slab.
+    void setTintColor(const QColor& tint);
     void setTint(const QColor& tint, float tintOpacity, float luminosityOpacity);
     void setDarkTheme(bool dark);
+
+    // Acrylic has a distinct inactive state, and Windows expects the host to
+    // report activation rather than inferring it. Left unset, the backdrop
+    // keeps whatever state it had at construction, so the panel looks different
+    // before and after it is first activated.
+    void setInputActive(bool active);
 
     // Applied to the composition root visual rather than via a layered window:
     // WS_EX_NOREDIRECTIONBITMAP and WS_EX_LAYERED are mutually exclusive in
