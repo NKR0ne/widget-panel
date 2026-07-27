@@ -4,7 +4,11 @@ project(qtpanel VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Quick QuickControls2 QuickEffects Quick3D Network Xml Multimedia ShaderTools WebEngineQuick)
+# GuiPrivate is requested explicitly: the composition path has no native window,
+# so input is injected through QWindowSystemInterface, which lives in the QPA
+# private headers. Gui itself arrives transitively via Quick, but the private
+# target only exists when asked for by name.
+find_package(Qt6 6.8 REQUIRED COMPONENTS Quick QuickControls2 QuickEffects Quick3D Network Xml Multimedia ShaderTools WebEngineQuick GuiPrivate)
 qt_standard_project_setup(REQUIRES 6.8)
 
 add_subdirectory(qml)
@@ -57,6 +61,9 @@ target_include_directories(qt-panel PRIVATE src ${WINRT_GENERATED} ${WINAPPSDK_V
 target_compile_options(qt-panel PRIVATE /utf-8 /W4)
 target_link_libraries(qt-panel PRIVATE
     Qt6::Quick
+    # QPA private headers: the composition path has no native window, so input
+    # has to be injected through QWindowSystemInterface. Nothing else uses this.
+    Qt6::GuiPrivate
     Qt6::QuickControls2
     Qt6::QuickEffects
     Qt6::Quick3D
