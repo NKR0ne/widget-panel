@@ -21,7 +21,9 @@
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QDebug>
+#include <QKeyEvent>
 #include <QMouseEvent>
+#include <QWheelEvent>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickGraphicsDevice>
@@ -90,6 +92,7 @@ struct CompositionPanelHost::Private
     // released on return, taking the registrations with it, and every call
     // still reports success while no event is ever delivered.
     muinput::InputPointerSource pointerSource{ nullptr };
+    muinput::InputKeyboardSource keyboardSource{ nullptr };
 
     RenderLoopAnimationDriver* animationDriver = nullptr;
     int pixelWidth = 0;
@@ -113,6 +116,44 @@ LRESULT CALLBACK hostWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     // instead, in setInputActive.
     if (msg == WM_DESTROY) { PostQuitMessage(0); return 0; }
     return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+// Modifier state comes from the OS rather than the event: KeyEventArgs carries
+// the key that changed, not the state of the others.
+Qt::KeyboardModifiers currentModifiers()
+{
+    Qt::KeyboardModifiers m = Qt::NoModifier;
+    if (GetKeyState(VK_SHIFT) & 0x8000)   m |= Qt::ShiftModifier;
+    if (GetKeyState(VK_CONTROL) & 0x8000) m |= Qt::ControlModifier;
+    if (GetKeyState(VK_MENU) & 0x8000)    m |= Qt::AltModifier;
+    return m;
+}
+
+// Only the keys that do not arrive as characters. Printable input comes through
+// CharacterReceived, which has already been through the keyboard layout and
+// dead-key composition -- reconstructing it from virtual keys would break every
+// accented character on this French layout.
+int qtKeyForVirtualKey(quint32 vk)
+{
+    switch (vk) {
+    case VK_BACK:   return Qt::Key_Backspace;
+    case VK_TAB:    return Qt::Key_Tab;
+    case VK_RETURN: return Qt::Key_Return;
+    case VK_ESCAPE: return Qt::Key_Escape;
+    case VK_PRIOR:  return Qt::Key_PageUp;
+    case VK_NEXT:   return Qt::Key_PageDown;
+    case VK_END:    return Qt::Key_End;
+    case VK_HOME:   return Qt::Key_Home;
+    case VK_LEFT:   return Qt::Key_Left;
+    case VK_UP:     return Qt::Key_Up;
+    case VK_RIGHT:  return Qt::Key_Right;
+    case VK_DOWN:   return Qt::Key_Down;
+    case VK_DELETE: return Qt::Key_Delete;
+    case VK_INSERT: return Qt::Key_Insert;
+    default:
+        if (vk >= VK_F1 && vk <= VK_F24) return Qt::Key_F1 + (vk - VK_F1);
+        return 0;
+    }
 }
 
 } // namespace
@@ -287,6 +328,54 @@ void CompositionPanelHost::wireInput()
             QEvent leave(QEvent::Leave);
             QCoreApplication::sendEvent(m_quickWindow, &leave);
         }
+    });
+
+    // Scrolling. Without this every list in the panel -- mail, tasks, agenda,
+    // articles -- is stuck at the top.
+    d->pointerSource.PointerWheelChanged([this](auto&&, const muinput::PointerEventArgs& args) {
+        if (!m_quickWindow) return;
+        const auto pt = args.CurrentPoint();
+        const auto props = pt.Properties();
+        const int delta = props.MouseWheelDelta();
+        const QPointF p(pt.Position().X, pt.Position().Y);
+        const QPoint angle = props.IsHorizontalMouseWheel() ? QPoint(delta, 0) : QPoint(0, delta);
+        QWheelEvent ev(p, p, QPoint(0, 0), angle, Qt::NoButton, currentModifiers(),
+                       Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(m_quickWindow, &ev);
+    });
+
+    // Keyboard, in two halves. CharacterReceived carries text that has already
+    // been through the layout and dead-key composition; KeyDown/KeyUp carry the
+    // keys that never produce characters. Sending both for a printable key would
+    // type it twice, so qtKeyForVirtualKey returns 0 for those and they are
+    // dropped here.
+    d->keyboardSource = muinput::InputKeyboardSource::GetForIsland(d->island);
+
+    d->keyboardSource.KeyDown([this](auto&&, const muinput::KeyEventArgs& args) {
+        if (!m_quickWindow) return;
+        const int key = qtKeyForVirtualKey(static_cast<quint32>(args.VirtualKey()));
+        if (!key) return;
+        QKeyEvent ev(QEvent::KeyPress, key, currentModifiers());
+        QCoreApplication::sendEvent(m_quickWindow, &ev);
+    });
+    d->keyboardSource.KeyUp([this](auto&&, const muinput::KeyEventArgs& args) {
+        if (!m_quickWindow) return;
+        const int key = qtKeyForVirtualKey(static_cast<quint32>(args.VirtualKey()));
+        if (!key) return;
+        QKeyEvent ev(QEvent::KeyRelease, key, currentModifiers());
+        QCoreApplication::sendEvent(m_quickWindow, &ev);
+    });
+    d->keyboardSource.CharacterReceived([this](auto&&, const muinput::CharacterReceivedEventArgs& args) {
+        if (!m_quickWindow) return;
+        const auto code = args.KeyCode();
+        // Control characters arrive here too (Enter, Backspace, Escape) and are
+        // already handled as keys above; passing them again inserts control
+        // codes into text fields.
+        if (code < 0x20 || code == 0x7F) return;
+        const char32_t ucs4 = static_cast<char32_t>(code);
+        const QString text = QString::fromUcs4(&ucs4, 1);
+        QKeyEvent ev(QEvent::KeyPress, 0, currentModifiers(), text);
+        QCoreApplication::sendEvent(m_quickWindow, &ev);
     });
 }
 
