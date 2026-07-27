@@ -96,22 +96,35 @@ QtObject {
     // material deliberately stacks visible card slabs; keeping our fills here
     // is what stopped Windows mode feeling like the shell, far more than the
     // background tint did.
-    // On the composition path the backdrop is a dark accent acrylic, so cards
-    // carry the LIGHT end of the same ramp. That is what makes them read as
-    // raised surfaces of one material instead of white film over a coloured
-    // one -- the fill is doing the lifting here, not the stroke.
+    // Start's lighter regions -- the right-hand pane, the account bar -- are not
+    // accent-tinted. They are Fluent LAYER surfaces: a neutral mid-grey at high
+    // opacity that lightens AND cuts the show-through, which is why they read as
+    // a distinct plane rather than as a brighter patch of the same glass.
+    //
+    // Fluent's LayerFillColorDefault is #4C3A3A3A -- rgb(58,58,58) at 29.8% --
+    // and copying it verbatim does NOT work here. It is defined over
+    // SolidBackgroundFillColorBase (#202020, near black); over this accent
+    // acrylic the backdrop measures rgb(62,64,78), so 0.702*62 + 0.298*58 = 61
+    // and the "lighter" layer actually darkens by a point. Measured before and
+    // after: card #474B57 against backdrop #3E404E, a 9-unit lift that reads as
+    // nothing.
+    //
+    // To lighten a surface the fill has to be lighter than what it sits on, so
+    // this is a neutral white lift sized to the measured backdrop: 62 + 193a,
+    // a = 0.13 giving about +25 per channel. Neutral, not accent -- Start's
+    // lighter panes are grey, which is what the accent tint got wrong before.
     readonly property color cardFill: compositionMaterial
-        ? Qt.rgba(accentLight.r, accentLight.g, accentLight.b, contrastEnabled ? 0.22 : 0.15)
+        ? Qt.rgba(1, 1, 1, contrastEnabled ? 0.20 : 0.13)
         : systemMaterial
         ? Qt.rgba(1, 1, 1, 0.035)
         : Qt.rgba(1, 1, 1, contrastEnabled ? 0.09 : 0.075)
     readonly property color cardStroke: compositionMaterial
-        ? Qt.rgba(accentLight.r, accentLight.g, accentLight.b, contrastEnabled ? 0.30 : 0.18)
+        ? Qt.rgba(1, 1, 1, contrastEnabled ? 0.20 : 0.071)
         : systemMaterial
         ? Qt.rgba(1, 1, 1, 0.055)
         : Qt.rgba(1, 1, 1, contrastEnabled ? 0.20 : 0.10)
     readonly property color cardHoverFill: compositionMaterial
-        ? Qt.rgba(accentLight.r, accentLight.g, accentLight.b, contrastEnabled ? 0.30 : 0.22)
+        ? Qt.rgba(1, 1, 1, contrastEnabled ? 0.26 : 0.185)
         : systemMaterial
         ? Qt.rgba(1, 1, 1, 0.07)
         : Qt.rgba(1, 1, 1, contrastEnabled ? 0.13 : 0.11)
