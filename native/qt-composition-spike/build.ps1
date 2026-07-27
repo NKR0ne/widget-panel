@@ -58,7 +58,8 @@ if ($dropped) { $mx.Save($merged) }
 # --- compile ----------------------------------------------------------------
 $qtInc = @(
     "$QtDir\include", "$QtDir\include\QtCore", "$QtDir\include\QtGui",
-    "$QtDir\include\QtQml", "$QtDir\include\QtQuick"
+    "$QtDir\include\QtQml", "$QtDir\include\QtQuick",
+    "$QtDir\include\QtWebEngineQuick", "$QtDir\include\QtWebEngineCore"
 ) | ForEach-Object { "/I`"$_`"" }
 
 Write-Host 'Compiling...' -ForegroundColor Cyan
@@ -75,7 +76,7 @@ try {
         "`"$(Join-Path $root 'qt_composition_spike.cpp')`"",
         '/Fe:qt-composition-spike.exe',
         '/link', "/LIBPATH:`"$QtDir\lib`"",
-        'Qt6Core.lib', 'Qt6Gui.lib', 'Qt6Qml.lib', 'Qt6Quick.lib',
+        'Qt6Core.lib', 'Qt6Gui.lib', 'Qt6Qml.lib', 'Qt6Quick.lib', 'Qt6WebEngineQuick.lib',
         'WindowsApp.lib', 'user32.lib', 'ole32.lib', 'd3d11.lib', 'dxgi.lib'
     )
     $line = "cl.exe " + ($args -join ' ')
@@ -89,9 +90,14 @@ if ($compileExit -ne 0) { throw "compile failed ($compileExit)" }
 if ($LASTEXITCODE -ne 0) { throw "mt.exe embed failed ($LASTEXITCODE)" }
 
 Copy-Item (Join-Path $root 'main.qml') $build -Force
+Copy-Item (Join-Path $root 'main-web.qml') $build -Force
 
 # --- Qt runtime beside the exe ----------------------------------------------
-if (-not (Test-Path (Join-Path $build 'Qt6Core.dll'))) {
+# WebEngine needs far more than the core DLLs -- QtWebEngineProcess.exe, ICU
+# data and the .pak resources -- so checking only for Qt6Core.dll would skip the
+# redeploy that adding WebEngine requires, and --web would fail at runtime.
+if (-not (Test-Path (Join-Path $build 'Qt6Core.dll')) -or
+    -not (Test-Path (Join-Path $build 'QtWebEngineProcess.exe'))) {
     Write-Host 'Deploying Qt runtime...' -ForegroundColor Cyan
     & "$QtDir\bin\windeployqt.exe" --qmldir $root (Join-Path $build 'qt-composition-spike.exe') | Out-Null
 }

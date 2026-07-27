@@ -58,6 +58,7 @@
 #include <QDebug>
 #include <QMouseEvent>
 #include <QCoreApplication>
+#include <QtWebEngineQuick>
 
 #include <cstdio>
 
@@ -299,6 +300,15 @@ int main(int argc, char** argv)
     // this the island presents nothing while reporting perfect health.
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
+    bool web = false;
+    for (int i = 1; i < argc; ++i)
+        if (std::string(argv[i]) == "--web") web = true;
+
+    // Must run before the QGuiApplication exists, not merely before the view is
+    // created -- WebEngine installs its own event dispatcher and GPU thread
+    // during application construction.
+    if (web) QtWebEngineQuick::initialize();
+
     QGuiApplication app(argc, argv);
     std::printf("[qtspike] QGuiApplication up\n");
 
@@ -423,7 +433,8 @@ int main(int argc, char** argv)
 
     // --- QML -----------------------------------------------------------------
     QQmlEngine engine;
-    const QString qmlPath = QDir(QCoreApplication::applicationDirPath()).filePath("main.qml");
+    const QString qmlPath = QDir(QCoreApplication::applicationDirPath())
+                                .filePath(web ? "main-web.qml" : "main.qml");
     QQmlComponent component(&engine, QUrl::fromLocalFile(qmlPath));
     if (component.isError()) {
         for (const QQmlError& e : component.errors())
