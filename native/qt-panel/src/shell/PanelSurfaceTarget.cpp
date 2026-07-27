@@ -71,7 +71,15 @@ void CompositionSurfaceTarget::setGeometry(const QRect& g)
 void CompositionSurfaceTarget::setX(int x)
 {
     if (!m_host || !m_host->hwnd()) return;
-    SetWindowPos(m_host->hwnd(), nullptr, qRound(x * scaleFactor()), 0, 0, 0,
+    // Y must be carried over. SWP_NOSIZE preserves the size but NOT the
+    // position, so passing 0 here moved the window to the top of the screen on
+    // every call -- and the slide calls this once per frame, so the panel
+    // walked to y=0 as it animated. It also changed the material: acrylic
+    // samples the desktop behind the window, so a window that has moved is
+    // sampling different content and comes back a different tone.
+    RECT r{};
+    GetWindowRect(m_host->hwnd(), &r);
+    SetWindowPos(m_host->hwnd(), nullptr, qRound(x * scaleFactor()), r.top, 0, 0,
                  SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
