@@ -25,15 +25,11 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 
-// Input must go through the platform pipeline, not hand-built events sent
-// straight to the window. QCoreApplication::sendEvent delivers a QMouseEvent
-// that simple MouseAreas handle fine, but it bypasses everything Qt builds on
-// top of real input: Flickable's press-steal-and-replay, pointer handler grabs,
-// double-click synthesis, hover tracking. That is why panel header buttons
-// worked while the X inside a modal's Flickable, the manage-widgets toggles and
-// the column resize DragHandler all did nothing.
-#include <QtGui/qpa/qwindowsysteminterface.h>
-#include <QQmlComponent>
+// Input is delivered with QCoreApplication::sendEvent. QWindowSystemInterface
+// looks like the more correct route -- it is the path the platform plugin uses,
+// and it drives Flickable replay and pointer handler grabs properly -- but it
+// QUEUES events for a platform window to drain, and this QQuickWindow is
+// offscreen and has none. Nothing arrived, flushWindowSystemEvents included.#include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickGraphicsDevice>
 #include <QQuickItem>
@@ -353,8 +349,23 @@ void CompositionPanelHost::wireInput()
         // by measurement: the pointer reached 1109.71 against a 1112 DIP window,
         // and presses resolved to the item under the cursor. No conversion.
         const QPointF p(pos.X, pos.Y);
-        QWindowSystemInterface::handleMouseEvent(m_quickWindow, p, p, buttons, button,
-                                                 type, currentModifiers());
+        QMouseEvent ev(type, p, p, p, button, buttons, currentModifiers());
+        const bool accepted = QCoreApplication::sendEvent(m_quickWindow, &ev);
+        // Diagnostic for the unresponsive modal close button: report whether Qt
+        // accepted the press and which item it resolved to. "accepted" false
+        // means nothing took it; a hit item that is not the button means the
+        // press landed elsewhere. Those need different fixes and look identical
+        // from outside.
+        if (type == QEvent::MouseButtonPress) {
+            QQuickItem* hit = m_quickWindow->contentItem()
+                ? m_quickWindow->contentItem()->childAt(p.x(), p.y()) : nullptr;
+            qInfo() << "[composition] press" << p << "accepted" << accepted
+                    << "| evAccepted" << ev.isAccepted()
+                    << "| hit" << (hit ? hit->metaObject()->className() : "none")
+                    << "| activeFocusItem"
+                    << (m_quickWindow->activeFocusItem()
+                            ? m_quickWindow->activeFocusItem()->metaObject()->className() : "none");
+        }
     };
 
     d->pointerSource.PointerMoved([this, send](auto&&, const muinput::PointerEventArgs& args) {
@@ -385,7 +396,10 @@ void CompositionPanelHost::wireInput()
     d->pointerSource.PointerExited([this, send](auto&&, const muinput::PointerEventArgs& args) {
         send(QEvent::MouseMove, args.CurrentPoint().Position(), Qt::NoButton, Qt::NoButton);
         if (m_quickWindow)
-            QWindowSystemInterface::handleLeaveEvent(m_quickWindow);
+        {
+            QEvent leave(QEvent::Leave);
+            QCoreApplication::sendEvent(m_quickWindow, &leave);
+        }
     });
 
     // Scrolling. Without this every list in the panel -- mail, tasks, agenda,
@@ -397,8 +411,9 @@ void CompositionPanelHost::wireInput()
         const int delta = props.MouseWheelDelta();
         const QPointF p(pt.Position().X, pt.Position().Y);
         const QPoint angle = props.IsHorizontalMouseWheel() ? QPoint(delta, 0) : QPoint(0, delta);
-        QWindowSystemInterface::handleWheelEvent(m_quickWindow, p, p, QPoint(0, 0), angle,
-                                                 currentModifiers());
+        QWheelEvent ev(p, p, QPoint(0, 0), angle, Qt::NoButton, currentModifiers(),
+                       Qt::NoScrollPhase, false);
+        QCoreApplication::sendEvent(m_quickWindow, &ev);
     });
 
     // Keyboard, in two halves. CharacterReceived carries text that has already
@@ -412,13 +427,15 @@ void CompositionPanelHost::wireInput()
         if (!m_quickWindow) return;
         const int key = qtKeyForVirtualKey(static_cast<quint32>(args.VirtualKey()));
         if (!key) return;
-        QWindowSystemInterface::handleKeyEvent(m_quickWindow, QEvent::KeyPress, key, currentModifiers());
+        QKeyEvent ev(QEvent::KeyPress, key, currentModifiers());
+        QCoreApplication::sendEvent(m_quickWindow, &ev);
     });
     d->keyboardSource.KeyUp([this](auto&&, const muinput::KeyEventArgs& args) {
         if (!m_quickWindow) return;
         const int key = qtKeyForVirtualKey(static_cast<quint32>(args.VirtualKey()));
         if (!key) return;
-        QWindowSystemInterface::handleKeyEvent(m_quickWindow, QEvent::KeyRelease, key, currentModifiers());
+        QKeyEvent ev(QEvent::KeyRelease, key, currentModifiers());
+        QCoreApplication::sendEvent(m_quickWindow, &ev);
     });
     d->keyboardSource.CharacterReceived([this](auto&&, const muinput::CharacterReceivedEventArgs& args) {
         if (!m_quickWindow) return;
@@ -429,7 +446,8 @@ void CompositionPanelHost::wireInput()
         if (code < 0x20 || code == 0x7F) return;
         const char32_t ucs4 = static_cast<char32_t>(code);
         const QString text = QString::fromUcs4(&ucs4, 1);
-        QWindowSystemInterface::handleKeyEvent(m_quickWindow, QEvent::KeyPress, 0, currentModifiers(), text);
+        QKeyEvent ev(QEvent::KeyPress, 0, currentModifiers(), text);
+        QCoreApplication::sendEvent(m_quickWindow, &ev);
     });
 }
 
