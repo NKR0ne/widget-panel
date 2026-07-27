@@ -9,7 +9,12 @@ Item {
     signal toggled(bool checked)
 
     implicitHeight: description === "" ? 28 : 40
-    activeFocusOnTab: true
+    // Item.enabled already blocks the MouseArea and the key handlers; these
+    // carry it through to focus and appearance so a setting that currently has
+    // no effect cannot be operated, and reads as inert rather than broken.
+    activeFocusOnTab: control.enabled
+    opacity: control.enabled ? 1 : 0.45
+    Behavior on opacity { NumberAnimation { duration: Motion.fastMs } }
     Accessible.role: Accessible.CheckBox
     Accessible.name: label
     Accessible.description: description
@@ -45,7 +50,8 @@ Item {
         radius: 10
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
-        color: control.checked ? Theme.accent
+        color: !control.enabled ? Qt.rgba(1, 1, 1, 0.10)
+             : control.checked ? Theme.accent
              : controlMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.17)
              : Qt.rgba(1, 1, 1, 0.12)
         border.width: control.activeFocus ? 1 : 0
@@ -67,7 +73,7 @@ Item {
         id: controlMouse
         anchors.fill: parent
         hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
+        cursorShape: control.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
         onClicked: control.toggled(!control.checked)
     }
     Keys.onSpacePressed: toggled(!checked)

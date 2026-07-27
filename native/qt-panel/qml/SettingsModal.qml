@@ -306,8 +306,16 @@ Item {
             SettingsToggle {
                 width: parent.width
                 label: "Fond mica"
-                description: "Teinte le fond d'\u00e9cran au lieu de flouter le bureau (acrylique)"
-                checked: Panel.micaBackdrop
+                // Following the system forces acrylic, because that is what the
+                // Start menu uses -- effectiveMica() is micaBackdrop && !follow-
+                // SystemMaterial, and bgTint returns before it reads this at
+                // all. The toggle was still live and still showed its old state,
+                // so it looked like a setting that did nothing.
+                enabled: !Ui.followSystemMaterial
+                description: Ui.followSystemMaterial
+                    ? "Sans effet : le mat\u00e9riau Windows impose l'acrylique"
+                    : "Teinte le fond d'\u00e9cran au lieu de flouter le bureau (acrylique)"
+                checked: Panel.micaBackdrop && !Ui.followSystemMaterial
                 onToggled: function(value) { Panel.setMicaBackdrop(value) }
             }
             SettingsToggle {
