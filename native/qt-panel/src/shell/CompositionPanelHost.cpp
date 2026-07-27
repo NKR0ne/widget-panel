@@ -103,13 +103,13 @@ LRESULT CALLBACK hostWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     // Pointer input never arrives here: DesktopChildSiteBridge creates its own
     // child window on top, so client-area hit-testing resolves to the bridge.
     // Input comes from InputPointerSource on the island instead.
-    // Acrylic dims to its inactive state when the window is not active, and it
-    // only knows via SystemBackdropConfiguration. Without this the surface
-    // keeps whatever state it was constructed in, so the panel renders one
-    // colour on first launch and a different one once it has been activated --
-    // which reads as the material changing on its own.
-    if (msg == WM_ACTIVATE && g_activeHost)
-        g_activeHost->setInputActive(LOWORD(wp) != WA_INACTIVE);
+    // NOT tracking WM_ACTIVATE. Acrylic dims to an inactive state when its
+    // window loses focus, which is right for the Start menu -- a transient
+    // surface you dismiss -- and wrong here. This panel is an always-on-top
+    // sidebar meant to be read WHILE working in other windows, so it is
+    // unfocused almost all of the time; following activation makes it spend its
+    // life dimmed and change tone every time you click away. Pinned active
+    // instead, in setInputActive.
     if (msg == WM_DESTROY) { PostQuitMessage(0); return 0; }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -391,9 +391,15 @@ void CompositionPanelHost::setTintColor(const QColor& tint)
         static_cast<uint8_t>(tint.blue()) });
 }
 
-void CompositionPanelHost::setInputActive(bool active)
+void CompositionPanelHost::setInputActive(bool)
 {
-    if (d->config) d->config.IsInputActive(active);
+    // Deliberately ignores the argument and pins active. See wndProc: a
+    // glanceable sidebar is unfocused nearly always, so honouring activation
+    // would leave it dimmed in normal use and shift tone on every click
+    // elsewhere. Holding it active is also what makes the material identical on
+    // first launch and after a hide/show cycle, which is the property that was
+    // actually wanted.
+    if (d->config) d->config.IsInputActive(true);
 }
 
 void CompositionPanelHost::setRootOpacity(float opacity)
@@ -489,8 +495,7 @@ bool CompositionPanelHost::initializeInner(QQmlEngine* engine, const QString& ro
     connect(timer, &QTimer::timeout, this, &CompositionPanelHost::renderFrame);
     timer->start(8);
 
-    // Seed activation from the real window state rather than assuming active.
-    setInputActive(GetForegroundWindow() == m_hwnd);
+    setInputActive(true);
 
     m_valid = true;
     qInfo() << "[composition] host ready";
