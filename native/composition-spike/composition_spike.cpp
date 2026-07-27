@@ -90,6 +90,7 @@ Options parseArgs(int argc, char** argv)
 // The bridge does not track the host window on its own; without MoveAndResize
 // it stays zero-sized and the island has no area to composite into.
 content::DesktopChildSiteBridge g_bridge{ nullptr };
+content::ContentIsland g_island{ nullptr };
 mucomp::SpriteVisual g_root{ nullptr };
 
 void syncBridgeToClient(HWND hwnd)
@@ -105,7 +106,13 @@ void syncBridgeToClient(HWND hwnd)
     // root visual has no parent -- so it stays 0x0 and the island presents
     // nothing at all, however correct everything downstream is. The root must
     // be sized explicitly.
-    if (g_root) g_root.Size({ static_cast<float>(w), static_cast<float>(h) });
+    //
+    // In DIPs, not pixels. MoveAndResize above takes physical pixels, but
+    // island content is scaled by RasterizationScale (1.75 on this display), so
+    // sizing the root from the client rect overshoots by that factor. The
+    // backdrop hides the mistake here because it attaches to the bridge rather
+    // than the visual -- real content would be cropped.
+    if (g_root && g_island) g_root.Size(g_island.ActualSize());
 }
 
 LRESULT CALLBACK wndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
@@ -167,6 +174,7 @@ int run(int argc, char** argv)
         : winrt::Windows::UI::Color{0, 0, 0, 0}));
 
     auto island = content::ContentIsland::Create(root);
+    g_island = island;
     bridge.Connect(island);
     bridge.ResizePolicy(content::ContentSizePolicy::ResizeContentToParentWindow);
     std::printf("[spike] content island connected\n");
