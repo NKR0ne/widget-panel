@@ -90,7 +90,17 @@ MsGraphService::MsGraphService(SettingsStore* settings, HttpClient* http, QObjec
 
     loadStoredTokens();
     if (!m_refreshToken.isEmpty()) {
-        setAuthState(QStringLiteral("refreshing"));
+        // "refreshing" only if a refresh is actually going to happen. Setting it
+        // unconditionally leaves the state stuck: setAuthState("ok") lives in
+        // the token-refresh RESPONSE handler, so a still-valid cached token
+        // means no refresh, no response, and no transition to "ok" -- while the
+        // data loads perfectly well. MsStatePane is visible whenever authState
+        // is not "ok", so all three Microsoft cards sit under a permanent
+        // "Connexion à Microsoft…" strip and look like they have lost their
+        // content.
+        const bool tokenUsable = !m_accessToken.isEmpty()
+            && m_expiryMs > QDateTime::currentMSecsSinceEpoch() + 60'000;
+        setAuthState(tokenUsable ? QStringLiteral("ok") : QStringLiteral("refreshing"));
         refreshAll();
     } else if (m_clientId.isEmpty()) {
         setAuthState(QStringLiteral("none"));
