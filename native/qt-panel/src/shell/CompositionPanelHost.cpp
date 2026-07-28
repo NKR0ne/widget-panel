@@ -16,20 +16,23 @@
 #include <winrt/Microsoft.UI.Input.h>
 #include <winrt/Microsoft.UI.Composition.Interop.h>
 
-#include <QAnimationDriver>
 #include <QColor>
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QDebug>
 #include <QKeyEvent>
+#include <QLineF>
 #include <QMouseEvent>
 #include <QWheelEvent>
+
+#include <functional>
 
 // Input is delivered with QCoreApplication::sendEvent. QWindowSystemInterface
 // looks like the more correct route -- it is the path the platform plugin uses,
 // and it drives Flickable replay and pointer handler grabs properly -- but it
 // QUEUES events for a platform window to drain, and this QQuickWindow is
-// offscreen and has none. Nothing arrived, flushWindowSystemEvents included.#include <QQmlComponent>
+// offscreen and has none. Nothing arrived, flushWindowSystemEvents included.
+#include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickGraphicsDevice>
 #include <QQuickItem>
@@ -48,31 +51,6 @@ namespace {
 constexpr wchar_t kWindowClass[] = L"WidgetPanelCompositionHost";
 CompositionPanelHost* g_activeHost = nullptr;
 
-// Qt drives animations from the render loop of a real QQuickWindow. A
-// QQuickRenderControl window has no swap chain and therefore no such clock, so
-// without this every QML animation AND the panel slide fall back to a generic
-// timer that is not synchronised with when we actually present -- which reads
-// exactly as "less instant, less smooth" even though the frame rate looks fine.
-class RenderLoopAnimationDriver : public QAnimationDriver
-{
-public:
-    explicit RenderLoopAnimationDriver(QObject* parent = nullptr) : QAnimationDriver(parent)
-    {
-        m_timer.start();
-    }
-
-    void advance() override
-    {
-        m_elapsed = m_timer.elapsed();
-        advanceAnimation();
-    }
-
-    qint64 elapsed() const override { return m_elapsed; }
-
-private:
-    QElapsedTimer m_timer;
-    qint64 m_elapsed = 0;
-};
 } // namespace
 
 // WinRT types are kept out of the header so translation units that merely
@@ -100,13 +78,25 @@ struct CompositionPanelHost::Private
     // still reports success while no event is ever delivered.
     muinput::InputPointerSource pointerSource{ nullptr };
     muinput::InputKeyboardSource keyboardSource{ nullptr };
-
-    RenderLoopAnimationDriver* animationDriver = nullptr;
     Qt::CursorShape lastCursorShape = Qt::ArrowCursor;
     HCURSOR lastCursor = nullptr;
     int pixelWidth = 0;
     int pixelHeight = 0;
-    bool needsRender = true;
+
+    // The island reports PointerMoved only while no button is held, so a drag
+    // arrives as a press and a release with nothing in between. renderFrame
+    // fills the gap from the real cursor position; see pumpHeldPointer.
+    std::function<void(QEvent::Type, const QPointF&, Qt::MouseButton, Qt::MouseButtons)> sendMouse;
+    bool leftButtonDown = false;
+    QPointF lastPointerDip{ -1, -1 };
+
+    // Every synthetic event otherwise carries timestamp 0. Qt tracks a pointer
+    // across events by updating a persistent point on the device, and that
+    // update is timestamp-driven; with a constant timestamp the point never
+    // advances, so scenePressPosition follows the cursor and the drag delta a
+    // DragHandler measures against it stays 0 no matter how far the pointer
+    // travels.
+    QElapsedTimer inputClock;
 };
 
 namespace {
@@ -116,13 +106,21 @@ LRESULT CALLBACK hostWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     // Pointer input never arrives here: DesktopChildSiteBridge creates its own
     // child window on top, so client-area hit-testing resolves to the bridge.
     // Input comes from InputPointerSource on the island instead.
-    // NOT tracking WM_ACTIVATE. Acrylic dims to an inactive state when its
-    // window loses focus, which is right for the Start menu -- a transient
-    // surface you dismiss -- and wrong here. This panel is an always-on-top
-    // sidebar meant to be read WHILE working in other windows, so it is
-    // unfocused almost all of the time; following activation makes it spend its
-    // life dimmed and change tone every time you click away. Pinned active
-    // instead, in setInputActive.
+    // WM_ACTIVATE is reported but deliberately NOT fed to setInputActive.
+    // Acrylic dims to an inactive state when its window loses focus, which is
+    // right for the Start menu -- a transient surface you dismiss -- and wrong
+    // here. This panel is an always-on-top sidebar meant to be read WHILE
+    // working in other windows, so it is unfocused almost all of the time;
+    // following activation makes it spend its life dimmed and change tone every
+    // time you click away. The material stays pinned active in setInputActive.
+    //
+    // The signal exists for blur-hide, which is a separate concern: the
+    // controller decides whether losing focus should dismiss the panel, behind
+    // the same pin/modal/island guards the windowed path uses.
+    if (msg == WM_ACTIVATE && g_activeHost) {
+        emit g_activeHost->hostActiveChanged(LOWORD(wp) != WA_INACTIVE);
+        return DefWindowProcW(hwnd, msg, wp, lp);
+    }
     if (msg == WM_DESTROY) { PostQuitMessage(0); return 0; }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -326,51 +324,39 @@ bool CompositionPanelHost::createQtRenderPath()
         return false;
     }
 
-    // Render on demand. Qt raises these whenever the scene actually needs
-    // redrawing, including each step of a running animation, so an idle panel
-    // costs nothing instead of a GPU blit and a scene-graph sync every frame.
-    connect(m_renderControl, &QQuickRenderControl::renderRequested,
-            this, &CompositionPanelHost::requestRender);
-    connect(m_renderControl, &QQuickRenderControl::sceneChanged,
-            this, &CompositionPanelHost::requestRender);
     return true;
 }
 
-void CompositionPanelHost::requestRender() { d->needsRender = true; }
+// Kept as a no-op: renderFrame renders unconditionally, so nothing needs to
+// request a frame. Declared in the header, and removing it there would force a
+// clean rebuild of every translation unit that includes it for no benefit.
+void CompositionPanelHost::requestRender() { }
 
 void CompositionPanelHost::wireInput()
 {
     d->pointerSource = muinput::InputPointerSource::GetForIsland(d->island);
 
-    auto send = [this](QEvent::Type type, const winrt::Windows::Foundation::Point& pos,
+    auto send = [this](QEvent::Type type, const QPointF& p,
                        Qt::MouseButton button, Qt::MouseButtons buttons) {
         if (!m_quickWindow) return;
         // Island coordinates and Qt logical coordinates are both DIPs, verified
         // by measurement: the pointer reached 1109.71 against a 1112 DIP window,
         // and presses resolved to the item under the cursor. No conversion.
-        const QPointF p(pos.X, pos.Y);
         QMouseEvent ev(type, p, p, p, button, buttons, currentModifiers());
-        const bool accepted = QCoreApplication::sendEvent(m_quickWindow, &ev);
-        // Diagnostic for the unresponsive modal close button: report whether Qt
-        // accepted the press and which item it resolved to. "accepted" false
-        // means nothing took it; a hit item that is not the button means the
-        // press landed elsewhere. Those need different fixes and look identical
-        // from outside.
-        if (type == QEvent::MouseButtonPress) {
-            QQuickItem* hit = m_quickWindow->contentItem()
-                ? m_quickWindow->contentItem()->childAt(p.x(), p.y()) : nullptr;
-            qInfo() << "[composition] press" << p << "accepted" << accepted
-                    << "| evAccepted" << ev.isAccepted()
-                    << "| hit" << (hit ? hit->metaObject()->className() : "none")
-                    << "| activeFocusItem"
-                    << (m_quickWindow->activeFocusItem()
-                            ? m_quickWindow->activeFocusItem()->metaObject()->className() : "none");
-        }
+        if (!d->inputClock.isValid()) d->inputClock.start();
+        ev.setTimestamp(static_cast<quint64>(d->inputClock.elapsed()));
+        QCoreApplication::sendEvent(m_quickWindow, &ev);
     };
+
+    // Lets renderFrame synthesise the moves the island stops reporting while a
+    // button is held. See pumpHeldPointer below.
+    d->sendMouse = send;
 
     d->pointerSource.PointerMoved([this, send](auto&&, const muinput::PointerEventArgs& args) {
         const auto pt = args.CurrentPoint();
-        send(QEvent::MouseMove, pt.Position(), Qt::NoButton,
+        const auto pos = pt.Position();
+        d->lastPointerDip = QPointF(pos.X, pos.Y);
+        send(QEvent::MouseMove, d->lastPointerDip, Qt::NoButton,
              pt.Properties().IsLeftButtonPressed() ? Qt::LeftButton : Qt::NoButton);
         // AFTER dispatching: sendEvent is synchronous, so QML has already
         // updated hover state and therefore the window's cursor by this point.
@@ -385,16 +371,30 @@ void CompositionPanelHost::wireInput()
             if (d->lastCursor) SetCursor(d->lastCursor);
         }
     });
-    d->pointerSource.PointerPressed([send](auto&&, const muinput::PointerEventArgs& args) {
-        send(QEvent::MouseButtonPress, args.CurrentPoint().Position(),
-             Qt::LeftButton, Qt::LeftButton);
+    d->pointerSource.PointerPressed([this, send](auto&&, const muinput::PointerEventArgs& args) {
+        const auto pos = args.CurrentPoint().Position();
+        const QPointF p(pos.X, pos.Y);
+        // A move at the press position FIRST. Qt resolves a press against the
+        // item it last saw the cursor over, and with injected input a press can
+        // arrive before any move has put that state where the cursor actually
+        // is -- so the press lands on whatever was previously hovered and is
+        // ignored. The failed press then updates the state, which is why a
+        // second click at the identical position works. Real Windows input
+        // always has a move ahead of the press; this restores that guarantee.
+        send(QEvent::MouseMove, p, Qt::NoButton, Qt::NoButton);
+        send(QEvent::MouseButtonPress, p, Qt::LeftButton, Qt::LeftButton);
+        d->lastPointerDip = p;
+        d->leftButtonDown = true;
     });
-    d->pointerSource.PointerReleased([send](auto&&, const muinput::PointerEventArgs& args) {
-        send(QEvent::MouseButtonRelease, args.CurrentPoint().Position(),
-             Qt::LeftButton, Qt::NoButton);
+    d->pointerSource.PointerReleased([this, send](auto&&, const muinput::PointerEventArgs& args) {
+        const auto pos = args.CurrentPoint().Position();
+        d->leftButtonDown = false;
+        d->lastPointerDip = QPointF(pos.X, pos.Y);
+        send(QEvent::MouseButtonRelease, d->lastPointerDip, Qt::LeftButton, Qt::NoButton);
     });
     d->pointerSource.PointerExited([this, send](auto&&, const muinput::PointerEventArgs& args) {
-        send(QEvent::MouseMove, args.CurrentPoint().Position(), Qt::NoButton, Qt::NoButton);
+        const auto pos = args.CurrentPoint().Position();
+        send(QEvent::MouseMove, QPointF(pos.X, pos.Y), Qt::NoButton, Qt::NoButton);
         if (m_quickWindow)
         {
             QEvent leave(QEvent::Leave);
@@ -504,8 +504,6 @@ void CompositionPanelHost::resizeToIsland()
     // input and pixels stop agreeing.
     if (d->rootVisual) d->rootVisual.Size({ dip.x, dip.y });
     if (d->contentVisual) d->contentVisual.Size({ dip.x, dip.y });
-
-    d->needsRender = true;
     qInfo() << "[composition] sized: island DIP" << dip.x << dip.y
             << "| scale" << scale
             << "| surface px" << pxW << pxH
@@ -515,18 +513,57 @@ void CompositionPanelHost::resizeToIsland()
     emit sizeChanged(QSize(qRound(dip.x), qRound(dip.y)), scale);
 }
 
+// The island raises PointerMoved only while no button is held. A drag therefore
+// arrives as a press and a release with nothing in between, so every
+// DragHandler in the scene takes its passive grab on press and is never told
+// the pointer moved: the column resize handle never activates at all, and a
+// card "drag" jumps once on press and snaps back on release. Measured, not
+// inferred -- a 50px drag logged exactly one move, the synthetic one this code
+// injects ahead of the press.
+//
+// Filling the gap from the real cursor position is the smallest fix that
+// restores every drag at once. It runs on the render timer, which is already
+// ticking at 8ms, so it costs a GetCursorPos per frame while a button is held
+// and nothing at all otherwise.
+void CompositionPanelHost::pumpHeldPointer()
+{
+    if (!d->leftButtonDown || !d->sendMouse || !m_hwnd || !d->island) return;
+
+    POINT pt{};
+    if (!GetCursorPos(&pt) || !ScreenToClient(m_hwnd, &pt)) return;
+
+    // GetCursorPos/ScreenToClient are physical pixels; the island's input space
+    // is DIPs. Dividing by the rasterization scale is the same conversion the
+    // render target uses in the opposite direction.
+    const float scale = d->island.RasterizationScale();
+    if (scale <= 0.0f) return;
+    const QPointF p(pt.x / scale, pt.y / scale);
+
+    // Sub-pixel jitter would otherwise resend the same position every frame and
+    // keep handlers churning while the pointer is actually still.
+    if (QLineF(p, d->lastPointerDip).length() < 0.5) return;
+    d->lastPointerDip = p;
+    d->sendMouse(QEvent::MouseMove, p, Qt::NoButton, Qt::LeftButton);
+}
+
 void CompositionPanelHost::renderFrame()
 {
     if (!m_renderControl || !d->surface || !d->qtTexture) return;
 
-    // Advance animations in step with presentation, before deciding whether
-    // anything changed: advancing is what MAKES the scene change while an
-    // animation is running, so doing it after the needsRender check would stall
-    // every animation the moment the scene went quiet.
-    if (d->animationDriver) d->animationDriver->advance();
+    pumpHeldPointer();
 
-    if (!d->needsRender) return;
-    d->needsRender = false;
+    // Renders unconditionally. On-demand rendering off renderRequested/
+    // sceneChanged plus a custom QAnimationDriver was tried and produced
+    // intermittent failure: cards vanishing and controls going dead after
+    // working for a while. Both are plausible causes -- a change that raises
+    // neither signal leaves the previous frame on screen, so anything caught
+    // mid-fade stays invisible, and a hand-advanced animation clock can drift
+    // from the frames actually being presented, which strands hover and
+    // transition state.
+    //
+    // A panel-sized scene at 8ms is cheap next to being wrong. If on-demand
+    // pacing comes back it needs to be reintroduced on its own and watched for
+    // exactly this, not bundled with other changes.
 
     m_renderControl->polishItems();
     m_renderControl->beginFrame();
@@ -671,12 +708,9 @@ bool CompositionPanelHost::initializeInner(QQmlEngine* engine, const QString& ro
         qWarning() << "[composition] bridge has no ICompositionSupportsSystemBackdrop";
     }
 
-    // Installed only once the scene is live. Qt takes ownership of the driver
-    // as the application's animation clock; ours advances from renderFrame so
-    // animation time and presentation time cannot drift apart.
-    d->animationDriver = new RenderLoopAnimationDriver(this);
-    d->animationDriver->install();
-
+    // No custom QAnimationDriver: Qt's default driver runs QML animations
+    // perfectly well here, and replacing it was implicated in the intermittent
+    // failure described in renderFrame.
     auto* timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, &CompositionPanelHost::renderFrame);
     timer->start(8);

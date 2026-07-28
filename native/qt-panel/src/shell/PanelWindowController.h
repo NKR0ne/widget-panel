@@ -73,6 +73,11 @@ public:
     // controller is handed a target directly. Takes ownership.
     void attachTarget(PanelSurfaceTarget* target, QQuickWindow* sceneWindow);
 
+    // Composition path: the host HWND reports activation instead of a QWindow.
+    // Same policy as the windowed path -- the decision to hide lives in one
+    // place, this only delivers the event.
+    void notifySurfaceActiveChanged();
+
     int surfaceX() const;
     void setSurfaceX(int x);
 

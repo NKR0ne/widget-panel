@@ -84,6 +84,12 @@ public:
 signals:
     void sizeChanged(const QSize& dipSize, qreal scale);
 
+    // Activation of the host window. The windowed path gets this from
+    // QWindow::activeChanged; the composition path has no QWindow, so without
+    // this the controller never learns the panel lost focus and blur-hide --
+    // wired identically in both paths -- simply never fires.
+    void hostActiveChanged(bool active);
+
 private:
     struct Private;
     Private* d = nullptr;
@@ -100,6 +106,9 @@ private:
     bool createCompositionTree();
     bool createQtRenderPath();
     void wireInput();
+    // Synthesises the pointer moves the island withholds while a button is
+    // held, without which no DragHandler in the scene ever sees a drag.
+    void pumpHeldPointer();
     void resizeToIsland();
     void renderFrame();
     void requestRender();

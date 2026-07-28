@@ -423,25 +423,29 @@ Item {
                     }
                 }
 
-                // Straddles the gap between columns rather than sitting inside
-                // the left one. It used to be 5px anchored to parent.right,
-                // which put the whole grab area to the LEFT of the 6px spacing
-                // -- so the cursor had to be off the visible seam to catch it.
-                // Centred on parent.right + half the spacing puts it on the
-                // seam, and a wider hit area than visual makes it catchable
-                // without drawing a thick bar.
+                // Sits INSIDE the column, flush against its right edge. It was
+                // centred on parent.right + half the spacing, which reads as the
+                // obvious way to put it on the seam -- but the column Flickable
+                // clips, and Qt delivers nothing to a child outside a clipping
+                // parent. Nine of the twelve px fell outside, leaving a 3px grab
+                // band, and the accent bar at the handle's centre was clipped
+                // away entirely, so there was no hover feedback either. Measured
+                // on a 314px column: handle at 319..331, clip ending at 322.
+                //
+                // Keeping the whole width inside makes all 12px catchable; the
+                // bar is anchored to the handle's right edge so it still draws
+                // on the column boundary.
                 Item {
                     id: columnResizeHandle
                     visible: columnFlick.index < root.visibleColumns.length - 1
                     width: 12
                     anchors.top: parent.top
                     anchors.bottom: parent.bottom
-                    anchors.horizontalCenter: parent.right
-                    anchors.horizontalCenterOffset: rowLayout.spacing / 2
+                    anchors.right: parent.right
                     z: 20
 
                     Rectangle {
-                        anchors.centerIn: parent
+                        anchors.right: parent.right
                         width: 2
                         height: parent.height
                         radius: 1

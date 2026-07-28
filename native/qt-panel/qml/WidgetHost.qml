@@ -127,7 +127,6 @@ Item {
             target: null
             dragThreshold: 4
             onActiveChanged: {
-                console.log("[probe] drag", active ? "STARTED" : "ended", host.widgetId)
                 if (!active && host.columns)
                     host.columns.dropWidget(host.widgetId,
                                             dragHandler.centroid.scenePosition.x,

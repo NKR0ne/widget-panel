@@ -317,6 +317,11 @@ void PanelWindowController::setModalOpen(bool open)
     }
 }
 
+void PanelWindowController::notifySurfaceActiveChanged()
+{
+    onActiveChanged();
+}
+
 void PanelWindowController::onActiveChanged()
 {
     if (!m_target || m_target->isActive())

@@ -408,6 +408,14 @@ const QCommandLineOption diagPressReaderOption(
         controller.setSystemTheme(&systemTheme);
         controller.attachTarget(new CompositionSurfaceTarget(compositionHost.get()),
                                 window);
+        // Blur-hide. attach() gets this from QWindow::activeChanged; there is no
+        // QWindow here, so the host window's WM_ACTIVATE stands in. Without it
+        // the panel stays up after you click into another application, which is
+        // the one shell behaviour the composition path silently dropped.
+        QObject::connect(compositionHost.get(), &CompositionPanelHost::hostActiveChanged,
+                         &controller, [&controller](bool) {
+                             controller.notifySurfaceActiveChanged();
+                         });
         // Drive the acrylic from the shell's own palette. AccentDark2 is where
         // the Start menu actually sits once composited -- StartColorMenu is a
         // tint the shell composites at high opacity over a darkened backdrop,
