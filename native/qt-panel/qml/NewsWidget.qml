@@ -23,16 +23,26 @@ GlassCard {
     property var items: News.itemsFor(categoryLabel)
     property int storeRev: 0
     property int carouselIndex: 0
+    property int pendingCarouselIndex: 0
+    property var displayedItem: ({})
+    property var incomingItem: ({})
+    property real flipProgress: 0
+    readonly property var presentationItems: {
+        const result = []
+        for (const item of items) {
+            if (String(item.title || "").trim() !== "")
+                result.push(item)
+        }
+        return result
+    }
     // Stored height is the user's own per-category size; the size control
     // scales it for display without overwriting it.
     property real storedCarouselHeight: clampCarouselHeight(Number(Store.get(newsHeightKey(), 210)) || 210)
     readonly property real carouselHeight: clampCarouselHeight(
         storedCarouselHeight * Math.max(0.6, Math.min(1.8, Number(sizeScale) || 1)))
     property int flipDirection: 1
-    readonly property int carouselCount: items.length
-    readonly property var activeItem: carouselCount > 0
-        ? items[Math.max(0, Math.min(carouselIndex, carouselCount - 1))]
-        : ({})
+    readonly property int carouselCount: presentationItems.length
+    readonly property bool flipRunning: carouselFlip.running
 
     function openMatrix() {
         Store.set("wp-news-matrix-request", JSON.stringify({
@@ -68,20 +78,49 @@ GlassCard {
                     item.image || "", item.description || "")
     }
 
-    function setCarouselItem(index) {
-        if (carouselCount < 1)
+    function syncCarouselFace() {
+        if (carouselCount < 1) {
+            displayedItem = ({})
+            incomingItem = ({})
             return
-        flipDirection = index >= carouselIndex ? 1 : -1
-        carouselIndex = (index + carouselCount) % carouselCount
-        carouselFlip.restart()
+        }
+        carouselIndex = Math.max(0, Math.min(carouselIndex, carouselCount - 1))
+        displayedItem = presentationItems[carouselIndex]
+        incomingItem = displayedItem
+    }
+
+    function startCarouselFlip(index, direction) {
+        if (carouselCount < 2 || flipRunning)
+            return
+        const target = (index + carouselCount) % carouselCount
+        if (target === carouselIndex)
+            return
+        pendingCarouselIndex = target
+        flipDirection = direction >= 0 ? 1 : -1
+        incomingItem = presentationItems[target]
+        flipProgress = 0
+        if (!Motion.enabled) {
+            finishCarouselFlip()
+            return
+        }
+        carouselFlip.start()
+    }
+
+    function finishCarouselFlip() {
+        carouselIndex = Math.max(0, Math.min(pendingCarouselIndex,
+                                             Math.max(0, carouselCount - 1)))
+        displayedItem = carouselCount > 0 ? presentationItems[carouselIndex] : ({})
+        incomingItem = displayedItem
+        flipProgress = 0
+    }
+
+    function setCarouselItem(index) {
+        const target = (index + carouselCount) % Math.max(1, carouselCount)
+        startCarouselFlip(target, target >= carouselIndex ? 1 : -1)
     }
 
     function rotateCarousel(delta) {
-        if (carouselCount < 2)
-            return
-        flipDirection = delta >= 0 ? 1 : -1
-        carouselIndex = (carouselIndex + delta + carouselCount) % carouselCount
-        carouselFlip.restart()
+        startCarouselFlip(carouselIndex + delta, delta)
     }
 
     Connections {
@@ -101,14 +140,23 @@ GlassCard {
         }
     }
 
-    // Carousel (wp-news-carousel): Electron-style one-story feature card.
+    // Carousel (wp-news-carousel): native one-story feature card.
     readonly property bool carouselEnabled: {
         storeRev
         const stored = Store.get("wp-news-carousel", "")
         return stored === "" || stored === true || stored === "1" || stored === "true"
     }
     readonly property bool carouselPresentation: forceCarouselPresentation || carouselEnabled
-    onItemsChanged: carouselIndex = Math.min(carouselIndex, Math.max(0, carouselCount - 1))
+    onPresentationItemsChanged: {
+        carouselIndex = Math.min(carouselIndex, Math.max(0, carouselCount - 1))
+        if (!flipRunning)
+            syncCarouselFace()
+    }
+    onItemsChanged: Qt.callLater(function() {
+        if (!flipRunning)
+            syncCarouselFace()
+    })
+    Component.onCompleted: syncCarouselFace()
 
     Timer {
         running: card.carouselPresentation && card.carouselEnabled && card.carouselCount > 1
@@ -122,22 +170,14 @@ GlassCard {
     SequentialAnimation {
         id: carouselFlip
         NumberAnimation {
-            target: carouselFace; property: "opacity"; to: 0.36
-            duration: Motion.fastMs
+            target: card
+            property: "flipProgress"
+            from: 0
+            to: 1
+            duration: Motion.enabled ? 460 : 0
+            easing.type: Easing.InOutCubic
         }
-        ParallelAnimation {
-            NumberAnimation {
-                target: carouselFace; property: "opacity"; to: 1
-                duration: Motion.normalMs
-                easing.type: Easing.BezierSpline
-                easing.bezierCurve: Motion.emphasized
-            }
-            NumberAnimation {
-                target: carouselTilt; property: "angle"; from: card.flipDirection >= 0 ? 6 : -6; to: 0
-                duration: Motion.normalMs
-                easing.type: Easing.OutCubic
-            }
-        }
+        ScriptAction { script: card.finishCarouselFlip() }
     }
 
     Column {
@@ -170,7 +210,7 @@ GlassCard {
                 width: matrixLabel.implicitWidth + 12
                 height: 20
                 radius: 5
-                opacity: card.items.length > 0 ? 1 : 0.42
+                opacity: card.presentationItems.length > 0 ? 1 : 0.42
                 anchors.verticalCenter: parent.verticalCenter
                 color: matrixMouse.containsMouse ? Theme.activeFill : Qt.rgba(1, 1, 1, 0.04)
                 border.color: matrixMouse.containsMouse ? Theme.accent : Theme.cardStroke
@@ -185,14 +225,15 @@ GlassCard {
                     id: matrixMouse
                     anchors.fill: parent
                     hoverEnabled: true
-                    cursorShape: card.items.length > 0 ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    onClicked: if (card.items.length > 0) card.openMatrix()
+                    cursorShape: card.presentationItems.length > 0
+                                 ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onClicked: if (card.presentationItems.length > 0) card.openMatrix()
                 }
             }
         }
 
         Text {
-            visible: card.items.length === 0
+            visible: card.presentationItems.length === 0
             text: "Chargement des flux…"
             color: Theme.textSecondary
             font.pixelSize: card.px(Theme.fontSizeCaption)
@@ -205,129 +246,112 @@ GlassCard {
             height: card.carouselHeight
             radius: 8
             color: Qt.rgba(1, 1, 1, 0.045)
-            border.color: Theme.cardStroke
+            border.color: card.flipRunning
+                          ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.62)
+                          : Theme.cardStroke
             clip: true
+            scale: 1 - Math.sin(card.flipProgress * Math.PI) * 0.018
+
+            Behavior on border.color { ColorAnimation { duration: Motion.fastMs } }
 
             HoverHandler { id: carouselHover }
 
-            transform: Rotation {
-                id: carouselTilt
-                origin.x: carouselCard.width / 2
-                origin.y: carouselCard.height / 2
-                axis { x: 0; y: 1; z: 0 }
-                angle: 0
+            Item {
+                id: outgoingFace
+                anchors.fill: parent
+                visible: !card.flipRunning || card.flipProgress < 0.5
+                opacity: card.flipRunning
+                         ? Math.max(0.12, 1 - card.flipProgress * 1.55) : 1
+                transform: Rotation {
+                    origin.x: outgoingFace.width / 2
+                    origin.y: outgoingFace.height / 2
+                    axis { x: 0; y: 1; z: 0 }
+                    angle: card.flipDirection * Math.min(1, card.flipProgress * 2) * 90
+                }
+
+                NewsArticleVisual {
+                    anchors.fill: parent
+                    article: card.displayedItem
+                    textScale: card.textScale
+                    sideInset: 42
+                    bottomInset: 30
+                }
             }
 
             Item {
-                id: carouselFace
+                id: incomingFace
                 anchors.fill: parent
-
-                Image {
-                    anchors.fill: parent
-                    source: card.activeItem.image || ""
-                    fillMode: Image.PreserveAspectCrop
-                    asynchronous: true
-                    visible: (card.activeItem.image || "") !== ""
-                    opacity: 0.72
+                visible: card.flipRunning && card.flipProgress >= 0.5
+                opacity: Math.min(1, Math.max(0.12, (card.flipProgress - 0.35) * 1.55))
+                transform: Rotation {
+                    origin.x: incomingFace.width / 2
+                    origin.y: incomingFace.height / 2
+                    axis { x: 0; y: 1; z: 0 }
+                    angle: -card.flipDirection
+                           * Math.max(0, 1 - (card.flipProgress - 0.5) * 2) * 90
                 }
 
-                Rectangle {
+                NewsArticleVisual {
                     anchors.fill: parent
-                    color: (card.activeItem.image || "") !== ""
-                        ? Qt.rgba(0, 0, 0, 0.34)
-                        : Qt.rgba(0.06, 0.10, 0.17, 1)
+                    article: card.incomingItem
+                    textScale: card.textScale
+                    sideInset: 42
+                    bottomInset: 30
                 }
+            }
 
-                Rectangle {
-                    anchors.fill: parent
-                    gradient: Gradient {
-                        GradientStop { position: 0.0; color: Qt.rgba(0.02, 0.04, 0.08, 0.14) }
-                        GradientStop { position: 0.62; color: Qt.rgba(0.02, 0.04, 0.08, 0.76) }
-                        GradientStop { position: 1.0; color: Qt.rgba(0.02, 0.04, 0.08, 0.94) }
-                    }
-                }
+            Rectangle {
+                anchors.fill: parent
+                radius: parent.radius
+                color: "transparent"
+                border.width: 2
+                border.color: Theme.accent
+                opacity: card.flipRunning
+                         ? Math.sin(card.flipProgress * Math.PI) * 0.42 : 0
+            }
 
-                Column {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.margins: 14
-                    anchors.leftMargin: 42
-                    anchors.rightMargin: 42
-                    spacing: 8
-
-                    Row {
-                        width: parent.width
-                        spacing: 8
-                        Text {
-                            width: Math.max(40, parent.width - timeText.width - 8)
-                            text: card.activeItem.source || ""
-                            color: "#dcdcec"
-                            font.pixelSize: card.px(10)
-                            elide: Text.ElideRight
-                        }
-                        Text {
-                            id: timeText
-                            text: card.activeItem.time || ""
-                            color: "#dcdcec"
-                            font.pixelSize: card.px(10)
-                        }
-                    }
-
-                    Text {
-                        width: parent.width
-                        text: card.activeItem.title || ""
-                        color: "#ffffff"
-                        font.pixelSize: card.px(14)
-                        font.weight: Font.DemiBold
-                        wrapMode: Text.WordWrap
-                        maximumLineCount: 3
-                        elide: Text.ElideRight
-                        lineHeight: 1.16
-                    }
-
-                    Text {
-                        visible: (card.activeItem.description || "") !== ""
-                        width: parent.width
-                        text: card.activeItem.description || ""
-                        color: Qt.rgba(0.96, 0.98, 1.0, 0.82)
-                        font.pixelSize: card.px(11)
-                        wrapMode: Text.WordWrap
-                        maximumLineCount: 2
-                        elide: Text.ElideRight
-                    }
-
-                    Row {
-                        width: parent.width
-                        spacing: 5
-                        Repeater {
-                            model: card.carouselCount
-                            delegate: Rectangle {
-                                required property int index
-                                width: index === card.carouselIndex ? 15 : 5
-                                height: 5
-                                radius: 3
-                                color: index === card.carouselIndex ? Theme.accent : Qt.rgba(1, 1, 1, 0.36)
-                                Behavior on width { NumberAnimation { duration: Motion.fastMs } }
-                                MouseArea {
-                                    anchors.fill: parent
-                                    anchors.margins: -5
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: card.setCarouselItem(index)
-                                }
-                            }
+            Row {
+                z: 3
+                anchors.left: parent.left
+                anchors.leftMargin: 42
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 14
+                spacing: 5
+                Repeater {
+                    model: card.carouselCount
+                    delegate: Rectangle {
+                        required property int index
+                        width: index === (card.flipRunning
+                                          ? card.pendingCarouselIndex
+                                          : card.carouselIndex) ? 15 : 5
+                        height: 5
+                        radius: 3
+                        color: index === (card.flipRunning
+                                          ? card.pendingCarouselIndex
+                                          : card.carouselIndex)
+                               ? Theme.accent : Qt.rgba(1, 1, 1, 0.36)
+                        Behavior on width { NumberAnimation { duration: Motion.fastMs } }
+                        MouseArea {
+                            anchors.fill: parent
+                            anchors.margins: -5
+                            enabled: !card.flipRunning
+                            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: card.setCarouselItem(index)
                         }
                     }
                 }
             }
 
             MouseArea {
+                z: 1
                 anchors.fill: parent
+                enabled: !card.flipRunning
                 cursorShape: Qt.PointingHandCursor
-                onClicked: card.openItem(card.activeItem)
+                onClicked: card.openItem(card.displayedItem)
             }
 
             Rectangle {
+                z: 4
                 visible: card.carouselCount > 1 && (carouselHover.hovered || prevMouse.containsMouse)
                 x: 8
                 anchors.verticalCenter: parent.verticalCenter
@@ -338,21 +362,23 @@ GlassCard {
                                                : Qt.rgba(0, 0, 0, 0.28)
                 Text {
                     anchors.centerIn: parent
-                    text: "<"
+                    text: "\uE72B"
+                    font.family: "Segoe Fluent Icons"
                     color: Theme.textPrimary
-                    font.pixelSize: card.px(24)
-                    font.weight: Font.Light
+                    font.pixelSize: card.px(16)
                 }
                 MouseArea {
                     id: prevMouse
                     anchors.fill: parent
                     hoverEnabled: true
+                    enabled: !card.flipRunning
                     cursorShape: Qt.PointingHandCursor
                     onClicked: card.rotateCarousel(-1)
                 }
             }
 
             Rectangle {
+                z: 4
                 visible: card.carouselCount > 1 && (carouselHover.hovered || nextMouse.containsMouse)
                 anchors.right: parent.right
                 anchors.rightMargin: 8
@@ -364,21 +390,23 @@ GlassCard {
                                                : Qt.rgba(0, 0, 0, 0.28)
                 Text {
                     anchors.centerIn: parent
-                    text: ">"
+                    text: "\uE72A"
+                    font.family: "Segoe Fluent Icons"
                     color: Theme.textPrimary
-                    font.pixelSize: card.px(24)
-                    font.weight: Font.Light
+                    font.pixelSize: card.px(16)
                 }
                 MouseArea {
                     id: nextMouse
                     anchors.fill: parent
                     hoverEnabled: true
+                    enabled: !card.flipRunning
                     cursorShape: Qt.PointingHandCursor
                     onClicked: card.rotateCarousel(1)
                 }
             }
 
             Rectangle {
+                z: 5
                 visible: carouselHover.hovered || resizeArea.pressed
                 anchors.left: parent.left
                 anchors.right: parent.right

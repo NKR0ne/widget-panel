@@ -1,17 +1,19 @@
 import QtQuick
+import QtQuick.Controls
 import QtPanel.Native
 
-// Native version of the Electron "theme matrix" stage: a modal scanner for
-// all stories in one news category, with direct handoff into ReaderOverlay.
+// Full-category article matrix. Every story remains visible in a virtualized
+// card grid while the selected article opens in an adjacent native reader.
 Item {
     id: overlay
 
     property bool open: false
-    // Panel content to blur behind the matrix; set by PanelSurface.
     property Item backdropSource: null
     property string categoryLabel: ""
     property var items: []
     property var feedLabels: []
+    property bool readerOpen: false
+    property string selectedUrl: ""
 
     function compactText(value, fallback) {
         return String(value || fallback || "").replace(/\s+/g, " ").trim()
@@ -19,9 +21,14 @@ Item {
 
     function hostFromUrl(url) {
         const match = String(url || "").match(/^https?:\/\/([^\/?#]+)/i)
-        if (!match)
-            return ""
-        return match[1].replace(/^www\./, "")
+        return match ? match[1].replace(/^www\./, "") : ""
+    }
+
+    function feedDisplay(entry) {
+        const label = compactText(entry && entry.label, "")
+        if (/^https?:\/\//i.test(label))
+            return hostFromUrl(label)
+        return label || hostFromUrl(entry && entry.url)
     }
 
     function sourceStats() {
@@ -38,21 +45,41 @@ Item {
             counts[source] += 1
         }
         labels.sort((a, b) => counts[b] - counts[a] || a.localeCompare(b))
-        const out = []
-        for (let i = 0; i < labels.length && i < 6; i++)
-            out.push({ label: labels[i], count: counts[labels[i]] })
-        return out
+        const result = []
+        for (let i = 0; i < labels.length; i++)
+            result.push({ label: labels[i], count: counts[labels[i]] })
+        return result
+    }
+
+    function articlesFor(label) {
+        const result = []
+        for (const item of News.itemsFor(label)) {
+            if (String(item.title || "").trim() !== "")
+                result.push(item)
+        }
+        return result
     }
 
     function show(label) {
-        categoryLabel = label || "News"
-        items = News.itemsFor(categoryLabel)
+        categoryLabel = label || "Nouvelles"
+        items = articlesFor(categoryLabel)
         feedLabels = News.feedLabelsFor(categoryLabel)
+        selectedUrl = ""
+        readerOpen = false
+        Reader.close()
         open = true
         Panel.setModalOpen(true)
+        Qt.callLater(function() { matrixGrid.forceActiveFocus() })
+    }
+
+    function closeReader() {
+        readerOpen = false
+        selectedUrl = ""
+        Reader.close()
     }
 
     function dismiss() {
+        closeReader()
         open = false
         Panel.setModalOpen(false)
     }
@@ -60,7 +87,8 @@ Item {
     function openArticle(item) {
         if (!item || !item.link)
             return
-        dismiss()
+        selectedUrl = String(item.link)
+        readerOpen = true
         Reader.open(item.link, item.title || "", item.source || "",
                     item.image || "", item.description || "")
     }
@@ -68,6 +96,8 @@ Item {
     anchors.fill: parent
     visible: opacity > 0
     opacity: open ? 1 : 0
+    focus: open
+    Keys.onEscapePressed: readerOpen ? closeReader() : dismiss()
 
     Behavior on opacity {
         NumberAnimation {
@@ -93,7 +123,7 @@ Item {
         target: News
         function onCategoryUpdated(label) {
             if (overlay.open && label === overlay.categoryLabel) {
-                overlay.items = News.itemsFor(label)
+                overlay.items = overlay.articlesFor(label)
                 overlay.feedLabels = News.feedLabelsFor(label)
             }
         }
@@ -103,7 +133,8 @@ Item {
         anchors.fill: parent
         source: overlay.backdropSource
         active: overlay.open
-        dim: 0.62
+        dim: 0.5
+
         MouseArea {
             anchors.fill: parent
             enabled: overlay.open
@@ -112,18 +143,20 @@ Item {
     }
 
     Rectangle {
-        id: matrixCard
+        id: matrixSurface
         anchors.fill: parent
-        anchors.margins: 26
+        anchors.margins: 12
         radius: Theme.radiusPanel
-        color: "#10141d"
-        border.color: Theme.cardStroke
-        scale: overlay.open ? 1 : 0.97
+        color: Theme.compositionMaterial
+               ? Qt.rgba(0.025, 0.035, 0.06, 0.94)
+               : Qt.rgba(0.035, 0.045, 0.075, 0.97)
+        border.color: Theme.keyline
+        scale: overlay.open ? 1 : 0.975
         clip: true
 
         Behavior on scale {
             NumberAnimation {
-                duration: Motion.normalMs
+                duration: Motion.deliberateMs
                 easing.type: Easing.BezierSpline
                 easing.bezierCurve: Motion.emphasized
             }
@@ -131,219 +164,365 @@ Item {
 
         MouseArea { anchors.fill: parent }
 
-        Column {
-            anchors.fill: parent
-            anchors.margins: 18
-            spacing: 12
+        Rectangle {
+            id: matrixHeader
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            height: 70
+            color: Qt.rgba(1, 1, 1, 0.025)
 
-            Row {
-                width: parent.width
-                spacing: 10
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 1
+                color: Theme.cardStroke
+            }
 
-                Rectangle {
-                    width: 8
-                    height: 8
-                    radius: 4
-                    color: Theme.accent
-                    anchors.verticalCenter: parent.verticalCenter
-                }
+            Rectangle {
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: 3
+                color: Theme.accent
+                opacity: 0.88
+            }
 
-                Column {
-                    width: parent.width - closeBtn.width - 28
-                    spacing: 2
+            Column {
+                anchors.left: parent.left
+                anchors.leftMargin: 20
+                anchors.right: readerState.left
+                anchors.rightMargin: 16
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 3
+
+                Row {
+                    width: parent.width
+                    spacing: 10
+
                     Text {
-                        width: parent.width
-                        text: overlay.categoryLabel || "News"
-                        color: Theme.textPrimary
-                        font.pixelSize: 19
+                        text: "MATRIX"
+                        color: Theme.accent
+                        font.pixelSize: 9
                         font.weight: Font.DemiBold
-                        elide: Text.ElideRight
+                        font.letterSpacing: 1.4
                     }
-                    Text {
-                        width: parent.width
-                        text: overlay.items.length + " stories / " + overlay.feedLabels.length + " feeds"
+
+                    Rectangle {
+                        width: 4
+                        height: 4
+                        radius: 2
+                        anchors.verticalCenter: parent.verticalCenter
                         color: Theme.textSecondary
-                        font.pixelSize: Theme.fontSizeCaption
-                        elide: Text.ElideRight
+                        opacity: 0.55
+                    }
+
+                    Text {
+                        text: overlay.items.length + " ARTICLES"
+                        color: Theme.textSecondary
+                        font.pixelSize: 9
+                        font.weight: Font.Medium
+                        font.letterSpacing: 0.8
                     }
                 }
 
-                Rectangle {
-                    id: closeBtn
-                    width: 28
-                    height: 28
-                    radius: 6
-                    color: closeMouse.containsMouse ? Theme.hover : "transparent"
+                Text {
+                    width: parent.width
+                    text: overlay.categoryLabel || "Nouvelles"
+                    color: Theme.textPrimary
+                    font.pixelSize: 20
+                    font.weight: Font.DemiBold
+                    elide: Text.ElideRight
+                }
+            }
+
+            Rectangle {
+                id: readerState
+                anchors.right: closeButton.left
+                anchors.rightMargin: 8
+                anchors.verticalCenter: parent.verticalCenter
+                width: readerStateText.implicitWidth + 20
+                height: 28
+                radius: 7
+                visible: overlay.readerOpen
+                color: Theme.activeFill
+                border.color: Qt.rgba(Theme.accent.r, Theme.accent.g,
+                                      Theme.accent.b, 0.44)
+
+                Text {
+                    id: readerStateText
+                    anchors.centerIn: parent
+                    text: "LECTURE ACTIVE"
+                    color: Theme.textPrimary
+                    font.pixelSize: 9
+                    font.weight: Font.DemiBold
+                    font.letterSpacing: 0.8
+                }
+            }
+
+            IconButton {
+                id: closeButton
+                anchors.right: parent.right
+                anchors.rightMargin: 16
+                anchors.verticalCenter: parent.verticalCenter
+                glyph: "\uE711"
+                tooltip: "Fermer la matrice"
+                onClicked: overlay.dismiss()
+            }
+        }
+
+        Item {
+            id: matrixBody
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: matrixHeader.bottom
+            anchors.bottom: parent.bottom
+            anchors.margins: 12
+
+            Item {
+                id: gridPane
+                anchors.left: parent.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: overlay.readerOpen
+                       ? Math.max(420, parent.width * 0.58)
+                       : parent.width
+
+                Behavior on width {
+                    NumberAnimation {
+                        duration: Motion.deliberateMs
+                        easing.type: Easing.BezierSpline
+                        easing.bezierCurve: Motion.emphasized
+                    }
+                }
+
+                ListView {
+                    id: sourceRail
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    height: 30
+                    orientation: ListView.Horizontal
+                    spacing: 7
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    model: overlay.feedLabels.length
+                           ? overlay.feedLabels : overlay.sourceStats()
+
+                    delegate: Rectangle {
+                        required property var modelData
+                        width: Math.min(220, sourceLabel.implicitWidth + 18)
+                        height: 24
+                        radius: 7
+                        color: Qt.rgba(1, 1, 1, 0.045)
+                        border.color: Theme.cardStroke
+
+                        Text {
+                            id: sourceLabel
+                            anchors.centerIn: parent
+                            width: Math.min(202, implicitWidth)
+                            text: modelData.count !== undefined
+                                  ? overlay.feedDisplay(modelData) + "  " + modelData.count
+                                  : overlay.feedDisplay(modelData)
+                            color: Theme.textSecondary
+                            font.pixelSize: 9
+                            font.weight: Font.Medium
+                            elide: Text.ElideRight
+                        }
+                    }
+                }
+
+                GridView {
+                    id: matrixGrid
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: sourceRail.bottom
+                    anchors.bottom: parent.bottom
+                    anchors.topMargin: 8
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    reuseItems: true
+                    keyNavigationEnabled: true
+                    model: overlay.items
+
+                    readonly property int columnCount: Math.max(1, Math.min(
+                        overlay.readerOpen ? 3 : 5,
+                        Math.floor(width / (overlay.readerOpen ? 250 : 320))))
+                    cellWidth: Math.floor(width / columnCount)
+                    cellHeight: Math.max(226, Math.min(286, height * 0.34))
+
+                    ScrollBar.vertical: ScrollBar {
+                        policy: ScrollBar.AsNeeded
+                        width: 7
+                    }
+
+                    delegate: Item {
+                        id: tile
+                        required property var modelData
+                        required property int index
+
+                        width: matrixGrid.cellWidth
+                        height: matrixGrid.cellHeight
+                        property bool entered: !Motion.enabled
+
+                        Rectangle {
+                            id: articleCard
+                            anchors.fill: parent
+                            anchors.margins: 5
+                            radius: 8
+                            color: Qt.rgba(1, 1, 1,
+                                           cardMouse.containsMouse ? 0.09 : 0.045)
+                            border.width: overlay.selectedUrl === String(tile.modelData.link || "")
+                                          ? 2 : 1
+                            border.color: overlay.selectedUrl === String(tile.modelData.link || "")
+                                          ? Theme.accent
+                                          : cardMouse.containsMouse
+                                            ? Theme.keyline : Theme.cardStroke
+                            clip: true
+                            scale: cardMouse.pressed ? 0.985
+                                   : cardMouse.containsMouse ? 1.012 : 1
+                            opacity: tile.entered ? 1 : 0
+
+                            Behavior on scale {
+                                NumberAnimation {
+                                    duration: Motion.fastMs
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+                            Behavior on color { ColorAnimation { duration: Motion.fastMs } }
+                            Behavior on border.color {
+                                ColorAnimation { duration: Motion.fastMs }
+                            }
+
+                            NewsArticleVisual {
+                                anchors.fill: parent
+                                article: tile.modelData
+                                textScale: 1.0
+                                titleLines: 3
+                                descriptionLines: 2
+                                imageOpacity: 0.68
+                                bottomInset: 16
+                            }
+
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.top: parent.top
+                                anchors.margins: 10
+                                width: articleNumber.implicitWidth + 12
+                                height: 22
+                                radius: 6
+                                color: Qt.rgba(0.02, 0.03, 0.055, 0.76)
+                                border.color: Qt.rgba(1, 1, 1, 0.12)
+
+                                Text {
+                                    id: articleNumber
+                                    anchors.centerIn: parent
+                                    text: String(tile.index + 1).padStart(2, "0")
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 9
+                                    font.weight: Font.DemiBold
+                                }
+                            }
+
+                            Rectangle {
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.top: parent.top
+                                height: 2
+                                color: Theme.accent
+                                opacity: cardMouse.containsMouse ? 0.9 : 0
+                                Behavior on opacity {
+                                    NumberAnimation { duration: Motion.fastMs }
+                                }
+                            }
+
+                            MouseArea {
+                                id: cardMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: tile.modelData.link
+                                             ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                onClicked: overlay.openArticle(tile.modelData)
+                            }
+                        }
+
+                        SequentialAnimation {
+                            running: overlay.open && !tile.entered
+                            PauseAnimation {
+                                duration: Motion.enabled ? Math.min(tile.index * 18, 180) : 0
+                            }
+                            ParallelAnimation {
+                                NumberAnimation {
+                                    target: articleCard
+                                    property: "opacity"
+                                    from: 0
+                                    to: 1
+                                    duration: Motion.normalMs
+                                    easing.type: Easing.OutCubic
+                                }
+                                NumberAnimation {
+                                    target: articleCard
+                                    property: "scale"
+                                    from: 0.96
+                                    to: 1
+                                    duration: Motion.normalMs
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+                            ScriptAction { script: tile.entered = true }
+                        }
+                    }
+
                     Text {
                         anchors.centerIn: parent
-                        text: "X"
+                        visible: overlay.items.length === 0
+                        text: "Les articles de cette categorie sont en cours de chargement."
                         color: Theme.textSecondary
-                        font.pixelSize: 12
-                        font.weight: Font.DemiBold
+                        font.pixelSize: Theme.fontSizeBody
                     }
-                    MouseArea {
-                        id: closeMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: overlay.dismiss()
+                }
+
+                Rectangle {
+                    anchors.left: matrixGrid.left
+                    anchors.right: matrixGrid.right
+                    anchors.bottom: matrixGrid.bottom
+                    height: 34
+                    visible: matrixGrid.contentHeight > matrixGrid.height
+                    gradient: Gradient {
+                        GradientStop { position: 0.0; color: "transparent" }
+                        GradientStop { position: 1.0; color: matrixSurface.color }
                     }
                 }
             }
 
             Rectangle {
-                width: parent.width
-                height: 1
+                anchors.left: gridPane.right
+                anchors.leftMargin: 7
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                width: 1
+                visible: overlay.readerOpen
                 color: Theme.cardStroke
+                opacity: overlay.readerOpen ? 1 : 0
+                Behavior on opacity { NumberAnimation { duration: Motion.fastMs } }
             }
 
-            Flickable {
-                width: parent.width
-                height: parent.height - y
-                contentHeight: content.height + 16
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
+            ArticleReaderPane {
+                anchors.left: gridPane.right
+                anchors.leftMargin: 15
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                visible: overlay.readerOpen
+                opacity: overlay.readerOpen ? 1 : 0
+                active: overlay.readerOpen && overlay.selectedUrl !== ""
+                onCloseRequested: overlay.closeReader()
 
-                Column {
-                    id: content
-                    width: parent.width
-                    spacing: 12
-
-                    Flow {
-                        width: parent.width
-                        spacing: 8
-                        Repeater {
-                            model: overlay.feedLabels.length ? overlay.feedLabels : overlay.sourceStats()
-                            delegate: Rectangle {
-                                required property var modelData
-                                width: Math.min(176, statLabel.implicitWidth + 18)
-                                height: 24
-                                radius: 7
-                                color: Qt.rgba(1, 1, 1, 0.045)
-                                border.color: Theme.cardStroke
-                                Text {
-                                    id: statLabel
-                                    anchors.centerIn: parent
-                                    text: modelData.count !== undefined
-                                          ? modelData.label + " x" + modelData.count
-                                          : modelData.label
-                                    color: Theme.textSecondary
-                                    font.pixelSize: 9
-                                    elide: Text.ElideRight
-                                }
-                            }
-                        }
-                    }
-
-                    Grid {
-                        id: storyGrid
-                        width: parent.width
-                        columns: Math.max(1, Math.floor(width / 220))
-                        spacing: 10
-
-                        Repeater {
-                            model: overlay.items
-                            delegate: Rectangle {
-                                id: tile
-                                required property var modelData
-
-                                width: Math.floor((storyGrid.width
-                                                   - Math.max(0, storyGrid.columns - 1) * storyGrid.spacing)
-                                                  / storyGrid.columns)
-                                height: 214
-                                radius: 8
-                                color: tileMouse.containsMouse ? Qt.rgba(0.31, 0.56, 0.97, 0.16)
-                                                               : Qt.rgba(1, 1, 1, 0.045)
-                                border.color: tileMouse.containsMouse ? Theme.accent : Theme.cardStroke
-                                clip: true
-
-                                Image {
-                                    anchors.fill: parent
-                                    source: tile.modelData.image || ""
-                                    fillMode: Image.PreserveAspectCrop
-                                    asynchronous: true
-                                    visible: (tile.modelData.image || "") !== ""
-                                    opacity: 0.62
-                                }
-
-                                Rectangle {
-                                    anchors.fill: parent
-                                    visible: (tile.modelData.image || "") === ""
-                                    color: Qt.rgba(0.08, 0.12, 0.18, 1)
-                                }
-
-                                Rectangle {
-                                    anchors.fill: parent
-                                    color: Qt.rgba(0, 0, 0, tile.modelData.image ? 0.42 : 0.0)
-                                }
-
-                                Column {
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
-                                    anchors.bottom: parent.bottom
-                                    anchors.margins: 12
-                                    spacing: 8
-
-                                    Row {
-                                        width: parent.width
-                                        spacing: 8
-                                        Text {
-                                            width: Math.max(40, parent.width - timeText.width - 8)
-                                            text: overlay.compactText(tile.modelData.source,
-                                                                      overlay.hostFromUrl(tile.modelData.link))
-                                            color: Theme.textSecondary
-                                            font.pixelSize: 9
-                                            elide: Text.ElideRight
-                                        }
-                                        Text {
-                                            id: timeText
-                                            text: tile.modelData.time || ""
-                                            color: Theme.textSecondary
-                                            font.pixelSize: 9
-                                        }
-                                    }
-
-                                    Text {
-                                        width: parent.width
-                                        text: tile.modelData.title || "Untitled story"
-                                        color: Theme.textPrimary
-                                        font.pixelSize: 15
-                                        font.weight: Font.DemiBold
-                                        wrapMode: Text.WordWrap
-                                        maximumLineCount: 3
-                                        elide: Text.ElideRight
-                                        lineHeight: 1.1
-                                    }
-
-                                    Text {
-                                        width: parent.width
-                                        text: tile.modelData.description || "Open the story for the reader view."
-                                        color: Theme.textSecondary
-                                        font.pixelSize: 10
-                                        wrapMode: Text.WordWrap
-                                        maximumLineCount: 3
-                                        elide: Text.ElideRight
-                                    }
-                                }
-
-                                MouseArea {
-                                    id: tileMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: tile.modelData.link ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                    onClicked: overlay.openArticle(tile.modelData)
-                                }
-                            }
-                        }
-                    }
-
-                    Text {
-                        visible: overlay.items.length === 0
-                        width: parent.width
-                        text: "Stories for this theme are still loading."
-                        color: Theme.textSecondary
-                        font.pixelSize: Theme.fontSizeBody
-                        horizontalAlignment: Text.AlignHCenter
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: Motion.normalMs
+                        easing.type: Easing.OutCubic
                     }
                 }
             }
