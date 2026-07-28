@@ -106,9 +106,6 @@ private:
     bool createCompositionTree();
     bool createQtRenderPath();
     void wireInput();
-    // Synthesises the pointer moves the island withholds while a button is
-    // held, without which no DragHandler in the scene ever sees a drag.
-    void pumpHeldPointer();
     void resizeToIsland();
     void renderFrame();
     void requestRender();

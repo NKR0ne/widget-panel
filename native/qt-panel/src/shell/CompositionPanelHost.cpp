@@ -21,11 +21,8 @@
 #include <QElapsedTimer>
 #include <QDebug>
 #include <QKeyEvent>
-#include <QLineF>
 #include <QMouseEvent>
 #include <QWheelEvent>
-
-#include <functional>
 
 // Input is delivered with QCoreApplication::sendEvent. QWindowSystemInterface
 // looks like the more correct route -- it is the path the platform plugin uses,
@@ -79,23 +76,17 @@ struct CompositionPanelHost::Private
     muinput::InputPointerSource pointerSource{ nullptr };
     muinput::InputKeyboardSource keyboardSource{ nullptr };
     Qt::CursorShape lastCursorShape = Qt::ArrowCursor;
-    HCURSOR lastCursor = nullptr;
     int pixelWidth = 0;
     int pixelHeight = 0;
 
-    // The island reports PointerMoved only while no button is held, so a drag
-    // arrives as a press and a release with nothing in between. renderFrame
-    // fills the gap from the real cursor position; see pumpHeldPointer.
-    std::function<void(QEvent::Type, const QPointF&, Qt::MouseButton, Qt::MouseButtons)> sendMouse;
-    bool leftButtonDown = false;
     QPointF lastPointerDip{ -1, -1 };
 
-    // Every synthetic event otherwise carries timestamp 0. Qt tracks a pointer
+    // Every event we build otherwise carries timestamp 0. Qt tracks a pointer
     // across events by updating a persistent point on the device, and that
     // update is timestamp-driven; with a constant timestamp the point never
     // advances, so scenePressPosition follows the cursor and the drag delta a
     // DragHandler measures against it stays 0 no matter how far the pointer
-    // travels.
+    // travels. Verified by disabling just this: every drag stops working.
     QElapsedTimer inputClock;
 };
 
@@ -130,24 +121,31 @@ LRESULT CALLBACK hostWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 // -- so the shape never reaches the OS and the pointer stays an arrow over
 // resize handles, text fields and links. Mapping it across by hand is what
 // restores the feedback that tells you a drag will resize.
-HCURSOR cursorForShape(Qt::CursorShape shape)
+//
+// Win32 SetCursor is NOT the way to apply it, however tempting: the pointer sits
+// over the bridge's own child window, which answers WM_SETCURSOR itself and puts
+// the arrow straight back. Clearing the class cursor does not help either, since
+// it does not go through DefWindowProc. InputPointerSource::Cursor is the
+// island's own mechanism and the only one that holds.
+muinput::InputSystemCursorShape systemCursorShape(Qt::CursorShape shape)
 {
-    const wchar_t* id = IDC_ARROW;
+    using S = muinput::InputSystemCursorShape;
     switch (shape) {
-    case Qt::SizeHorCursor:   case Qt::SplitHCursor: id = IDC_SIZEWE;   break;
-    case Qt::SizeVerCursor:   case Qt::SplitVCursor: id = IDC_SIZENS;   break;
-    case Qt::SizeFDiagCursor:                        id = IDC_SIZENWSE; break;
-    case Qt::SizeBDiagCursor:                        id = IDC_SIZENESW; break;
-    case Qt::SizeAllCursor:                          id = IDC_SIZEALL;  break;
-    case Qt::IBeamCursor:                            id = IDC_IBEAM;    break;
-    case Qt::PointingHandCursor:                     id = IDC_HAND;     break;
-    case Qt::WaitCursor:                             id = IDC_WAIT;     break;
-    case Qt::BusyCursor:                             id = IDC_APPSTARTING; break;
-    case Qt::ForbiddenCursor:                        id = IDC_NO;       break;
-    case Qt::CrossCursor:                            id = IDC_CROSS;    break;
-    default: break;
+    case Qt::SizeHorCursor:   case Qt::SplitHCursor: return S::SizeWestEast;
+    case Qt::SizeVerCursor:   case Qt::SplitVCursor: return S::SizeNorthSouth;
+    case Qt::SizeFDiagCursor:                        return S::SizeNorthwestSoutheast;
+    case Qt::SizeBDiagCursor:                        return S::SizeNortheastSouthwest;
+    case Qt::SizeAllCursor:                          return S::SizeAll;
+    case Qt::IBeamCursor:                            return S::IBeam;
+    case Qt::PointingHandCursor:                     return S::Hand;
+    case Qt::WaitCursor:                             return S::Wait;
+    case Qt::BusyCursor:                             return S::AppStarting;
+    case Qt::ForbiddenCursor:                        return S::UniversalNo;
+    case Qt::CrossCursor:                            return S::Cross;
+    case Qt::WhatsThisCursor:                        return S::Help;
+    case Qt::UpArrowCursor:                          return S::UpArrow;
+    default:                                         return S::Arrow;
     }
-    return LoadCursorW(nullptr, id);
 }
 
 // Modifier state comes from the OS rather than the event: KeyEventArgs carries
@@ -348,10 +346,6 @@ void CompositionPanelHost::wireInput()
         QCoreApplication::sendEvent(m_quickWindow, &ev);
     };
 
-    // Lets renderFrame synthesise the moves the island stops reporting while a
-    // button is held. See pumpHeldPointer below.
-    d->sendMouse = send;
-
     d->pointerSource.PointerMoved([this, send](auto&&, const muinput::PointerEventArgs& args) {
         const auto pt = args.CurrentPoint();
         const auto pos = pt.Position();
@@ -359,16 +353,17 @@ void CompositionPanelHost::wireInput()
         send(QEvent::MouseMove, d->lastPointerDip, Qt::NoButton,
              pt.Properties().IsLeftButtonPressed() ? Qt::LeftButton : Qt::NoButton);
         // AFTER dispatching: sendEvent is synchronous, so QML has already
-        // updated hover state and therefore the window's cursor by this point.
-        // Applying it here also lands after the system's own WM_SETCURSOR for
-        // this move, which would otherwise put the arrow back.
+        // updated hover state, and Qt has already resolved the item under the
+        // pointer onto the window's cursor -- which it does maintain, even with
+        // no native window to apply it to. Reading it back here is all the
+        // resolution this needs.
         if (m_quickWindow) {
             const Qt::CursorShape shape = m_quickWindow->cursor().shape();
             if (shape != d->lastCursorShape) {
                 d->lastCursorShape = shape;
-                d->lastCursor = cursorForShape(shape);
+                d->pointerSource.Cursor(
+                    muinput::InputSystemCursor::Create(systemCursorShape(shape)));
             }
-            if (d->lastCursor) SetCursor(d->lastCursor);
         }
     });
     d->pointerSource.PointerPressed([this, send](auto&&, const muinput::PointerEventArgs& args) {
@@ -384,11 +379,9 @@ void CompositionPanelHost::wireInput()
         send(QEvent::MouseMove, p, Qt::NoButton, Qt::NoButton);
         send(QEvent::MouseButtonPress, p, Qt::LeftButton, Qt::LeftButton);
         d->lastPointerDip = p;
-        d->leftButtonDown = true;
     });
     d->pointerSource.PointerReleased([this, send](auto&&, const muinput::PointerEventArgs& args) {
         const auto pos = args.CurrentPoint().Position();
-        d->leftButtonDown = false;
         d->lastPointerDip = QPointF(pos.X, pos.Y);
         send(QEvent::MouseButtonRelease, d->lastPointerDip, Qt::LeftButton, Qt::NoButton);
     });
@@ -513,44 +506,9 @@ void CompositionPanelHost::resizeToIsland()
     emit sizeChanged(QSize(qRound(dip.x), qRound(dip.y)), scale);
 }
 
-// The island raises PointerMoved only while no button is held. A drag therefore
-// arrives as a press and a release with nothing in between, so every
-// DragHandler in the scene takes its passive grab on press and is never told
-// the pointer moved: the column resize handle never activates at all, and a
-// card "drag" jumps once on press and snaps back on release. Measured, not
-// inferred -- a 50px drag logged exactly one move, the synthetic one this code
-// injects ahead of the press.
-//
-// Filling the gap from the real cursor position is the smallest fix that
-// restores every drag at once. It runs on the render timer, which is already
-// ticking at 8ms, so it costs a GetCursorPos per frame while a button is held
-// and nothing at all otherwise.
-void CompositionPanelHost::pumpHeldPointer()
-{
-    if (!d->leftButtonDown || !d->sendMouse || !m_hwnd || !d->island) return;
-
-    POINT pt{};
-    if (!GetCursorPos(&pt) || !ScreenToClient(m_hwnd, &pt)) return;
-
-    // GetCursorPos/ScreenToClient are physical pixels; the island's input space
-    // is DIPs. Dividing by the rasterization scale is the same conversion the
-    // render target uses in the opposite direction.
-    const float scale = d->island.RasterizationScale();
-    if (scale <= 0.0f) return;
-    const QPointF p(pt.x / scale, pt.y / scale);
-
-    // Sub-pixel jitter would otherwise resend the same position every frame and
-    // keep handlers churning while the pointer is actually still.
-    if (QLineF(p, d->lastPointerDip).length() < 0.5) return;
-    d->lastPointerDip = p;
-    d->sendMouse(QEvent::MouseMove, p, Qt::NoButton, Qt::LeftButton);
-}
-
 void CompositionPanelHost::renderFrame()
 {
     if (!m_renderControl || !d->surface || !d->qtTexture) return;
-
-    pumpHeldPointer();
 
     // Renders unconditionally. On-demand rendering off renderRequested/
     // sceneChanged plus a custom QAnimationDriver was tried and produced

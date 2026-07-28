@@ -282,11 +282,20 @@ GlassCard {
                 profile: WebProfile
                 url: "about:blank"
                 backgroundColor: mapFrame.color
-                focus: true
 
+                // Deliberately does NOT take focus. This is an always-present
+                // background card, and it used to claim active focus on load
+                // and on every navigation -- so the scene's activeFocusItem was
+                // permanently this web view and panel-level keys went to the
+                // map instead of the panel. Transient web surfaces (the island,
+                // the PressReader spotlight) still focus on navigation, which is
+                // right for them: you type into those.
+                //
+                // activeFocusOnPress stays at its default, so clicking the map
+                // still focuses it for scroll-zoom and keyboard panning.
                 settings.forceDarkMode: false
                 settings.localContentCanAccessRemoteUrls: true
-                settings.focusOnNavigationEnabled: true
+                settings.focusOnNavigationEnabled: false
                 settings.scrollAnimatorEnabled: true
 
                 onLoadingChanged: function(info) {
