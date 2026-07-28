@@ -99,7 +99,12 @@ int main(int argc, char* argv[])
     const QCommandLineOption compositionOption(
     QStringLiteral("composition"),
     QStringLiteral("Host the panel on the Windows composition backdrop "
-                   "(DesktopAcrylicController) instead of the DWM window backdrop."));
+                   "(DesktopAcrylicController) instead of the DWM window backdrop. "
+                   "Remembered, so later launches without the flag keep it."));
+    const QCommandLineOption noCompositionOption(
+        QStringLiteral("no-composition"),
+        QStringLiteral("Force the windowed DWM backdrop and stop remembering "
+                       "the composition backdrop."));
 const QCommandLineOption diagPressReaderOption(
         QStringLiteral("diag-pressreader"),
         QStringLiteral("Open the dedicated PressReader spotlight without automatic login."));
@@ -112,6 +117,7 @@ const QCommandLineOption diagPressReaderOption(
     parser.addOption(diagIslandUrlOption);
     parser.addOption(diagPressReaderOption);
     parser.addOption(compositionOption);
+    parser.addOption(noCompositionOption);
     parser.process(app);
 
     const QString startMode = parser.value(startModeOption).trimmed().toLower();
@@ -388,7 +394,27 @@ const QCommandLineOption diagPressReaderOption(
     // for the renderer interface.
     QQuickWindow* window = nullptr;
     std::unique_ptr<CompositionPanelHost> compositionHost;
-    if (parser.isSet(compositionOption)) {
+    // The backdrop choice is REMEMBERED rather than taken from the command line
+    // alone. A flag has to survive the whole launch chain -- the Run key, the
+    // launcher script, whatever else may start the panel (a restored session, a
+    // double-click, the single-instance relaunch) -- and when any link drops it
+    // the panel silently comes back on the windowed material. That happened
+    // across a reboot even with the Run key demonstrably carrying -Composition,
+    // and the cause was never pinned down. A stored preference does not care
+    // which link dropped it.
+    //
+    // An explicit flag still wins and is what updates the preference, so
+    // --composition / --no-composition remain the way to change it.
+    bool useComposition =
+        settings.get(QStringLiteral("wp-composition"), false).toBool();
+    if (parser.isSet(compositionOption))
+        useComposition = true;
+    if (parser.isSet(noCompositionOption))
+        useComposition = false;
+    if (parser.isSet(compositionOption) || parser.isSet(noCompositionOption))
+        settings.set(QStringLiteral("wp-composition"), useComposition);
+
+    if (useComposition) {
         controller.setCompositionMode(true);
         compositionHost = std::make_unique<CompositionPanelHost>();
         // PanelSurface, not Main: QQuickRenderControl needs an Item root, and
