@@ -19,6 +19,9 @@ param(
     # which is what "it stopped using the Windows material after a reboot" looks
     # like, since autostart goes through this script.
     [switch]$Composition,
+    # Explicitly select the windowed host for deterministic dual-host
+    # diagnostics even when the profile persisted composition mode.
+    [switch]$NoComposition,
     [switch]$DiagFitMode,
     [switch]$DiagPressReader,
     [string]$DiagIslandUrl = '',
@@ -34,6 +37,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ($Composition -and $NoComposition) {
+    throw '-Composition and -NoComposition are mutually exclusive.'
+}
 
 $root = $PSScriptRoot
 $buildName = if ($Generator -eq 'NMake') { "nmake-$Config" } else { $Config }
@@ -143,6 +150,8 @@ $args += @('--renderer', $Renderer)
 $args += @('--start-mode', $StartMode)
 if ($Composition) {
     $args += '--composition'
+} elseif ($NoComposition) {
+    $args += '--no-composition'
 }
 if ($DiagFitMode) {
     $args += '--diag-fitmode'

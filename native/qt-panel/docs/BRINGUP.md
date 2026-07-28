@@ -119,3 +119,27 @@ first run; named profiles never import it.
 powershell -ExecutionPolicy Bypass -File .\build.ps1 `
   -Tests -Run -NoHelper -Profile smoke -ExitAfterMs 12000
 ```
+
+## Release validation matrix
+
+Before feature or release validation, run the controlled matrix. It kills stale
+Qt/MSVC processes, builds the NMake release with tests enabled, and runs Base,
+Station, Direct, and News with PressReader in both windowed and Windows
+composition hosts. Every launch uses an isolated profile and a hard exit
+deadline.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\validate-release.ps1 `
+  -RelaunchDefault
+```
+
+Use `-SkipBuild` only when the exact release binary has already passed the build
+and test step. `-RelaunchDefault` starts the normal profile in composition mode
+after the matrix; add `-WindowedDefault` to select the windowed host instead.
+
+The windowed host writes QML grabs such as `diag-wide.png` and
+`diag-web-island.png` below each matrix profile. The composition host renders
+through `QQuickRenderControl`, so `QQuickWindow::grabWindow()` cannot capture its
+offscreen scene. Validate composition screenshots with a DPI-aware desktop
+capture; geometry and lifecycle evidence remains in each profile's
+`qt-panel.log`.
