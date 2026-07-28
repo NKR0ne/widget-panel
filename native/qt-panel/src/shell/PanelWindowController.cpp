@@ -89,16 +89,25 @@ PanelWindowController::PanelWindowController(SettingsStore* settings, HelperServ
         cookies->loadAllCookies();
     }
 
+}
+
+// Deliberately NOT called from the constructor, where this used to live: the
+// composition flag is set on the controller after construction, so migrating
+// there always wrote the windowed command and silently dropped --composition
+// from autostart. That is why the panel came back on the in-scene material
+// after a reboot however it had been started.
+void PanelWindowController::syncAutostartCommand()
+{
     // Build-tree startup uses launch.ps1 for delayed login initialization and
     // retry handling. Standalone deployments continue launching directly.
-    if (autostart()) {
-        QSettings run(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows"
-                                     "\\CurrentVersion\\Run"), QSettings::NativeFormat);
-        const QString desired = autostartCommand();
-        if (!desired.isEmpty() && run.value(QStringLiteral("qt-panel")).toString() != desired) {
-            run.setValue(QStringLiteral("qt-panel"), desired);
-            qInfo() << "[settings] migrated autostart command";
-        }
+    if (!autostart())
+        return;
+    QSettings run(QStringLiteral("HKEY_CURRENT_USER\\Software\\Microsoft\\Windows"
+                                 "\\CurrentVersion\\Run"), QSettings::NativeFormat);
+    const QString desired = autostartCommand();
+    if (!desired.isEmpty() && run.value(QStringLiteral("qt-panel")).toString() != desired) {
+        run.setValue(QStringLiteral("qt-panel"), desired);
+        qInfo() << "[settings] autostart command updated:" << desired;
     }
 }
 
@@ -790,9 +799,16 @@ QString PanelWindowController::autostartCommand() const
         ? QStringLiteral("debug") : QStringLiteral("release");
     const QString generator = buildName.startsWith(QLatin1String("nmake-"))
         ? QStringLiteral("NMake") : QStringLiteral("Ninja");
+    // Autostart mirrors how the panel is running now. Start it on the
+    // composition backdrop and the login command carries --composition too;
+    // start it windowed and the flag comes back off. Without this the flag was
+    // never propagated at all, so every reboot fell back to the windowed
+    // material no matter what.
+    const QString composition = m_compositionMode
+        ? QStringLiteral(" -Composition") : QString();
     return QStringLiteral("%1 -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass"
-                          " -File %2 -Config %3 -Generator %4 -Startup")
-        .arg(quote(powershell), quote(launcher), config, generator);
+                          " -File %2 -Config %3 -Generator %4 -Startup%5")
+        .arg(quote(powershell), quote(launcher), config, generator, composition);
 }
 
 void PanelWindowController::setAutostart(bool enabled)

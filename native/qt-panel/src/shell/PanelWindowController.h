@@ -78,6 +78,11 @@ public:
     // place, this only delivers the event.
     void notifySurfaceActiveChanged();
 
+    // Rewrites the login command so it matches how the panel is running, the
+    // composition flag included. Must be called AFTER the surface is attached,
+    // which is when the mode is finally known.
+    void syncAutostartCommand();
+
     int surfaceX() const;
     void setSurfaceX(int x);
 

@@ -13,6 +13,12 @@ param(
     [string]$Renderer = 'auto',
     [ValidateSet('base', 'news', 'monitor', 'live')]
     [string]$StartMode = 'base',
+    # Hosts the scene in a Windows composition tree so the backdrop is the
+    # shell's own DesktopAcrylicController. Without it the panel starts on the
+    # windowed path and the material is our in-scene reconstruction instead --
+    # which is what "it stopped using the Windows material after a reboot" looks
+    # like, since autostart goes through this script.
+    [switch]$Composition,
     [switch]$DiagFitMode,
     [switch]$DiagPressReader,
     [string]$DiagIslandUrl = '',
@@ -135,6 +141,9 @@ if ($ExitAfterMs -gt 0) {
 }
 $args += @('--renderer', $Renderer)
 $args += @('--start-mode', $StartMode)
+if ($Composition) {
+    $args += '--composition'
+}
 if ($DiagFitMode) {
     $args += '--diag-fitmode'
 }

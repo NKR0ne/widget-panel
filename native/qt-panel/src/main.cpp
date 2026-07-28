@@ -523,6 +523,11 @@ const QCommandLineOption diagPressReaderOption(
         qInfo() << "[startup] QML root attached";
     }
 
+    // Both paths converge here, which is the first point at which the mode is
+    // settled -- including the fallback that turns composition back off when the
+    // host fails to initialize. Autostart is rewritten from that.
+    controller.syncAutostartCommand();
+
     QObject::connect(&instanceServer, &QLocalServer::newConnection, &controller, [&] {
         while (QLocalSocket* peer = instanceServer.nextPendingConnection()) {
             QObject::connect(peer, &QLocalSocket::disconnected, peer, &QObject::deleteLater);
