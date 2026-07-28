@@ -12,7 +12,9 @@ Item {
     property int newsRevision: 0
     property int storeRevision: 0
     property int carouselCascadeCursor: 0
-    property int carouselCascadeDelay: 900
+    property int carouselCascadeDelay: 5000
+    property int carouselCascadeLastIndex: -1
+    property var carouselCascadeOrder: []
     // True while a rail row is being dragged, so the drop doesn't also select.
     property bool draggingCategory: false
 
@@ -142,37 +144,66 @@ Item {
         return point.y + card.height > 0 && point.y < carouselScroll.height
     }
 
-    // Advances at most one visible category card. Reaching the end of the
-    // delegate list completes a pass; the next pass starts again at index 0.
-    // Individual NewsWidget indexes wrap independently through their articles.
-    function advanceCarouselCascade() {
+    function buildCarouselCascadeOrder() {
         const count = carouselCategoryRepeater.count
-        if (count < 1) {
-            carouselCascadeCursor = 0
-            return true
+        const order = []
+        for (let index = 0; index < count; ++index) {
+            const card = carouselCategoryRepeater.itemAt(index)
+            if (carouselCardIsVisible(card) && card.cascadeEligible)
+                order.push(index)
         }
 
-        carouselCascadeCursor = Math.max(0, Math.min(carouselCascadeCursor, count))
-        for (let index = carouselCascadeCursor; index < count; ++index) {
+        // Fisher-Yates gives every eligible card one turn without producing a
+        // distracting spatial wave across the grid.
+        for (let index = order.length - 1; index > 0; --index) {
+            const swapIndex = Math.floor(Math.random() * (index + 1))
+            const value = order[index]
+            order[index] = order[swapIndex]
+            order[swapIndex] = value
+        }
+        if (order.length > 1 && order[0] === carouselCascadeLastIndex) {
+            const swapIndex = 1 + Math.floor(Math.random() * (order.length - 1))
+            const value = order[0]
+            order[0] = order[swapIndex]
+            order[swapIndex] = value
+        }
+
+        carouselCascadeOrder = order
+        carouselCascadeCursor = 0
+    }
+
+    // Advances at most one card from a shuffled pass. Individual NewsWidget
+    // indexes wrap independently through their articles.
+    function advanceCarouselCascade() {
+        if (carouselCascadeOrder.length === 0)
+            buildCarouselCascadeOrder()
+        if (carouselCascadeOrder.length === 0)
+            return true
+
+        while (carouselCascadeCursor < carouselCascadeOrder.length) {
+            const index = carouselCascadeOrder[carouselCascadeCursor++]
             const card = carouselCategoryRepeater.itemAt(index)
-            carouselCascadeCursor = index + 1
             if (!carouselCardIsVisible(card) || !card.cascadeEligible)
                 continue
             card.rotateCarousel(1)
-            if (carouselCascadeCursor >= count) {
+            carouselCascadeLastIndex = index
+            if (carouselCascadeCursor >= carouselCascadeOrder.length) {
+                carouselCascadeOrder = []
                 carouselCascadeCursor = 0
                 return true
             }
             return false
         }
 
+        carouselCascadeOrder = []
         carouselCascadeCursor = 0
         return true
     }
 
     function restartCarouselCascade() {
+        carouselCascadeOrder = []
         carouselCascadeCursor = 0
-        carouselCascadeDelay = 900
+        carouselCascadeDelay = 5000
         carouselCascadeTimer.restart()
     }
 
@@ -221,7 +252,7 @@ Item {
         repeat: false
         onTriggered: {
             const passComplete = stage.advanceCarouselCascade()
-            stage.carouselCascadeDelay = passComplete ? 6000 : 900
+            stage.carouselCascadeDelay = passComplete ? 6000 : 5000
             restart()
         }
     }
