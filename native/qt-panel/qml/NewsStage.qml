@@ -11,6 +11,8 @@ Item {
     property string selectedUrl: ""
     property int newsRevision: 0
     property int storeRevision: 0
+    property int carouselCascadeCursor: 0
+    property int carouselCascadeDelay: 900
     // True while a rail row is being dragged, so the drop doesn't also select.
     property bool draggingCategory: false
 
@@ -133,6 +135,47 @@ Item {
         openArticle(item)
     }
 
+    function carouselCardIsVisible(card) {
+        if (!card || !card.visible)
+            return false
+        const point = card.mapToItem(carouselScroll, 0, 0)
+        return point.y + card.height > 0 && point.y < carouselScroll.height
+    }
+
+    // Advances at most one visible category card. Reaching the end of the
+    // delegate list completes a pass; the next pass starts again at index 0.
+    // Individual NewsWidget indexes wrap independently through their articles.
+    function advanceCarouselCascade() {
+        const count = carouselCategoryRepeater.count
+        if (count < 1) {
+            carouselCascadeCursor = 0
+            return true
+        }
+
+        carouselCascadeCursor = Math.max(0, Math.min(carouselCascadeCursor, count))
+        for (let index = carouselCascadeCursor; index < count; ++index) {
+            const card = carouselCategoryRepeater.itemAt(index)
+            carouselCascadeCursor = index + 1
+            if (!carouselCardIsVisible(card) || !card.cascadeEligible)
+                continue
+            card.rotateCarousel(1)
+            if (carouselCascadeCursor >= count) {
+                carouselCascadeCursor = 0
+                return true
+            }
+            return false
+        }
+
+        carouselCascadeCursor = 0
+        return true
+    }
+
+    function restartCarouselCascade() {
+        carouselCascadeCursor = 0
+        carouselCascadeDelay = 900
+        carouselCascadeTimer.restart()
+    }
+
     Connections {
         target: News
         function onCategoriesChanged() {
@@ -160,7 +203,28 @@ Item {
     }
 
     Component.onDestruction: Reader.close()
-    Component.onCompleted: openFirstArticle()
+    Component.onCompleted: {
+        openFirstArticle()
+        if (viewMode === "carousel")
+            restartCarouselCascade()
+    }
+    onViewModeChanged: {
+        if (viewMode === "carousel")
+            restartCarouselCascade()
+        else
+            carouselCascadeTimer.stop()
+    }
+
+    Timer {
+        id: carouselCascadeTimer
+        interval: stage.carouselCascadeDelay
+        repeat: false
+        onTriggered: {
+            const passComplete = stage.advanceCarouselCascade()
+            stage.carouselCascadeDelay = passComplete ? 6000 : 900
+            restart()
+        }
+    }
 
     FileDialog {
         id: opmlDialog
@@ -852,6 +916,7 @@ Item {
                     (width - Math.max(0, columns - 1) * spacing) / Math.max(1, columns))
 
                 Repeater {
+                    id: carouselCategoryRepeater
                     model: stage.newsRevision, News.categories
                     delegate: NewsWidget {
                         required property string modelData

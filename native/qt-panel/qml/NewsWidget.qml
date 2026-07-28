@@ -43,6 +43,11 @@ GlassCard {
     property int flipDirection: 1
     readonly property int carouselCount: presentationItems.length
     readonly property bool flipRunning: carouselFlip.running
+    readonly property bool carouselHovered: carouselHover.hovered
+    readonly property bool cascadeEligible: carouselPresentation
+                                               && carouselCount > 1
+                                               && !flipRunning
+                                               && !carouselHovered
 
     function openMatrix() {
         Store.set("wp-news-matrix-request", JSON.stringify({
@@ -159,7 +164,10 @@ GlassCard {
     Component.onCompleted: syncCarouselFace()
 
     Timer {
-        running: card.carouselPresentation && card.carouselEnabled && card.carouselCount > 1
+        // Standalone/base cards retain their own interval. NewsStage owns a
+        // single cascade clock for its managed category-card workspace.
+        running: card.carouselPresentation && card.carouselEnabled
+                 && !card.forceCarouselPresentation && card.carouselCount > 1
         repeat: true
         interval: {
             card.storeRev
