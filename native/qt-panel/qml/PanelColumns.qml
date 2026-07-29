@@ -10,7 +10,7 @@ Item {
 
     property string mode: "base"
     readonly property real spotlightX: Math.round(width / 2) + 3
-    readonly property bool additiveMode: mode === "monitor" || mode === "live"
+    readonly property bool additiveMode: mode === "monitor"
     opacity: 1
     transform: Translate { id: modeShift; y: 0 }
 
@@ -76,14 +76,6 @@ Item {
         { id: "starvis", source: "StarvisWidget.qml", column: "right", props: {} },
         { id: "camera", source: "CameraWidget.qml", column: "left", props: {}, resize: true },
         { id: "camera-direct", source: "DirectCameraWidget.qml", column: "left", props: {}, resize: true },
-        { id: "pressreader", source: "PressReaderWidget.qml", column: "mid", props: {} },
-        { id: "news-3d", source: "NewsStage3D.qml", column: "feed", props: {}, resize: true },
-        { id: "euronews", source: "LiveFeedWidget.qml", column: "feed", props: { feedId: "euronews" }, resize: true },
-        { id: "live-bloomberg", source: "LiveFeedWidget.qml", column: "aux", props: { feedId: "live-bloomberg" }, resize: true },
-        { id: "live-radio-canada", source: "LiveFeedWidget.qml", column: "aux", props: { feedId: "live-radio-canada" }, resize: true },
-        { id: "live-france24", source: "LiveFeedWidget.qml", column: "aux", props: { feedId: "live-france24" }, resize: true },
-        { id: "live-cbc-news", source: "LiveFeedWidget.qml", column: "aux", props: { feedId: "live-cbc-news" }, resize: true },
-        { id: "live-lcn", source: "LiveFeedWidget.qml", column: "aux", props: { feedId: "live-lcn" }, resize: true },
         { id: "workstation-cpu", source: "WorkstationWidget.qml", column: "monitor", props: { kind: "cpu" } },
         { id: "workstation-gpu", source: "WorkstationWidget.qml", column: "monitor", props: { kind: "gpu" } },
         { id: "workstation-ram", source: "WorkstationWidget.qml", column: "monitor", props: { kind: "ram" } },
@@ -286,16 +278,6 @@ Item {
             }
             return sortWidgets(result)
         }
-        if (mode === "live") {
-            // Live stage: selected feeds spread over the columns.
-            const feeds = registry.filter(e => e.source === "LiveFeedWidget.qml" && isActive(e.id))
-            const columnIndex = columnOrder.indexOf(name)
-            for (let i = 0; i < feeds.length; i++) {
-                if (i % columnOrder.length === columnIndex)
-                    result.push(feeds[i])
-            }
-            return sortWidgets(result)
-        }
         return sortWidgets(result)
     }
 
@@ -321,15 +303,6 @@ Item {
         active: root.mode === "news"
         visible: active
         source: "NewsStage.qml"
-    }
-
-    Loader {
-        x: root.spotlightX
-        width: Math.max(0, root.width - x)
-        height: root.height
-        active: root.mode === "live"
-        visible: active
-        source: "LiveStage.qml"
     }
 
     RowLayout {

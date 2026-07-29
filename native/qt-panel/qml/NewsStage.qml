@@ -15,23 +15,23 @@ Item {
     property int carouselCascadeDelay: 5000
     property int carouselCascadeLastIndex: -1
     property var carouselCascadeOrder: []
+    property bool pressReaderWasOpen: false
     // True while a rail row is being dragged, so the drop doesn't also select.
     property bool draggingCategory: false
 
-    // PressReader rides in the rail as a pseudo-category; when picked, the
-    // content pane hosts the PressReader surface instead of the article reader.
-    readonly property string pressReaderCategory: "__pressreader"
-    readonly property bool pressReaderSelected: selectedCategory === pressReaderCategory
-    // Content-pane rect, published so PanelColumns can seat the existing
-    // PressReader web view exactly inside it (no second WebEngineView).
-    readonly property real contentPaneX: dividerPosition + 7
+    // Content-pane rect, published so PanelColumns can seat the single shared
+    // PressReader web view in this workspace (no second WebEngineView).
+    readonly property bool pressReaderSelected: viewMode === "pressreader"
+    readonly property real contentPaneX: 0
     readonly property real contentPaneY: 0
-    readonly property real contentPaneWidth: Math.max(0, width - contentPaneX)
+    readonly property real contentPaneWidth: width
     readonly property real contentPaneHeight: height
     readonly property string viewMode: {
         storeRevision
-        return Store.get("wp-news-view-mode", "reader") === "carousel"
-            ? "carousel" : "reader"
+        const stored = String(Store.get("wp-news-view-mode", "carousel") || "carousel")
+        if (stored === "reader" || stored === "live" || stored === "pressreader")
+            return stored
+        return "carousel"
     }
     readonly property int configuredColumns: {
         storeRevision
@@ -80,8 +80,6 @@ Item {
         selectedCategory = label || ""
         selectedUrl = ""
         Reader.close()
-        if (selectedCategory === pressReaderCategory && !PressReader.open)
-            PressReader.openCatalog()
     }
 
     function uiPx(value) {
@@ -121,14 +119,21 @@ Item {
     }
 
     function setViewMode(mode) {
-        const next = mode === "carousel" ? "carousel" : "reader"
-        if (next === viewMode)
+        const requested = mode === "cards" ? "carousel" : String(mode || "")
+        const next = requested === "reader" || requested === "live"
+                     || requested === "pressreader" ? requested : "carousel"
+        if (next === viewMode) {
+            if (next === "pressreader" && !PressReader.open)
+                PressReader.openCatalog()
             return
+        }
         selectedUrl = ""
         Reader.close()
         Store.set("wp-news-view-mode", next)
         if (next === "reader")
             openFirstArticle()
+        else if (next === "pressreader" && !PressReader.open)
+            PressReader.openCatalog()
     }
 
     function openCarouselArticle(label, item) {
@@ -233,17 +238,34 @@ Item {
         }
     }
 
+    Connections {
+        target: PressReader
+        function onChanged() {
+            if (PressReader.open) {
+                stage.pressReaderWasOpen = true
+            } else if (stage.pressReaderWasOpen
+                       && stage.viewMode === "pressreader") {
+                stage.pressReaderWasOpen = false
+                Store.set("wp-news-view-mode", "carousel")
+            }
+        }
+    }
+
     Component.onDestruction: Reader.close()
     Component.onCompleted: {
         openFirstArticle()
         if (viewMode === "carousel")
             restartCarouselCascade()
+        else if (viewMode === "pressreader" && !PressReader.open)
+            PressReader.openCatalog()
     }
     onViewModeChanged: {
         if (viewMode === "carousel")
             restartCarouselCascade()
         else
             carouselCascadeTimer.stop()
+        if (viewMode === "pressreader" && !PressReader.open)
+            Qt.callLater(function() { PressReader.openCatalog() })
     }
 
     Timer {
@@ -279,57 +301,14 @@ Item {
             spacing: 5
 
             Text {
-                width: Math.max(32, parent.width - newsViewSwitch.width
-                                - refreshButton.width - importButton.width - 15)
+                width: Math.max(32, parent.width
+                                - refreshButton.width - importButton.width - 10)
                 anchors.verticalCenter: parent.verticalCenter
                 text: "Nouvelles"
                 color: Theme.textPrimary
                 font.pixelSize: stage.uiPx(Theme.fontSizeTitle)
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
-            }
-            Rectangle {
-                id: newsViewSwitch
-                width: 78
-                height: 24
-                radius: 6
-                color: Qt.rgba(1, 1, 1, 0.035)
-                border.color: Theme.cardStroke
-
-                Row {
-                    anchors.fill: parent
-                    anchors.margins: 1
-
-                    Repeater {
-                        model: [
-                            { id: "reader", label: "Lire" },
-                            { id: "carousel", label: "Cartes" },
-                        ]
-                        delegate: Rectangle {
-                            required property var modelData
-                            width: 38
-                            height: 22
-                            radius: 5
-                            color: stage.viewMode === modelData.id
-                                   ? Theme.activeFill
-                                   : viewChoiceMouse.containsMouse ? Theme.hover : "transparent"
-                            Text {
-                                anchors.centerIn: parent
-                                text: parent.modelData.label
-                                color: stage.viewMode === parent.modelData.id
-                                       ? Theme.textPrimary : Theme.textSecondary
-                                font.pixelSize: stage.uiPx(8)
-                            }
-                            MouseArea {
-                                id: viewChoiceMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: stage.setViewMode(parent.modelData.id)
-                            }
-                        }
-                    }
-                }
             }
             Rectangle {
                 id: refreshButton
@@ -519,6 +498,7 @@ Item {
 
                 // PressReader — pinned last, opens in the content pane.
                 Rectangle {
+                    visible: false
                     width: categoryColumn.width
                     height: Math.round(42 * stage.uiScale)
                     radius: 6
@@ -567,7 +547,7 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: stage.selectCategory(stage.pressReaderCategory)
+                        onClicked: stage.setViewMode("pressreader")
                     }
                 }
             }
@@ -593,8 +573,7 @@ Item {
             Text {
                 width: Math.max(60, parent.width - listCount.width - 8)
                 anchors.verticalCenter: parent.verticalCenter
-                text: stage.pressReaderSelected ? "PressReader"
-                    : stage.selectedCategory !== "" ? stage.selectedCategory
+                text: stage.selectedCategory !== "" ? stage.selectedCategory
                     : "Toutes les nouvelles"
                 color: Theme.textPrimary
                 font.pixelSize: stage.uiPx(Theme.fontSizeTitle)
@@ -604,9 +583,7 @@ Item {
             Text {
                 id: listCount
                 anchors.verticalCenter: parent.verticalCenter
-                text: stage.pressReaderSelected
-                      ? PressReader.state
-                      : stage.selectedItems.length + " articles"
+                text: stage.selectedItems.length + " articles"
                 color: Theme.textSecondary
                 font.pixelSize: stage.uiPx(Theme.fontSizeCaption)
             }
@@ -708,10 +685,7 @@ Item {
                 anchors.centerIn: parent
                 width: parent.width - 32
                 visible: articleList.count === 0
-                text: stage.pressReaderSelected
-                        ? (PressReader.status !== "" ? PressReader.status
-                                                     : "PressReader s'ouvre dans le volet de lecture.")
-                    : News.categories.length === 0
+                text: News.categories.length === 0
                         ? "Aucune categorie configuree" : "Aucun article disponible"
                 color: Theme.textSecondary
                 font.pixelSize: stage.uiPx(Theme.fontSizeBody)
@@ -735,7 +709,7 @@ Item {
     // PressReader surface that PanelColumns seats into it.
     ArticleReaderPane {
         id: readerPane
-        visible: stage.viewMode === "reader" && !stage.pressReaderSelected
+        visible: stage.viewMode === "reader"
         anchors.left: centerDivider.right
         anchors.leftMargin: 7
         anchors.right: parent.right
@@ -757,61 +731,15 @@ Item {
             spacing: 8
 
             Text {
-                width: Math.max(60, parent.width - carouselViewSwitch.width
-                                - cardSizeControl.width
+                width: Math.max(60, parent.width - cardSizeControl.width
                                 - carouselRefreshButton.width
-                                - carouselImportButton.width - 32)
+                                - carouselImportButton.width - 24)
                 anchors.verticalCenter: parent.verticalCenter
                 text: "Nouvelles par categorie"
                 color: Theme.textPrimary
                 font.pixelSize: stage.uiPx(Theme.fontSizeTitle)
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
-            }
-
-            Rectangle {
-                id: carouselViewSwitch
-                width: 104
-                height: 24
-                radius: 6
-                anchors.verticalCenter: parent.verticalCenter
-                color: Qt.rgba(1, 1, 1, 0.035)
-                border.color: Theme.cardStroke
-
-                Row {
-                    anchors.fill: parent
-                    anchors.margins: 1
-
-                    Repeater {
-                        model: [
-                            { id: "reader", label: "Lire" },
-                            { id: "carousel", label: "Cartes" },
-                        ]
-                        delegate: Rectangle {
-                            required property var modelData
-                            width: 51
-                            height: 22
-                            radius: 5
-                            color: stage.viewMode === modelData.id
-                                   ? Theme.activeFill
-                                   : carouselChoiceMouse.containsMouse ? Theme.hover : "transparent"
-                            Text {
-                                anchors.centerIn: parent
-                                text: parent.modelData.label
-                                color: stage.viewMode === parent.modelData.id
-                                       ? Theme.textPrimary : Theme.textSecondary
-                                font.pixelSize: stage.uiPx(9)
-                            }
-                            MouseArea {
-                                id: carouselChoiceMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: stage.setViewMode(parent.modelData.id)
-                            }
-                        }
-                    }
-                }
             }
 
             // Card size: changes the card's dimensions (not the text — that is
@@ -976,5 +904,13 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
             }
         }
+    }
+
+    Loader {
+        id: liveStageLoader
+        anchors.fill: parent
+        active: stage.viewMode === "live"
+        visible: active
+        source: "LiveStage.qml"
     }
 }

@@ -11,14 +11,14 @@ Item {
     Shortcut { sequence: "Ctrl+1"; onActivated: surface.switchMode("base") }
     Shortcut { sequence: "Ctrl+2"; onActivated: surface.switchMode("news") }
     Shortcut { sequence: "Ctrl+3"; onActivated: surface.switchMode("monitor") }
-    Shortcut { sequence: "Ctrl+4"; onActivated: surface.switchMode("live") }
-    Shortcut { sequence: "Ctrl+5"; onActivated: PressReader.toggle() }
+    Shortcut { sequence: "Ctrl+4"; onActivated: surface.openNewsSubMode("live") }
+    Shortcut { sequence: "Ctrl+5"; onActivated: surface.openNewsSubMode("pressreader") }
     Shortcut { sequence: "Ctrl+R"; onActivated: surface.refreshData() }
     Shortcut { sequence: "Ctrl+Comma"; onActivated: settingsModal.show() }
 
     // base | news | monitor | live — drives both window width (Panel.fitMode)
     // and the column arrangement (PanelColumns).
-    property string panelMode: StartupMode
+    property string panelMode: StartupMode === "live" ? "news" : StartupMode
     property string modeSwitchError: ""
     property int storeRevision: 0
     readonly property int columnCount: {
@@ -34,14 +34,26 @@ Item {
         return Math.max(0.85, Math.min(1.35,
             Number(Store.get("wp-news-ui-scale", 1.0)) || 1.0))
     }
+    readonly property string newsSubMode: {
+        storeRevision
+        const stored = String(Store.get("wp-news-view-mode", "carousel") || "carousel")
+        if (stored === "reader" || stored === "live" || stored === "pressreader")
+            return stored
+        return "carousel"
+    }
 
     Connections {
         target: Store
         function onChanged(key) {
             if (key === "wp-base-columns" || key === "wp-news-columns"
-                    || key === "wp-news-ui-scale")
+                    || key === "wp-news-ui-scale" || key === "wp-news-view-mode")
                 surface.storeRevision++
         }
+    }
+
+    Component.onCompleted: {
+        if (StartupMode === "live")
+            Store.set("wp-news-view-mode", "live")
     }
 
     function fitCurrentWindowMode(mode) {
@@ -56,6 +68,10 @@ Item {
     }
 
     function switchMode(mode) {
+        if (mode === "live") {
+            openNewsSubMode("live")
+            return
+        }
         const targetMode = (panelMode === mode && mode !== "base") ? "base" : mode
         if (panelMode === targetMode)
             return
@@ -74,6 +90,24 @@ Item {
             fitCurrentWindowMode(previousMode)
             modeSwitchError = "Mode indisponible"
         }
+    }
+
+    function setNewsSubMode(mode) {
+        const requested = mode === "cards" ? "carousel" : String(mode || "")
+        const next = requested === "reader" || requested === "live"
+                     || requested === "pressreader" ? requested : "carousel"
+        if (newsSubMode === "pressreader" && next !== "pressreader"
+                && PressReader.open)
+            PressReader.close()
+        Store.set("wp-news-view-mode", next)
+        if (next === "pressreader" && !PressReader.open)
+            PressReader.openCatalog()
+    }
+
+    function openNewsSubMode(mode) {
+        setNewsSubMode(mode)
+        if (panelMode !== "news")
+            switchMode("news")
     }
 
     function adjustColumns(delta) {
@@ -102,7 +136,7 @@ Item {
         Stocks.refreshIpos()
         News.refresh()
         MsGraph.refreshAll()
-        if (panelMode === "live") {
+        if (panelMode === "news" && newsSubMode === "live") {
             for (const id of Live.feedIds())
                 Live.resolve(id, true)
         }
@@ -227,7 +261,7 @@ Item {
                 // Mode switcher
                 Item {
                     id: modeSwitcher
-                    readonly property var modeIds: ["base", "news", "monitor", "live"]
+                    readonly property var modeIds: ["base", "news", "monitor"]
                     readonly property int selectedIndex: modeIds.indexOf(surface.panelMode)
                     implicitWidth: modeRow.implicitWidth
                     implicitHeight: 20
@@ -269,7 +303,6 @@ Item {
                             { id: "base", label: "Panneau" },
                             { id: "news", label: "Nouvelles" },
                             { id: "monitor", label: "Station" },
-                            { id: "live", label: "Direct" },
                         ]
                             delegate: Rectangle {
                             required property var modelData
@@ -303,6 +336,91 @@ Item {
                             Keys.onReturnPressed: surface.switchMode(modelData.id)
                             Keys.onEnterPressed: surface.switchMode(modelData.id)
                             Keys.onSpacePressed: surface.switchMode(modelData.id)
+                            }
+                        }
+                    }
+                }
+
+                Item {
+                    id: newsSubModeSwitcher
+                    visible: surface.panelMode === "news"
+                    implicitWidth: visible ? newsSubModeRow.implicitWidth : 0
+                    implicitHeight: 20
+                    readonly property var modeIds: [
+                        "carousel", "reader", "live", "pressreader"
+                    ]
+                    readonly property int selectedIndex: modeIds.indexOf(surface.newsSubMode)
+
+                    function syncSelection() {
+                        const selected = newsSubModeRepeater.itemAt(selectedIndex)
+                        if (!selected)
+                            return
+                        newsSubModeSelection.x = selected.x
+                        newsSubModeSelection.width = selected.width
+                    }
+
+                    onSelectedIndexChanged: Qt.callLater(syncSelection)
+                    onVisibleChanged: if (visible) Qt.callLater(syncSelection)
+                    Component.onCompleted: Qt.callLater(syncSelection)
+
+                    Rectangle {
+                        id: newsSubModeSelection
+                        x: 0
+                        width: 0
+                        height: parent.height
+                        radius: 5
+                        color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
+                        border.width: 1
+                        border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.36)
+                        Behavior on x {
+                            NumberAnimation { duration: Motion.normalMs; easing.type: Easing.OutCubic }
+                        }
+                        Behavior on width {
+                            NumberAnimation { duration: Motion.normalMs; easing.type: Easing.OutCubic }
+                        }
+                    }
+
+                    Row {
+                        id: newsSubModeRow
+                        spacing: 2
+                        Repeater {
+                            id: newsSubModeRepeater
+                            model: [
+                                { id: "carousel", label: "Cartes" },
+                                { id: "reader", label: "Lecture" },
+                                { id: "live", label: "En direct" },
+                                { id: "pressreader", label: "PressReader" },
+                            ]
+                            delegate: Rectangle {
+                                required property var modelData
+                                width: newsSubModeLabel.implicitWidth + 14
+                                height: 20
+                                radius: 5
+                                color: surface.newsSubMode !== modelData.id
+                                       && newsSubModeMouse.containsMouse
+                                       ? Theme.hover : "transparent"
+                                activeFocusOnTab: true
+                                Accessible.role: Accessible.Button
+                                Accessible.name: "Nouvelles, " + modelData.label
+
+                                Text {
+                                    id: newsSubModeLabel
+                                    anchors.centerIn: parent
+                                    text: parent.modelData.label
+                                    color: surface.newsSubMode === parent.modelData.id
+                                           ? Theme.textPrimary : Theme.textSecondary
+                                    font.pixelSize: 9
+                                }
+                                MouseArea {
+                                    id: newsSubModeMouse
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: surface.setNewsSubMode(parent.modelData.id)
+                                }
+                                Keys.onReturnPressed: surface.setNewsSubMode(modelData.id)
+                                Keys.onEnterPressed: surface.setNewsSubMode(modelData.id)
+                                Keys.onSpacePressed: surface.setNewsSubMode(modelData.id)
                             }
                         }
                     }
@@ -371,6 +489,8 @@ Item {
 
                 Row {
                     visible: surface.panelMode === "news"
+                             && (surface.newsSubMode === "carousel"
+                                 || surface.newsSubMode === "reader")
                     spacing: 2
                     Layout.alignment: Qt.AlignVCenter
 
@@ -415,12 +535,6 @@ Item {
                 }
 
                 Item { Layout.fillWidth: true }
-                IconButton {
-                    glyph: "\uE82D"
-                    active: PressReader.open
-                    onClicked: PressReader.toggle()
-                    tooltip: "PressReader"
-                }
                 IconButton {
                     glyph: "\uE9D9"
                     onClicked: Ui.openStatus()

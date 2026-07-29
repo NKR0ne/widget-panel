@@ -89,7 +89,7 @@ int main(int argc, char* argv[])
         QStringLiteral("auto"));
     const QCommandLineOption startModeOption(
         QStringLiteral("start-mode"),
-        QStringLiteral("Open directly in base, news, monitor, or live mode."),
+        QStringLiteral("Open directly in base, news, monitor, or the News live submode."),
         QStringLiteral("mode"),
         QStringLiteral("base"));
     const QCommandLineOption diagIslandUrlOption(
@@ -621,10 +621,10 @@ const QCommandLineOption diagPressReaderOption(
         }
         const int baseColumns = settings.getInt(QStringLiteral("wp-base-columns"), 3);
         int startColumns = baseColumns;
-        if (startMode == QStringLiteral("news")) {
+        if (startMode == QStringLiteral("news")
+            || startMode == QStringLiteral("live")) {
             startColumns = settings.getInt(QStringLiteral("wp-news-columns"), baseColumns);
-        } else if (startMode == QStringLiteral("monitor")
-                   || startMode == QStringLiteral("live")) {
+        } else if (startMode == QStringLiteral("monitor")) {
             startColumns = 6;
         }
         controller.fitMode(startMode, startColumns, columnWidths);

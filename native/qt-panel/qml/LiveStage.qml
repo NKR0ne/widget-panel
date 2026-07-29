@@ -1,7 +1,7 @@
 import QtQuick
 import QtPanel.Native
 
-// Coordinated Direct workspace. All feeds share Live.audioFeedId, so only one
+// Coordinated live-news workspace. All feeds share Live.audioFeedId, so only one
 // MediaPlayer can own audio while the grid remains active.
 Item {
     id: stage
@@ -43,7 +43,7 @@ Item {
             spacing: 8
 
             Text {
-                text: "Direct"
+                text: "En direct"
                 color: Theme.textPrimary
                 font.pixelSize: Theme.fontSizeTitle
                 font.weight: Font.DemiBold

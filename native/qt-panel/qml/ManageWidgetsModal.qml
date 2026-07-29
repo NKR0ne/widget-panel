@@ -18,9 +18,8 @@ Item {
 
     readonly property var modes: [
         { id: "base", label: "Base" },
-        { id: "news", label: "News" },
+        { id: "news", label: "Nouvelles" },
         { id: "monitor", label: "Station" },
-        { id: "live", label: "Direct" },
     ]
 
     readonly property var catalog: [
@@ -35,14 +34,12 @@ Item {
         { id: "starvis", label: "Starvis", note: "AI assistant", color: "#62e6ff", modes: ["base"] },
         { id: "camera", label: "Camera", note: "XProtect", color: "#5e8af5", modes: ["base"] },
         { id: "camera-direct", label: "Camera directe", note: "RTSP natif", color: "#60a5fa", modes: ["base"] },
-        { id: "pressreader", label: "PressReader", note: "Qt WebEngine", color: "#f7a64f", modes: ["base"] },
-        { id: "news-3d", label: "Manchettes 3D", note: "News stage", color: "#4ff7c8", modes: ["base"] },
-        { id: "euronews", label: "Euronews", note: "HLS", color: "#1e4ba8", modes: ["base", "live"] },
-        { id: "live-bloomberg", label: "Bloomberg Live", note: "YouTube live", color: "#2f6dff", modes: ["base", "live"] },
-        { id: "live-radio-canada", label: "Radio-Canada.info", note: "YouTube live", color: "#2f6dff", modes: ["base", "live"] },
-        { id: "live-france24", label: "France 24", note: "YouTube live", color: "#2f6dff", modes: ["base", "live"] },
-        { id: "live-cbc-news", label: "CBC News", note: "YouTube live", color: "#2f6dff", modes: ["base", "live"] },
-        { id: "live-lcn", label: "LCN", note: "HLS", color: "#2f6dff", modes: ["base", "live"] },
+        { id: "euronews", label: "Euronews", note: "En direct | HLS", color: "#1e4ba8", modes: ["live"] },
+        { id: "live-bloomberg", label: "Bloomberg Live", note: "En direct | YouTube", color: "#2f6dff", modes: ["live"] },
+        { id: "live-radio-canada", label: "Radio-Canada.info", note: "En direct | YouTube", color: "#2f6dff", modes: ["live"] },
+        { id: "live-france24", label: "France 24", note: "En direct | YouTube", color: "#2f6dff", modes: ["live"] },
+        { id: "live-cbc-news", label: "CBC News", note: "En direct | YouTube", color: "#2f6dff", modes: ["live"] },
+        { id: "live-lcn", label: "LCN", note: "En direct | HLS", color: "#2f6dff", modes: ["live"] },
         { id: "workstation-cpu", label: "CPU", note: "Workstation pipe", color: "#53f0c5", modes: ["base", "monitor"] },
         { id: "workstation-gpu", label: "GPU", note: "Workstation pipe", color: "#53f0c5", modes: ["base", "monitor"] },
         { id: "workstation-ram", label: "RAM", note: "Workstation pipe", color: "#53f0c5", modes: ["base", "monitor"] },
@@ -51,7 +48,7 @@ Item {
     ]
 
     function show(mode) {
-        selectedMode = mode || "base"
+        selectedMode = mode === "live" ? "news" : (mode || "base")
         open = true
         Panel.setModalOpen(true)
     }
@@ -75,23 +72,41 @@ Item {
 
     function entriesForMode(mode) {
         if (mode === "news") {
-            const cats = []
+            const entries = []
             for (let i = 0; i < News.allCategories.length; i++) {
                 const label = News.allCategories[i]
-                cats.push({
+                entries.push({
                     id: "cat:" + label,
                     label: label,
-                    note: "RSS category",
+                    note: "Cartes et lecture | RSS",
                     color: colorForCategory(i),
                     isCat: true,
+                    settingsMode: "news",
                 })
             }
-            return cats
+            for (const entry of catalog) {
+                if (entry.modes.indexOf("live") < 0)
+                    continue
+                entries.push({
+                    id: entry.id,
+                    label: entry.label,
+                    note: entry.note,
+                    color: entry.color,
+                    settingsMode: "live",
+                })
+            }
+            return entries
         }
         const out = []
         for (const entry of catalog) {
             if (entry.modes.indexOf(mode) >= 0)
-                out.push(entry)
+                out.push({
+                    id: entry.id,
+                    label: entry.label,
+                    note: entry.note,
+                    color: entry.color,
+                    settingsMode: mode,
+                })
         }
         return out
     }
@@ -100,65 +115,91 @@ Item {
         return entriesForMode(selectedMode)
     }
 
-    function idsForMode(mode) {
+    function idsForSettingsMode(mode) {
         const ids = []
-        for (const entry of entriesForMode(mode))
-            ids.push(entry.id)
+        if (mode === "news") {
+            for (const label of News.allCategories)
+                ids.push("cat:" + label)
+            return ids
+        }
+        if (mode === "live") {
+            for (const entry of catalog) {
+                if (entry.modes.indexOf("live") >= 0)
+                    ids.push(entry.id)
+            }
+            return ids
+        }
+        for (const entry of entriesForMode(mode)) {
+            if ((entry.settingsMode || mode) === mode)
+                ids.push(entry.id)
+        }
         return ids
     }
 
     function allowedIdsByMode() {
-        const result = {}
-        for (const mode of modes)
-            result[mode.id] = idsForMode(mode.id)
-        return result
+        return {
+            base: idsForSettingsMode("base"),
+            news: idsForSettingsMode("news"),
+            monitor: idsForSettingsMode("monitor"),
+            live: idsForSettingsMode("live"),
+        }
     }
 
     function activeIds(mode) {
         const targetMode = mode || selectedMode
-        return ModeSettings.activeIds(config(), targetMode, idsForMode(targetMode))
+        return ModeSettings.activeIds(config(), targetMode,
+                                      idsForSettingsMode(targetMode))
     }
 
-    function activeListForWrite() {
-        return activeIds(selectedMode).slice()
+    function activeListForWrite(mode) {
+        return activeIds(mode || selectedMode).slice()
     }
 
-    function isOn(id) {
-        return activeIds(selectedMode).indexOf(id) >= 0
+    function isOn(entry) {
+        const mode = entry.settingsMode || selectedMode
+        return activeIds(mode).indexOf(entry.id) >= 0
     }
 
     function enabledCount(entries) {
         let count = 0
         for (const entry of entries)
-            if (isOn(entry.id))
+            if (isOn(entry))
                 count++
         return count
     }
 
-    function saveActiveIds(next, reloadNews) {
+    function saveActiveIds(next, reloadNews, mode) {
+        const targetMode = mode || selectedMode
         const cfg = ModeSettings.initialize(config(), allowedIdsByMode())
-        cfg.modeActiveIds[selectedMode] = ModeSettings.sanitizedIds(
-                    next, idsForMode(selectedMode))
+        cfg.modeActiveIds[targetMode] = ModeSettings.sanitizedIds(
+                    next, idsForSettingsMode(targetMode))
         Store.set("wp-config", JSON.stringify(cfg))
         rev++
         if (reloadNews)
             News.reload()
     }
 
-    function toggle(id, isCat) {
-        const next = activeListForWrite()
-        const i = next.indexOf(id)
+    function toggle(entry) {
+        const mode = entry.settingsMode || selectedMode
+        const next = activeListForWrite(mode)
+        const i = next.indexOf(entry.id)
         if (i >= 0)
             next.splice(i, 1)
         else
-            next.push(id)
-        saveActiveIds(next, isCat)
+            next.push(entry.id)
+        saveActiveIds(next, entry.isCat === true, mode)
     }
 
     function setEntriesOn(entries, on) {
-        let next = activeListForWrite()
+        const cfg = ModeSettings.initialize(config(), allowedIdsByMode())
+        const nextByMode = {}
         let reloadNews = false
         for (const entry of entries) {
+            const mode = entry.settingsMode || selectedMode
+            if (nextByMode[mode] === undefined)
+                nextByMode[mode] = ModeSettings.activeIds(
+                            cfg, mode, idsForSettingsMode(mode)).slice()
+            const next = nextByMode[mode]
             const i = next.indexOf(entry.id)
             if (on && i < 0)
                 next.push(entry.id)
@@ -167,7 +208,14 @@ Item {
             if (entry.isCat)
                 reloadNews = true
         }
-        saveActiveIds(next, reloadNews)
+        for (const mode in nextByMode) {
+            cfg.modeActiveIds[mode] = ModeSettings.sanitizedIds(
+                        nextByMode[mode], idsForSettingsMode(mode))
+        }
+        Store.set("wp-config", JSON.stringify(cfg))
+        rev++
+        if (reloadNews)
+            News.reload()
     }
 
     function resetLayout() {
@@ -299,7 +347,8 @@ Item {
                     model: modal.modes
                     delegate: Rectangle {
                         required property var modelData
-                        width: (parent.width - 12) / 4
+                        width: (parent.width - Math.max(0, modal.modes.length - 1) * 4)
+                               / Math.max(1, modal.modes.length)
                         height: 24
                         radius: 6
                         color: modal.selectedMode === modelData.id ? Theme.activeFill
@@ -416,10 +465,10 @@ Item {
                                 anchors.right: parent.right
                                 anchors.rightMargin: 8
                                 anchors.verticalCenter: parent.verticalCenter
-                                color: (modal.rev, modal.isOn(modelData.id)) ? Theme.accent : Qt.rgba(1,1,1,0.12)
+                                color: (modal.rev, modal.isOn(modelData)) ? Theme.accent : Qt.rgba(1,1,1,0.12)
                                 Rectangle {
                                     width: 14; height: 14; radius: 7; y: 2
-                                    x: (modal.rev, modal.isOn(modelData.id)) ? parent.width - width - 2 : 2
+                                    x: (modal.rev, modal.isOn(modelData)) ? parent.width - width - 2 : 2
                                     color: "#ffffff"
                                     Behavior on x { NumberAnimation { duration: Motion.fastMs } }
                                 }
@@ -430,7 +479,7 @@ Item {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: modal.toggle(modelData.id, modelData.isCat === true)
+                                onClicked: modal.toggle(modelData)
                             }
                         }
                     }
