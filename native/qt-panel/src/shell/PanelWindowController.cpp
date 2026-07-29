@@ -945,10 +945,21 @@ int PanelWindowController::columnsForMode(const QString& mode) const
 {
     // Mirrors PanelSurface.columnCount so C++ can size any mode on its own.
     const int base = m_settings->getInt(QStringLiteral("wp-base-columns"), 3);
-    if (mode == QLatin1String("monitor") || mode == QLatin1String("live"))
+    if (mode == QLatin1String("monitor"))
         return 6;
-    if (mode == QLatin1String("news"))
-        return qBound(3, m_settings->getInt(QStringLiteral("wp-news-columns"), base), 6);
+    if (mode == QLatin1String("news") || mode == QLatin1String("live")) {
+        QString subMode = mode == QLatin1String("live")
+            ? QStringLiteral("live")
+            : m_settings->get(QStringLiteral("wp-news-view-mode"),
+                              QStringLiteral("carousel")).toString();
+        if (subMode != QLatin1String("reader") && subMode != QLatin1String("live")
+            && subMode != QLatin1String("pressreader")) {
+            subMode = QStringLiteral("carousel");
+        }
+        const int legacy = m_settings->getInt(QStringLiteral("wp-news-columns"), base);
+        return qBound(3, m_settings->getInt(
+            QStringLiteral("wp-news-columns-") + subMode, legacy), 6);
+    }
     return qBound(3, base, 6);
 }
 

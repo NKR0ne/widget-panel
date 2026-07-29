@@ -10,7 +10,6 @@ Item {
 
     property string mode: "base"
     readonly property real spotlightX: Math.round(width / 2) + 3
-    readonly property bool additiveMode: mode === "monitor"
     opacity: 1
     transform: Translate { id: modeShift; y: 0 }
 
@@ -140,9 +139,6 @@ Item {
     readonly property var visibleColumns: {
         return columnOrder.slice(0, baseColumnCount)
     }
-    readonly property var panelColumns: {
-        return additiveMode ? columnOrder.slice(0, 3) : visibleColumns
-    }
     readonly property bool workstationVisible: {
         storeRev
         if (mode === "news")
@@ -258,7 +254,7 @@ Item {
 
     function widgetsForColumn(name) {
         const result = []
-        if (mode === "base" || additiveMode) {
+        if (mode === "base") {
             for (const entry of registry) {
                 if (!isActive(entry.id))
                     continue
@@ -282,9 +278,7 @@ Item {
     }
 
     Loader {
-        x: root.spotlightX
-        width: Math.max(0, root.width - x)
-        height: root.height
+        anchors.fill: parent
         active: root.mode === "monitor"
         visible: active
         source: "MonitorStage.qml"
@@ -310,13 +304,13 @@ Item {
         anchors.left: parent.left
         anchors.top: parent.top
         anchors.bottom: parent.bottom
-        width: (root.additiveMode || (root.mode === "base" && Panel.islandOpen))
+        width: root.mode === "base" && Panel.islandOpen
                ? Math.max(0, root.spotlightX - 6) : root.width
         spacing: 6
-        visible: root.mode === "base" || root.additiveMode
+        visible: root.mode === "base"
 
         Repeater {
-            model: rowLayout.visible ? root.panelColumns : []
+            model: rowLayout.visible ? root.visibleColumns : []
 
             delegate: Flickable {
                 id: columnFlick

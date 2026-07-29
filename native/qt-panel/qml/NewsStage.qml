@@ -36,8 +36,11 @@ Item {
     readonly property int configuredColumns: {
         storeRevision
         const fallback = Number(Store.get("wp-base-columns", 3)) || 3
+        const legacy = Number(Store.get("wp-news-columns", fallback)) || fallback
+        const mode = viewMode === "reader" || viewMode === "live"
+                     || viewMode === "pressreader" ? viewMode : "carousel"
         return Math.max(3, Math.min(6,
-            Number(Store.get("wp-news-columns", fallback)) || fallback))
+            Number(Store.get("wp-news-columns-" + mode, legacy)) || legacy))
     }
     readonly property real uiScale: {
         storeRevision
@@ -232,6 +235,7 @@ Item {
         target: Store
         function onChanged(key) {
             if (key === "wp-base-columns" || key === "wp-news-columns"
+                    || key.indexOf("wp-news-columns-") === 0
                     || key === "wp-news-view-mode" || key === "wp-news-ui-scale"
                     || key === "wp-news-card-size")
                 stage.storeRevision++

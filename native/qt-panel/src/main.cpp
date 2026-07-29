@@ -623,7 +623,19 @@ const QCommandLineOption diagPressReaderOption(
         int startColumns = baseColumns;
         if (startMode == QStringLiteral("news")
             || startMode == QStringLiteral("live")) {
-            startColumns = settings.getInt(QStringLiteral("wp-news-columns"), baseColumns);
+            QString subMode = startMode == QStringLiteral("live")
+                ? QStringLiteral("live")
+                : settings.get(QStringLiteral("wp-news-view-mode"),
+                               QStringLiteral("carousel")).toString();
+            if (subMode != QLatin1String("reader") && subMode != QLatin1String("live")
+                && subMode != QLatin1String("pressreader")) {
+                subMode = QStringLiteral("carousel");
+            }
+            const int legacyNewsColumns = settings.getInt(
+                QStringLiteral("wp-news-columns"), baseColumns);
+            startColumns = settings.getInt(
+                QStringLiteral("wp-news-columns-") + subMode,
+                legacyNewsColumns);
         } else if (startMode == QStringLiteral("monitor")) {
             startColumns = 6;
         }

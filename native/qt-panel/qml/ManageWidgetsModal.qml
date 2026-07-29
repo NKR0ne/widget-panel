@@ -227,12 +227,37 @@ Item {
         Ui.notify("Disposition r\u00e9initialis\u00e9e", "success")
     }
 
+    function currentNewsSubMode() {
+        const stored = String(Store.get("wp-news-view-mode", "carousel") || "carousel")
+        return stored === "reader" || stored === "live"
+               || stored === "pressreader" ? stored : "carousel"
+    }
+
+    function newsColumnKey(mode) {
+        return "wp-news-columns-" + mode
+    }
+
+    function newsColumnCount(mode) {
+        const baseCount = Number(Store.get("wp-base-columns", 3)) || 3
+        const legacy = Number(Store.get("wp-news-columns", baseCount)) || baseCount
+        return Number(Store.get(newsColumnKey(mode), legacy)) || legacy
+    }
+
+    function allNewsColumnCounts() {
+        return {
+            carousel: newsColumnCount("carousel"),
+            reader: newsColumnCount("reader"),
+            live: newsColumnCount("live"),
+            pressreader: newsColumnCount("pressreader"),
+        }
+    }
+
     function columnCountForMode(mode) {
         if (mode === "monitor" || mode === "live")
             return 6
         const baseCount = Number(Store.get("wp-base-columns", 3)) || 3
         if (mode === "news")
-            return Number(Store.get("wp-news-columns", baseCount)) || baseCount
+            return newsColumnCount(currentNewsSubMode())
         return baseCount
     }
 
@@ -243,7 +268,9 @@ Item {
         Store.set("wp-layout-preset-" + selectedMode, JSON.stringify({
             columns: cfg.columns || {},
             widths: widths,
-            columnCount: columnCountForMode(selectedMode)
+            columnCount: columnCountForMode(selectedMode),
+            newsColumnCounts: selectedMode === "news"
+                              ? allNewsColumnCounts() : undefined,
         }))
         Ui.notify("Disposition enregistr\u00e9e", "success")
     }
@@ -260,10 +287,19 @@ Item {
         Store.set("wp-config", JSON.stringify(cfg))
         Store.set("wp-col-widths", JSON.stringify(preset.widths || {}))
         const savedCount = preset.columnCount || preset.baseColumns
+        if (selectedMode === "news" && preset.newsColumnCounts) {
+            const counts = preset.newsColumnCounts
+            for (const subMode of ["carousel", "reader", "live", "pressreader"]) {
+                if (counts[subMode] !== undefined) {
+                    Store.set(newsColumnKey(subMode),
+                              Math.max(3, Math.min(6, Number(counts[subMode]))))
+                }
+            }
+        }
         if (savedCount) {
             const count = Math.max(3, Math.min(6, Number(savedCount)))
             if (selectedMode === "news")
-                Store.set("wp-news-columns", count)
+                Store.set(newsColumnKey(currentNewsSubMode()), count)
             else if (selectedMode === "base")
                 Store.set("wp-base-columns", count)
             Panel.fitMode(selectedMode,

@@ -2,13 +2,13 @@ import QtQuick
 import QtQuick.Layouts
 import QtPanel.Native
 
-// Additive Station stage for columns 4-6. Supporting context uses one column
-// and telemetry consumes the remaining two.
+// Standalone Station workspace. Optional support cards use one logical column;
+// selected telemetry cards consume the remaining full-width grid.
 Item {
     id: stage
 
     property int storeRevision: 0
-    readonly property int configuredColumns: 3
+    readonly property int configuredColumns: 6
     readonly property var allowedIds: [
         "clock", "weather", "stocks", "workstation-cpu", "workstation-gpu",
         "workstation-ram", "workstation-disk", "workstation-network",
