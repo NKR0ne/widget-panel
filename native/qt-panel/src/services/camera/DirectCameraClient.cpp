@@ -305,7 +305,7 @@ void DirectCameraClient::configureAndStart(const QString& user, const QString& p
 
 void DirectCameraClient::startIfVerified()
 {
-    if (configured() && verified())
+    if (configured() && verified() && !m_attemptActive)
         start();
 }
 

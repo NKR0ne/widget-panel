@@ -625,6 +625,9 @@ const QCommandLineOption diagPressReaderOption(
         });
     }
 
+    // Keep a verified direct-camera stream warm independently of whether its
+    // card is currently instantiated. Reattaching the card only swaps sinks.
+    QTimer::singleShot(0, &directCamera, &DirectCameraClient::startIfVerified);
     controller.showPanel();
     if (startMode != QStringLiteral("base")) {
         QVariantMap columnWidths;

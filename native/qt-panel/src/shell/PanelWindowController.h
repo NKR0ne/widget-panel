@@ -273,6 +273,7 @@ private:
     quint64 m_nextIslandScriptId = 0;
     int m_resizeStartX = 0;
     int m_resizeStartW = 0;
+    QString m_resizeWidthKey;
 };
 
 } // namespace qtpanel

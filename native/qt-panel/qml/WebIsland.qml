@@ -326,6 +326,9 @@ Rectangle {
         anchors.right: parent.right
         anchors.top: toolbar.bottom
         anchors.bottom: parent.bottom
+        // Children render above Rectangle borders. Keep the native web surface
+        // inside the stroke so it cannot cover the island perimeter.
+        anchors.margins: 1
         profile: WebProfile
         backgroundColor: "#080a10"
         focus: island.presented

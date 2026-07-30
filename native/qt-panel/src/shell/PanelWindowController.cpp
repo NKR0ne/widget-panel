@@ -369,6 +369,7 @@ void PanelWindowController::startResize()
         return;
     m_resizeStartX = QCursor::pos().x();
     m_resizeStartW = m_target->width();
+    m_resizeWidthKey = widthKeyForMode(m_mode);
     m_resizeTimer.start();
 }
 
@@ -376,6 +377,7 @@ void PanelWindowController::onResizeTick()
 {
     if (!m_target) {
         m_resizeTimer.stop();
+        m_resizeWidthKey.clear();
         return;
     }
     const QRect wa = m_workArea.workArea();
@@ -391,13 +393,19 @@ void PanelWindowController::onResizeTick()
 
 void PanelWindowController::endResize()
 {
-    if (!m_resizeTimer.isActive())
+    if (!m_resizeTimer.isActive()) {
+        m_resizeWidthKey.clear();
         return;
+    }
     m_resizeTimer.stop();
     // Every mode remembers its own dragged width under its own key, so a drag in
     // Performance or in a News sub-mode never leaks into the base width.
-    if (m_target)
-        m_settings->set(widthKeyForMode(m_mode), m_target->width());
+    if (m_target) {
+        const QString widthKey = m_resizeWidthKey.isEmpty()
+            ? widthKeyForMode(m_mode) : m_resizeWidthKey;
+        m_settings->set(widthKey, m_target->width());
+    }
+    m_resizeWidthKey.clear();
 }
 
 bool PanelWindowController::fitMode(const QString& mode, int columnCount,
@@ -542,16 +550,20 @@ void PanelWindowController::openSpotlight(const QString& url, const QString& kin
     const QRect wa = m_workArea.workArea();
     const QRect screen = m_workArea.screenGeometry();
     const int fullWidth = fullPanelWidth();
+    const bool inlinePressReader = kind == QLatin1String("pressreader")
+        && m_mode == QLatin1String("news")
+        && newsSubMode(m_mode) == QLatin1String("pressreader");
+    const int targetWidth = inlinePressReader ? widthForMode(m_mode) : fullWidth;
     if (!m_islandOpen)
         m_islandRestoreWidth = m_target->width();
-    m_islandPanelWidth = fullWidth / 2;
+    m_islandPanelWidth = targetWidth / 2;
     const int height = wa.height() - kPanelVerticalGap * 2;
 
     m_focus.noteBrowserOpened();
     m_geometryLockUntil = QDateTime::currentMSecsSinceEpoch() + 700;
     m_target->setGeometry(screen.x() + kPanelHorizontalGap,
                           wa.y() + kPanelVerticalGap,
-                          fullWidth, height);
+                          targetWidth, height);
 
     m_islandOpen = true;
     m_islandKind = kind;
@@ -567,7 +579,8 @@ void PanelWindowController::openSpotlight(const QString& url, const QString& kin
         emit islandOpenRequested(target);
     notifyHelperHwnds();
     qInfo() << "[web] spotlight opened" << kind << target
-            << "windowW=" << fullWidth << "spotlightX=" << m_islandPanelWidth;
+            << "inline=" << inlinePressReader
+            << "windowW=" << targetWidth << "spotlightX=" << m_islandPanelWidth;
 }
 
 void PanelWindowController::navigateIsland(const QString& url)

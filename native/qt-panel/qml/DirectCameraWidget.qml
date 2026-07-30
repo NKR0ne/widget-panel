@@ -71,7 +71,6 @@ GlassCard {
     }
     Component.onDestruction: {
         DirectCamera.detachVideoSink(videoOutput.videoSink)
-        DirectCamera.stop()
     }
 
     Connections {
