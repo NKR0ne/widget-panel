@@ -457,8 +457,8 @@ const QCommandLineOption diagPressReaderOption(
         // the panel stays up after you click into another application, which is
         // the one shell behaviour the composition path silently dropped.
         QObject::connect(compositionHost.get(), &CompositionPanelHost::hostActiveChanged,
-                         &controller, [&controller](bool) {
-                             controller.notifySurfaceActiveChanged();
+                         &controller, [&controller](bool active) {
+                             controller.notifySurfaceActiveChanged(active);
                          });
         // Drive the acrylic from the shell's own palette. AccentDark2 is where
         // the Start menu actually sits once composited -- StartColorMenu is a

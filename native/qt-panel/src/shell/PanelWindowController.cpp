@@ -31,6 +31,8 @@
 namespace qtpanel {
 
 namespace {
+constexpr int kFocusDebounceRetryMs = 650;
+
 QString cookieKey(const QNetworkCookie& cookie)
 {
     return cookie.domain() + QLatin1Char('|')
@@ -68,7 +70,18 @@ PanelWindowController::PanelWindowController(SettingsStore* settings, HelperServ
         if (m_helper && m_target && m_target->isVisible()) {
             m_helper->sendState(true);
             notifyHelperHwnds();
+            m_helperHwndRefresh.start();
         }
+    });
+    // The legacy helper reads TCP by recv() chunk rather than by newline. If
+    // state and HWND messages coalesce, it can lose the handle and classify no
+    // click as outside. A low-frequency refresh makes that loss self-healing.
+    m_helperHwndRefresh.setInterval(1000);
+    connect(&m_helperHwndRefresh, &QTimer::timeout, this, [this] {
+        if (m_target && m_target->isVisible())
+            notifyHelperHwnds();
+        else
+            m_helperHwndRefresh.stop();
     });
     m_islandReadyTimeout.setSingleShot(true);
     m_islandReadyTimeout.setInterval(18000);
@@ -148,9 +161,14 @@ void PanelWindowController::attach(QQuickWindow* window)
         connect(m_helper, &HelperServer::helperReady, this, [this] {
             m_helper->sendState(m_target && m_target->isVisible());
             notifyHelperHwnds();
+            if (m_target && m_target->isVisible())
+                m_helperHwndRefresh.start();
         });
         connect(m_helper, &HelperServer::clientConnected, this, [this] {
             m_helper->sendState(m_target && m_target->isVisible());
+            notifyHelperHwnds();
+            if (m_target && m_target->isVisible())
+                m_helperHwndRefresh.start();
         });
     }
 
@@ -197,9 +215,14 @@ void PanelWindowController::attachTarget(PanelSurfaceTarget* target, QQuickWindo
         connect(m_helper, &HelperServer::helperReady, this, [this] {
             m_helper->sendState(m_target && m_target->isVisible());
             notifyHelperHwnds();
+            if (m_target && m_target->isVisible())
+                m_helperHwndRefresh.start();
         });
         connect(m_helper, &HelperServer::clientConnected, this, [this] {
             m_helper->sendState(m_target && m_target->isVisible());
+            notifyHelperHwnds();
+            if (m_target && m_target->isVisible())
+                m_helperHwndRefresh.start();
         });
     }
 
@@ -252,6 +275,7 @@ void PanelWindowController::hidePanel(bool force)
         closeIsland();
     m_hiding = true;
     m_helperStateDelay.stop();
+    m_helperHwndRefresh.stop();
     m_focus.resetModal();
     m_slideAnimation.stop();
     m_slideAnimation.setDuration(slideDuration());
@@ -269,6 +293,7 @@ void PanelWindowController::completeHide()
     m_hiding = false;
     m_showAnimating = false;
     m_hideFallback.stop();
+    m_helperHwndRefresh.stop();
     if (!m_target)
         return;
     m_target->hide();
@@ -326,27 +351,35 @@ void PanelWindowController::setModalOpen(bool open)
     }
 }
 
-void PanelWindowController::notifySurfaceActiveChanged()
+void PanelWindowController::notifySurfaceActiveChanged(bool active)
 {
-    onActiveChanged();
+    handleSurfaceActiveChanged(active);
 }
 
 void PanelWindowController::onActiveChanged()
 {
-    if (!m_target || m_target->isActive())
+    handleSurfaceActiveChanged(m_target && m_target->isActive());
+}
+
+void PanelWindowController::handleSurfaceActiveChanged(bool active)
+{
+    if (!m_target || active)
         return;
-    if (m_pinned || !m_target->isVisible() || m_hiding || m_islandOpen)
+    if (m_pinned || !m_target->isVisible() || m_hiding)
         return;
-    if (!m_focus.blurMayHide())
-        return;
-    QTimer::singleShot(FocusPolicy::kRecheckDelayMs, this, [this] {
+    // Do not discard a real focus loss during toggle/browser debounce. Recheck
+    // after the longest debounce and hide only if the panel is still inactive.
+    const int delay = m_focus.blurMayHide()
+        ? FocusPolicy::kRecheckDelayMs : kFocusDebounceRetryMs;
+    QTimer::singleShot(delay, this, [this] {
         if (!m_target || !m_target->isVisible() || m_pinned || m_hiding)
             return;
         if (m_target->isActive())
             return;
         if (!m_focus.delayedCheckAllowsHide())
             return;
-        hidePanel();
+        qInfo() << "[panel] dismissing after focus loss";
+        hidePanel(true);
     });
 }
 
@@ -359,7 +392,10 @@ void PanelWindowController::onClickOutside()
             return;
         if (!m_focus.delayedCheckAllowsHide())
             return;
-        hidePanel();
+        qInfo() << "[panel] dismissing after outside click";
+        // A real global mouse click must not be lost to the short geometry lock
+        // used to suppress synthetic focus changes during layout transitions.
+        hidePanel(true);
     });
 }
 

@@ -76,7 +76,7 @@ public:
     // Composition path: the host HWND reports activation instead of a QWindow.
     // Same policy as the windowed path -- the decision to hide lives in one
     // place, this only delivers the event.
-    void notifySurfaceActiveChanged();
+    void notifySurfaceActiveChanged(bool active);
 
     // Rewrites the login command so it matches how the panel is running, the
     // composition flag included. Must be called AFTER the surface is attached,
@@ -187,6 +187,7 @@ private:
     int hiddenWindowX() const;
     int slideDuration() const;
     void onActiveChanged();
+    void handleSurfaceActiveChanged(bool active);
     void onClickOutside();
     void onResizeTick();
     void applyWorkArea();
@@ -269,6 +270,7 @@ private:
     QPropertyAnimation m_slideAnimation;
     QTimer m_resizeTimer;
     QTimer m_helperStateDelay;
+    QTimer m_helperHwndRefresh;
     QTimer m_islandReadyTimeout;
     quint64 m_nextIslandScriptId = 0;
     int m_resizeStartX = 0;
