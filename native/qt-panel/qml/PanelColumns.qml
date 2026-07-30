@@ -115,7 +115,7 @@ Item {
     readonly property var monitorActiveIds: ModeSettings.activeIds(
         savedConfig, "monitor", allowedMonitorIds)
 
-    // Base and Station selections are independent even for shared cards.
+    // Base and Performance selections are independent even for shared cards.
     readonly property var activeIdSet: {
         const set = {}
         for (const id of savedActiveIds) set[id] = true
@@ -288,7 +288,8 @@ Item {
         const next = parseStored("wp-col-widths", {})
         next[name] = Math.round(Math.max(160, Math.min(520, width)))
         Store.set("wp-col-widths", JSON.stringify(next))
-        Panel.fitMode("base", baseColumnCount, next)
+        // Column widths changed: recompute the base width from them.
+        Panel.fitMode("base", baseColumnCount, next, true)
     }
 
     Loader {

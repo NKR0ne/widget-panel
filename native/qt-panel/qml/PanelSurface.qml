@@ -32,13 +32,15 @@ Item {
         storeRevision
         if (panelMode === "monitor" || panelMode === "live")
             return 6
-        const key = panelMode === "news"
-                    ? newsColumnKey(newsSubMode) : "wp-base-columns"
-        const fallback = panelMode === "news"
-                         ? legacyNewsColumnCount()
-                         : Number(Store.get("wp-base-columns", 3)) || 3
-        return Math.max(3, Math.min(6, Number(Store.get(key, fallback)) || fallback))
+        if (panelMode === "news")
+            return newsColumnCount(newsSubMode)
+        const stored = Number(Store.get("wp-base-columns", 3)) || 3
+        return Math.max(3, Math.min(6, stored))
     }
+    // Lecture is a fixed three-pane workspace: the panes themselves resize
+    // (persisted in NewsStage), so the column stepper does not apply to it.
+    readonly property bool columnCountAdjustable:
+        panelMode === "base" || (panelMode === "news" && newsSubMode !== "reader")
     readonly property real newsUiScale: {
         storeRevision
         return Math.max(0.85, Math.min(1.35,
@@ -72,12 +74,16 @@ Item {
     }
 
     function newsColumnCount(mode) {
+        if (mode === "reader")
+            return 3
         const fallback = legacyNewsColumnCount()
         return Math.max(3, Math.min(6,
             Number(Store.get(newsColumnKey(mode), fallback)) || fallback))
     }
 
-    function fitCurrentWindowMode(mode) {
+    // resetWidth: recompute the window width from the columns instead of
+    // restoring the width this mode last remembered (see Panel.fitMode).
+    function fitCurrentWindowMode(mode, resetWidth) {
         let widths = {}
         try { widths = JSON.parse(Store.get("wp-col-widths", "{}")) } catch (e) {}
         let count = Number(Store.get("wp-base-columns", 3)) || 3
@@ -85,7 +91,8 @@ Item {
             count = newsColumnCount(newsSubMode)
         else if (mode === "monitor" || mode === "live")
             count = 6
-        return Panel.fitMode(mode, Math.max(3, Math.min(6, count)), widths)
+        return Panel.fitMode(mode, Math.max(3, Math.min(6, count)), widths,
+                             resetWidth === true)
     }
 
     function switchMode(mode) {
@@ -135,14 +142,15 @@ Item {
     }
 
     function adjustColumns(delta) {
-        if (panelMode === "monitor" || panelMode === "live")
+        if (!columnCountAdjustable)
             return
         const next = Math.max(3, Math.min(6, columnCount + delta))
         if (next === columnCount)
             return
         Store.set(panelMode === "news"
                   ? newsColumnKey(newsSubMode) : "wp-base-columns", next)
-        fitCurrentWindowMode(panelMode)
+        // The layout changed, so this mode's remembered width is recomputed.
+        fitCurrentWindowMode(panelMode, true)
     }
 
     function adjustNewsUiScale(delta) {
@@ -327,7 +335,8 @@ Item {
                             model: [
                             { id: "base", label: "Panneau" },
                             { id: "news", label: "Nouvelles" },
-                            { id: "monitor", label: "Station" },
+                            // Label only — the persisted mode id stays "monitor".
+                            { id: "monitor", label: "Performance" },
                         ]
                             delegate: Rectangle {
                             required property var modelData
@@ -493,7 +502,7 @@ Item {
                 Row {
                     spacing: 2
                     Layout.alignment: Qt.AlignVCenter
-                    visible: surface.panelMode === "base" || surface.panelMode === "news"
+                    visible: surface.columnCountAdjustable
 
                     Rectangle {
                         width: 20; height: 20; radius: 5

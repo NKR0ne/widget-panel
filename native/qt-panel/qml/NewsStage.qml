@@ -39,6 +39,9 @@ Item {
         const legacy = Number(Store.get("wp-news-columns", fallback)) || fallback
         const mode = viewMode === "reader" || viewMode === "live"
                      || viewMode === "pressreader" ? viewMode : "carousel"
+        // Lecture is fixed at three panes (mirrors columnsForMode in C++).
+        if (mode === "reader")
+            return 3
         return Math.max(3, Math.min(6,
             Number(Store.get("wp-news-columns-" + mode, legacy)) || legacy))
     }
@@ -57,11 +60,34 @@ Item {
     readonly property int carouselColumns: Math.max(1, Math.min(6,
         configuredColumns + (3 - cardSize)))
     readonly property real cardSizeScale: 1.0 + (cardSize - 3) * 0.18
-    readonly property int articleColumns: Math.max(
-        1, Math.floor((configuredColumns - 1) / 2))
-    readonly property real railWidth: Math.max(1, width / configuredColumns)
+    // ── Lecture: three panes (categories | articles | reader) ────────────────
+    // Fixed at three columns; the panes themselves are dragged instead, stored
+    // as fractions of the stage width so they survive a panel resize.
+    readonly property real minPaneFraction: 0.14
+    // >= 0 while a splitter is being dragged, otherwise the stored value shows.
+    property real railFractionDraft: -1
+    property real listFractionDraft: -1
+    readonly property var storedReaderSplit: {
+        storeRevision
+        let parsed = {}
+        const raw = Store.get("wp-news-reader-split", "")
+        if (raw !== undefined && raw !== null && raw !== "") {
+            if (typeof raw === "string") {
+                try { parsed = JSON.parse(raw) } catch (e) { parsed = {} }
+            } else {
+                parsed = raw
+            }
+        }
+        return stage.clampReaderSplit(Number(parsed.rail) || (1 / 3),
+                                      Number(parsed.list) || (1 / 3))
+    }
+    readonly property real railFraction: railFractionDraft >= 0
+                                         ? railFractionDraft : storedReaderSplit.rail
+    readonly property real listFraction: listFractionDraft >= 0
+                                         ? listFractionDraft : storedReaderSplit.list
+    readonly property real railWidth: Math.max(1, Math.round(width * railFraction))
     readonly property real dividerPosition: Math.round(
-        width * (1 + articleColumns) / configuredColumns)
+        width * (railFraction + listFraction))
     readonly property var selectedItems: {
         newsRevision
         const result = []
@@ -112,6 +138,34 @@ Item {
         if (selectedCategory === "")
             selectedCategory = label
         openArticle(items[0])
+    }
+
+    // Keeps every Lecture pane usable: each at least minPaneFraction wide, the
+    // reader pane included (it takes whatever the other two leave).
+    function clampReaderSplit(rail, list) {
+        const minimum = minPaneFraction
+        const safeRail = Number(rail) || (1 / 3)
+        const safeList = Number(list) || (1 / 3)
+        const clampedRail = Math.max(minimum,
+            Math.min(1 - 2 * minimum, safeRail))
+        const clampedList = Math.max(minimum,
+            Math.min(1 - minimum - clampedRail, safeList))
+        return { rail: clampedRail, list: clampedList }
+    }
+
+    function previewReaderSplit(rail, list) {
+        const split = clampReaderSplit(rail, list)
+        railFractionDraft = split.rail
+        listFractionDraft = split.list
+    }
+
+    function commitReaderSplit() {
+        if (railFractionDraft < 0 && listFractionDraft < 0)
+            return
+        const split = clampReaderSplit(railFraction, listFraction)
+        railFractionDraft = -1
+        listFractionDraft = -1
+        Store.set("wp-news-reader-split", JSON.stringify(split))
     }
 
     function adjustCardSize(delta) {
@@ -237,7 +291,8 @@ Item {
             if (key === "wp-base-columns" || key === "wp-news-columns"
                     || key.indexOf("wp-news-columns-") === 0
                     || key === "wp-news-view-mode" || key === "wp-news-ui-scale"
-                    || key === "wp-news-card-size")
+                    || key === "wp-news-card-size"
+                    || key === "wp-news-reader-split")
                 stage.storeRevision++
         }
     }
@@ -707,6 +762,78 @@ Item {
         anchors.bottom: parent.bottom
         width: 1
         color: Theme.cardStroke
+    }
+
+    // Pane splitters. Both are direct children of the stage, which does not
+    // clip — a handle parented to one of the panes would lose the half of its
+    // width that falls outside (Qt delivers nothing to a child outside a
+    // clipping parent, the same trap the column handles hit).
+    Repeater {
+        model: [
+            // seam 0: categories | articles — moves both fractions so the
+            // second seam stays put. seam 1: articles | reader.
+            { seam: 0 },
+            { seam: 1 },
+        ]
+
+        delegate: Item {
+            id: splitter
+            required property var modelData
+            readonly property bool firstSeam: modelData.seam === 0
+            visible: stage.viewMode === "reader"
+            // Geometry is stated against the stage, not `parent`: Repeater
+            // delegates are parented to the Repeater's parent, so anchoring
+            // would depend on that indirection.
+            x: (firstSeam ? stage.railWidth + 4 : stage.dividerPosition) - width / 2
+            y: 0
+            width: 12
+            height: stage.height
+            z: 30
+
+            Rectangle {
+                x: (splitter.width - width) / 2
+                width: 2
+                height: splitter.height
+                radius: 1
+                color: Theme.accent
+                opacity: splitterDrag.active ? 0.9
+                       : splitterHover.hovered ? 0.55 : 0
+                Behavior on opacity { NumberAnimation { duration: Motion.fastMs } }
+            }
+
+            HoverHandler { id: splitterHover; cursorShape: Qt.SizeHorCursor }
+            DragHandler {
+                id: splitterDrag
+                target: null
+                xAxis.enabled: true
+                yAxis.enabled: false
+                property real startRail: 0
+                property real startList: 0
+                onActiveChanged: {
+                    if (active) {
+                        startRail = stage.railFraction
+                        startList = stage.listFraction
+                        stage.previewReaderSplit(startRail, startList)
+                    } else {
+                        stage.commitReaderSplit()
+                    }
+                }
+                onActiveTranslationChanged: {
+                    if (!active || stage.width <= 0)
+                        return
+                    const delta = activeTranslation.x / stage.width
+                    if (splitter.firstSeam) {
+                        // Hold the total so only this seam moves.
+                        const total = startRail + startList
+                        const rail = Math.max(stage.minPaneFraction,
+                            Math.min(total - stage.minPaneFraction, startRail + delta))
+                        stage.previewReaderSplit(rail, total - rail)
+                    } else {
+                        stage.previewReaderSplit(startRail, startList + delta)
+                    }
+                }
+            }
+        }
     }
 
     // While PressReader is selected the content pane is filled by the

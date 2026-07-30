@@ -39,6 +39,11 @@ Item {
         }
         return raw
     }
+    // The saved per-column widths must be handed to fitMode, or the panel is
+    // sized from the built-in defaults and the user's column widths are lost.
+    function storedColumnWidths() {
+        return parseJson(Store.get("wp-col-widths", ""), {})
+    }
     function starvisConfig() {
         return parseJson(Store.get("wp-starvis-config", ""), {})
     }
@@ -1031,7 +1036,8 @@ Item {
                         onClicked: {
                             modal.columnCountDraft = Math.max(3, modal.columnCountDraft - 1)
                             Store.set("wp-base-columns", modal.columnCountDraft)
-                            Panel.fitMode("base", modal.columnCountDraft, {})
+                            Panel.fitMode("base", modal.columnCountDraft,
+                                          modal.storedColumnWidths(), true)
                         }
                     }
                     Text {
@@ -1045,7 +1051,8 @@ Item {
                         onClicked: {
                             modal.columnCountDraft = Math.min(6, modal.columnCountDraft + 1)
                             Store.set("wp-base-columns", modal.columnCountDraft)
-                            Panel.fitMode("base", modal.columnCountDraft, {})
+                            Panel.fitMode("base", modal.columnCountDraft,
+                                          modal.storedColumnWidths(), true)
                         }
                     }
                 }

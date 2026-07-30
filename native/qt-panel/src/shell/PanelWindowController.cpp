@@ -394,18 +394,31 @@ void PanelWindowController::endResize()
     if (!m_resizeTimer.isActive())
         return;
     m_resizeTimer.stop();
-    // Only base remembers a dragged width. Stage modes are sized from their own
-    // column count, so storing their width here would widen base as well.
-    if (m_target && m_mode == QLatin1String("base"))
-        m_settings->set(QStringLiteral("wp-width"), m_target->width());
+    // Every mode remembers its own dragged width under its own key, so a drag in
+    // Performance or in a News sub-mode never leaks into the base width.
+    if (m_target)
+        m_settings->set(widthKeyForMode(m_mode), m_target->width());
 }
 
-bool PanelWindowController::fitMode(const QString& mode, int columnCount, const QVariantMap& colWidths)
+bool PanelWindowController::fitMode(const QString& mode, int columnCount,
+                                    const QVariantMap& colWidths,
+                                    bool resetStoredWidth)
 {
     if (!m_target)
         return false;
     const bool stage = mode != QLatin1String("base");
-    const int width = basePanelWidth(columnCount, colWidths);
+    const int layout = basePanelWidth(columnCount, colWidths);
+    const QString widthKey = widthKeyForMode(mode);
+    // Honour the width the user dragged for this mode unless the layout itself
+    // changed. Base additionally never goes below what its columns need.
+    int width = layout;
+    if (!resetStoredWidth) {
+        const int stored = m_settings->getInt(widthKey, 0);
+        if (stored >= kMinPanelWidth) {
+            width = qBound(kMinPanelWidth, stage ? stored : qMax(layout, stored),
+                           fullPanelWidth());
+        }
+    }
     m_geometryLockUntil = QDateTime::currentMSecsSinceEpoch() + 700;
     // Remember which mode is on screen so a hide/show cycle restores this
     // mode's width instead of falling back to the base-mode width.
@@ -413,8 +426,7 @@ bool PanelWindowController::fitMode(const QString& mode, int columnCount, const 
         m_mode = mode;
         m_settings->set(QStringLiteral("wp-panel-mode"), mode);
     }
-    if (!stage)
-        m_settings->set(QStringLiteral("wp-width"), width);
+    m_settings->set(widthKey, width);
     const QRect wa = m_workArea.workArea();
     const QRect screen = m_workArea.screenGeometry();
     m_target->setGeometry(screen.x() + kPanelHorizontalGap,
@@ -427,6 +439,8 @@ bool PanelWindowController::fitMode(const QString& mode, int columnCount, const 
     const int rightGap = screen.x() + screen.width()
         - (m_target->x() + m_target->width());
     qInfo() << "[panel] fit-mode" << mode << "stage=" << stage
+            << "key=" << widthKey << "layout=" << layout
+            << "reset=" << resetStoredWidth
             << "width=" << width << "actual=" << m_target->width()
             << "left-gap=" << leftGap << "right-gap=" << rightGap
             << "screen=" << screen << "work-area=" << wa
@@ -941,6 +955,28 @@ QVariantMap PanelWindowController::storedColumnWidths() const
     return doc.isObject() ? doc.object().toVariantMap() : QVariantMap();
 }
 
+QString PanelWindowController::newsSubMode(const QString& mode) const
+{
+    QString subMode = mode == QLatin1String("live")
+        ? QStringLiteral("live")
+        : m_settings->get(QStringLiteral("wp-news-view-mode"),
+                          QStringLiteral("carousel")).toString();
+    if (subMode != QLatin1String("reader") && subMode != QLatin1String("live")
+        && subMode != QLatin1String("pressreader")) {
+        subMode = QStringLiteral("carousel");
+    }
+    return subMode;
+}
+
+QString PanelWindowController::widthKeyForMode(const QString& mode) const
+{
+    if (mode == QLatin1String("news") || mode == QLatin1String("live"))
+        return QStringLiteral("wp-width-news-") + newsSubMode(mode);
+    if (mode == QLatin1String("base"))
+        return QStringLiteral("wp-width");   // legacy key, shared with Electron
+    return QStringLiteral("wp-width-") + mode;
+}
+
 int PanelWindowController::columnsForMode(const QString& mode) const
 {
     // Mirrors PanelSurface.columnCount so C++ can size any mode on its own.
@@ -948,14 +984,10 @@ int PanelWindowController::columnsForMode(const QString& mode) const
     if (mode == QLatin1String("monitor"))
         return 6;
     if (mode == QLatin1String("news") || mode == QLatin1String("live")) {
-        QString subMode = mode == QLatin1String("live")
-            ? QStringLiteral("live")
-            : m_settings->get(QStringLiteral("wp-news-view-mode"),
-                              QStringLiteral("carousel")).toString();
-        if (subMode != QLatin1String("reader") && subMode != QLatin1String("live")
-            && subMode != QLatin1String("pressreader")) {
-            subMode = QStringLiteral("carousel");
-        }
+        const QString subMode = newsSubMode(mode);
+        // Lecture is a fixed three-pane workspace with its own resizable panes.
+        if (subMode == QLatin1String("reader"))
+            return 3;
         const int legacy = m_settings->getInt(QStringLiteral("wp-news-columns"), base);
         return qBound(3, m_settings->getInt(
             QStringLiteral("wp-news-columns-") + subMode, legacy), 6);
@@ -967,12 +999,14 @@ int PanelWindowController::widthForMode(const QString& mode) const
 {
     const QVariantMap colWidths = storedColumnWidths();
     const int layout = basePanelWidth(columnsForMode(mode), colWidths);
-    // Only base keeps a user-dragged width; stage modes are sized purely by
-    // their own column count, so switching away and back cannot inflate them.
-    if (mode != QLatin1String("base"))
+    const int stored = m_settings->getInt(widthKeyForMode(mode), 0);
+    if (stored < kMinPanelWidth)
         return qBound(kMinPanelWidth, layout, fullPanelWidth());
-    const int stored = m_settings->getInt(QStringLiteral("wp-width"), layout);
-    return qBound(kMinPanelWidth, qMax(layout, stored), fullPanelWidth());
+    // Base never renders narrower than its columns need; stage modes take the
+    // dragged width as-is so a hide/show cycle returns them where they were.
+    return qBound(kMinPanelWidth,
+                  mode == QLatin1String("base") ? qMax(layout, stored) : stored,
+                  fullPanelWidth());
 }
 
 int PanelWindowController::storedWidth() const

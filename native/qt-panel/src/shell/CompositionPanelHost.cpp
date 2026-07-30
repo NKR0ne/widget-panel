@@ -406,6 +406,13 @@ void CompositionPanelHost::wireInput()
         const QPoint angle = props.IsHorizontalMouseWheel() ? QPoint(delta, 0) : QPoint(0, delta);
         QWheelEvent ev(p, p, QPoint(0, 0), angle, Qt::NoButton, currentModifiers(),
                        Qt::NoScrollPhase, false);
+        // Same requirement as the mouse events above: Qt timestamps drive
+        // Flickable's wheel velocity/deceleration state machine. At the default
+        // timestamp 0 every event lands at the same instant, so the first one
+        // scrolls a little and the rest are treated as stale and ignored --
+        // scrolling froze after the first notch until the pointer re-entered.
+        if (!d->inputClock.isValid()) d->inputClock.start();
+        ev.setTimestamp(static_cast<quint64>(d->inputClock.elapsed()));
         QCoreApplication::sendEvent(m_quickWindow, &ev);
     });
 

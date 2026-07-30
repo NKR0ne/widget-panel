@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Layouts
 import QtPanel.Native
 
-// Standalone Station workspace. Optional support cards use one logical column;
+// Standalone Performance workspace (mode id "monitor"). Optional support cards use one logical column;
 // selected telemetry cards consume the remaining full-width grid.
 Item {
     id: stage
@@ -111,7 +111,7 @@ Item {
                 spacing: 8
 
                 Text {
-                    text: "Station de travail"
+                    text: "Performance"
                     color: Theme.textPrimary
                     font.pixelSize: Theme.fontSizeTitle
                     font.weight: Font.DemiBold

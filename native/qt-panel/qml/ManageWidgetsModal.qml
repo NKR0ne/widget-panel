@@ -19,7 +19,8 @@ Item {
     readonly property var modes: [
         { id: "base", label: "Base" },
         { id: "news", label: "Nouvelles" },
-        { id: "monitor", label: "Station" },
+        // Label only — the persisted mode id stays "monitor".
+        { id: "monitor", label: "Performance" },
     ]
 
     readonly property var catalog: [
@@ -302,9 +303,11 @@ Item {
                 Store.set(newsColumnKey(currentNewsSubMode()), count)
             else if (selectedMode === "base")
                 Store.set("wp-base-columns", count)
+            // A restored preset carries its own column widths, so the mode's
+            // remembered window width is recomputed from them.
             Panel.fitMode(selectedMode,
                           selectedMode === "monitor" || selectedMode === "live" ? 6 : count,
-                          preset.widths || {})
+                          preset.widths || {}, true)
         }
         Ui.notify("Disposition restaur\u00e9e", "success")
     }

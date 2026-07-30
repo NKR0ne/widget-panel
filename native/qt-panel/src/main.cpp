@@ -25,6 +25,7 @@
 #include "core/SecretVault.h"
 #include "core/SettingsStore.h"
 #include "core/SoundFx.h"
+#include "core/TextFix.h"
 #include "shell/SystemTheme.h"
 #include "services/camera/CameraClient.h"
 #include "services/camera/DirectCameraClient.h"
@@ -206,6 +207,23 @@ const QCommandLineOption diagPressReaderOption(
         settings.set(QStringLiteral("wp-pressreader-url"),
                      PressReaderService::defaultEntryUrl());
         qInfo() << "[pressreader] migrated legacy rewritten catalog URL to library entry point";
+    }
+
+    // The imported Electron config stores double-encoded names ("QuÃ©bec").
+    // WeatherService repaired it on every read, but QML consumers (the traffic
+    // card shows it in three places) print the stored string as-is, so repair
+    // the value itself once.
+    {
+        const QString rawLocation = settings.get(QStringLiteral("wp-location")).toString();
+        QJsonObject location = QJsonDocument::fromJson(rawLocation.toUtf8()).object();
+        const QString name = location.value(QLatin1String("name")).toString();
+        const QString repaired = TextFix::repairMojibake(name);
+        if (!name.isEmpty() && repaired != name) {
+            location.insert(QStringLiteral("name"), repaired);
+            settings.set(QStringLiteral("wp-location"),
+                         QString::fromUtf8(QJsonDocument(location).toJson(QJsonDocument::Compact)));
+            qInfo() << "[settings] repaired mojibake in wp-location name:" << repaired;
+        }
     }
 
     // Move secrets out of plaintext settings into the Windows Credential
@@ -583,7 +601,7 @@ const QCommandLineOption diagPressReaderOption(
         });
         QTimer::singleShot(6500, &controller, [&controller, &settings] {
             settings.set(QStringLiteral("wp-base-columns"), 3);
-            controller.fitMode(QStringLiteral("base"), 3, {});
+            controller.fitMode(QStringLiteral("base"), 3, {}, true);
         });
         QTimer::singleShot(8500, window, [window, &dataDir] {
             window->grabWindow().save(dataDir + QStringLiteral("/diag-narrow.png"));
@@ -591,7 +609,7 @@ const QCommandLineOption diagPressReaderOption(
         });
         QTimer::singleShot(9500, &controller, [&controller, &settings] {
             settings.set(QStringLiteral("wp-base-columns"), 6);
-            controller.fitMode(QStringLiteral("base"), 6, {});
+            controller.fitMode(QStringLiteral("base"), 6, {}, true);
         });
         QTimer::singleShot(11500, window, [window, &dataDir] {
             window->grabWindow().save(dataDir + QStringLiteral("/diag-wide.png"));
@@ -633,12 +651,16 @@ const QCommandLineOption diagPressReaderOption(
             }
             const int legacyNewsColumns = settings.getInt(
                 QStringLiteral("wp-news-columns"), baseColumns);
-            startColumns = settings.getInt(
-                QStringLiteral("wp-news-columns-") + subMode,
-                legacyNewsColumns);
+            // Lecture is a fixed three-pane workspace (its panes resize, not
+            // the column count) — mirrors columnsForMode().
+            startColumns = subMode == QLatin1String("reader")
+                ? 3
+                : settings.getInt(QStringLiteral("wp-news-columns-") + subMode,
+                                  legacyNewsColumns);
         } else if (startMode == QStringLiteral("monitor")) {
             startColumns = 6;
         }
+        // resetStoredWidth stays false: the mode's remembered width wins.
         controller.fitMode(startMode, startColumns, columnWidths);
     }
     if (!diagIslandUrl.isEmpty()) {
