@@ -73,15 +73,7 @@ GlassCard {
         const url = chartUrl(symbol)
         if (!url)
             return
-        if (!detailMode) {
-            Ui.openDetail("stocks", "March\u00e9s", {
-                symbol: symbol,
-                subtitle: symbol,
-                tab: "quotes"
-            })
-        } else {
-            Panel.openIsland(url)
-        }
+        Panel.openIsland(url)
     }
 
     function openMarketEvent(item) {
@@ -101,15 +93,8 @@ GlassCard {
         const query = item.name || item.desc || ticker
         if (!query)
             return
-        if (!detailMode) {
-            Ui.openDetail("stocks", "March\u00e9s", {
-                subtitle: query,
-                tab: "events"
-            })
-        } else {
-            Panel.openIsland("https://www.tradingview.com/search/?query="
-                             + encodeURIComponent(query))
-        }
+        Panel.openIsland("https://www.tradingview.com/search/?query="
+                         + encodeURIComponent(query))
     }
 
     function openHeatmap(period) {
