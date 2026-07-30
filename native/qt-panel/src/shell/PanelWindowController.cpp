@@ -365,14 +365,14 @@ void PanelWindowController::handleSurfaceActiveChanged(bool active)
 {
     if (!m_target || active)
         return;
-    if (m_pinned || !m_target->isVisible() || m_hiding)
+    if (m_pinned || !m_target->isVisible() || m_hiding || m_islandOpen)
         return;
     // Do not discard a real focus loss during toggle/browser debounce. Recheck
     // after the longest debounce and hide only if the panel is still inactive.
     const int delay = m_focus.blurMayHide()
         ? FocusPolicy::kRecheckDelayMs : kFocusDebounceRetryMs;
     QTimer::singleShot(delay, this, [this] {
-        if (!m_target || !m_target->isVisible() || m_pinned || m_hiding)
+        if (!m_target || !m_target->isVisible() || m_pinned || m_hiding || m_islandOpen)
             return;
         if (m_target->isActive())
             return;
