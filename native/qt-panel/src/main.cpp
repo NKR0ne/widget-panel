@@ -362,7 +362,7 @@ const QCommandLineOption diagPressReaderOption(
     DiagnosticsService diagnostics(&settings, &vault, &controller, &pressReader,
                                    &msGraph, &live,
                                    &workstation, &camera, &directCamera, &starvis, &stocks);
-    SentryService sentry(&settings, &vault, &http, &starvis, &camera, &directCamera);
+    SentryService sentry(&settings, &vault, &http, &starvis, &directCamera);
     starvis.setSentry(&sentry);
 
     // Outlook unread count + Starvis sentry alerts → AppBar pill badge.

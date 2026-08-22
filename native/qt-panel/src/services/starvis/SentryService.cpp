@@ -5,7 +5,6 @@
 #include "StarvisState.h"
 #include "WebcamCapture.h"
 #include "core/SettingsStore.h"
-#include "services/camera/CameraClient.h"
 #include "services/camera/DirectCameraClient.h"
 #include "services/camera/HikvisionEventClient.h"
 
@@ -63,8 +62,6 @@ QString cameraLabel(const QString& cameraId)
 {
     if (cameraId == QLatin1String("direct"))
         return QStringLiteral("Caméra extérieure");
-    if (cameraId == QLatin1String("xprotect"))
-        return QStringLiteral("Caméra XProtect");
     if (cameraId == QLatin1String("webcam"))
         return QStringLiteral("Webcam");
     return cameraId;
@@ -110,12 +107,11 @@ void SentryImageProvider::storeImage(const QString& id, const QImage& image)
 }
 
 SentryService::SentryService(SettingsStore* settings, SecretVault* vault, HttpClient* http,
-                             StarvisService* starvis, CameraClient* xprotect,
-                             DirectCameraClient* direct, QObject* parent)
+                             StarvisService* starvis, DirectCameraClient* direct,
+                             QObject* parent)
     : QObject(parent)
     , m_settings(settings)
     , m_starvis(starvis)
-    , m_xprotect(xprotect)
     , m_direct(direct)
     , m_provider(new SentryImageProvider)
 {
@@ -145,9 +141,37 @@ SentryService::SentryService(SettingsStore* settings, SecretVault* vault, HttpCl
     loadActivity();
     loadPeople();
 
-    if (m_xprotect) {
-        connect(m_xprotect, &CameraClient::frameReady, this,
-                [this](const QImage& frame) { onFrame(QStringLiteral("xprotect"), frame); });
+    // Starvis used to accept the optional XProtect source. Keep the user's
+    // surveillance intent when upgrading, but remove that retired source from
+    // the persisted sentry configuration.
+    QVariantMap legacyConfig = sentryConfig();
+    QVariantMap legacyArmed = legacyConfig.value(QStringLiteral("armed")).toMap();
+    bool migratedXProtect = false;
+    if (legacyArmed.contains(QStringLiteral("xprotect"))) {
+        const bool wasArmed = legacyArmed.take(QStringLiteral("xprotect")).toBool();
+        if (wasArmed && !legacyArmed.contains(QStringLiteral("direct")))
+            legacyArmed.insert(QStringLiteral("direct"), true);
+        legacyConfig.insert(QStringLiteral("armed"), legacyArmed);
+        migratedXProtect = true;
+    }
+
+    QVariantMap legacyZones = legacyConfig.value(QStringLiteral("zones")).toMap();
+    if (legacyZones.remove(QStringLiteral("xprotect")) > 0) {
+        legacyConfig.insert(QStringLiteral("zones"), legacyZones);
+        migratedXProtect = true;
+    }
+
+    QVariantMap legacyDetection = legacyConfig.value(QStringLiteral("detection")).toMap();
+    if (legacyDetection.remove(QStringLiteral("xprotect")) > 0) {
+        legacyConfig.insert(QStringLiteral("detection"), legacyDetection);
+        migratedXProtect = true;
+    }
+
+    if (migratedXProtect) {
+        m_settings->set(QStringLiteral("wp-starvis-sentry"),
+                        QString::fromUtf8(QJsonDocument(
+                            QJsonObject::fromVariantMap(legacyConfig))
+                                              .toJson(QJsonDocument::Compact)));
     }
     if (m_direct) {
         connect(m_direct, &DirectCameraClient::analysisFrame, this,
@@ -253,11 +277,15 @@ bool SentryService::cameraArmed(const QString& cameraId) const
     const QVariantMap cfg = sentryConfig();
     if (cameraId == QLatin1String("webcam"))
         return cfg.value(QStringLiteral("webcamArmed"), true).toBool();
-    return cfg.value(QStringLiteral("armed")).toMap().value(cameraId, false).toBool();
+    if (cameraId == QLatin1String("direct"))
+        return cfg.value(QStringLiteral("armed")).toMap().value(cameraId, false).toBool();
+    return false;
 }
 
 void SentryService::setCameraArmed(const QString& cameraId, bool armed)
 {
+    if (cameraId != QLatin1String("direct") && cameraId != QLatin1String("webcam"))
+        return;
     QVariantMap cfg = sentryConfig();
     if (cameraId == QLatin1String("webcam")) {
         cfg.insert(QStringLiteral("webcamArmed"), armed);
@@ -576,11 +604,7 @@ bool SentryService::anyArmed() const
     const QVariantMap cfg = sentryConfig();
     if (cfg.value(QStringLiteral("webcamArmed"), true).toBool() && webcamAvailable())
         return true;
-    const QVariantMap armedMap = cfg.value(QStringLiteral("armed")).toMap();
-    for (auto it = armedMap.constBegin(); it != armedMap.constEnd(); ++it)
-        if (it.value().toBool())
-            return true;
-    return false;
+    return cameraArmed(QStringLiteral("direct"));
 }
 
 void SentryService::onCameraEvent(const QString& cameraId, const QString& label,
@@ -995,10 +1019,8 @@ QString SentryService::statusSnapshot() const
                           ? QStringLiteral("intrusions seulement")
                           : QStringLiteral("tout mouvement"),
                       eventSourceStatus());
-    lines << QStringLiteral("Caméras: xprotect %1, direct %2, webcam %3.")
-                 .arg(cameraArmed(QStringLiteral("xprotect"))
-                          ? QStringLiteral("armée") : QStringLiteral("désarmée"),
-                      cameraArmed(QStringLiteral("direct"))
+    lines << QStringLiteral("Caméras: directe %1, webcam %2.")
+                 .arg(cameraArmed(QStringLiteral("direct"))
                           ? QStringLiteral("armée") : QStringLiteral("désarmée"),
                       webcamAvailable()
                           ? (cameraArmed(QStringLiteral("webcam"))

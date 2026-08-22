@@ -49,7 +49,6 @@ GlassCard {
             model: [
                 { id: "webcam", label: "Webcam (présence)" },
                 { id: "direct", label: "Caméra directe" },
-                { id: "xprotect", label: "XProtect" },
             ]
             delegate: Row {
                 required property var modelData

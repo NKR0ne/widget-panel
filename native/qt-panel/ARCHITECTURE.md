@@ -313,8 +313,8 @@ explicit site fallbacks and TradingView heatmap/watchlist login.
 
 **Phase 4 — Starvis + Camera**
 Responses API streaming chat/briefing/TTS, context bus wired to all services,
-agent tool loop with action approval UI, capability report; XProtect camera
-client.
+agent tool loop with action approval UI, capability report; direct Hikvision
+camera analytics and workstation webcam presence.
 *Accept: briefing renders from fresh context; action policy blocks the same
 commands as today (unit-tested against the JS policy table); camera shows live
 frames.*

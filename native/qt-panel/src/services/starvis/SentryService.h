@@ -12,7 +12,6 @@
 namespace qtpanel {
 
 class AnthropicClient;
-class CameraClient;
 class DirectCameraClient;
 class HikvisionEventClient;
 class HttpClient;
@@ -51,8 +50,8 @@ class SentryService : public QObject {
 
 public:
     SentryService(SettingsStore* settings, SecretVault* vault, HttpClient* http,
-                  StarvisService* starvis, CameraClient* xprotect,
-                  DirectCameraClient* direct, QObject* parent = nullptr);
+                  StarvisService* starvis, DirectCameraClient* direct,
+                  QObject* parent = nullptr);
 
     SentryImageProvider* imageProvider() const { return m_provider; }
 
@@ -151,7 +150,6 @@ private:
 
     SettingsStore* m_settings = nullptr;
     StarvisService* m_starvis = nullptr;
-    CameraClient* m_xprotect = nullptr;
     DirectCameraClient* m_direct = nullptr;
     WebcamCapture* m_webcam = nullptr;
     HikvisionEventClient* m_directEvents = nullptr;

@@ -17,21 +17,12 @@ Item {
             label: "Caméra directe",
             role: "Périmètre extérieur · flux RTSP HikVision",
             live: "image://starvis/live/direct",
-            provider: true,
-        },
-        {
-            id: "xprotect",
-            label: "Caméra XProtect",
-            role: "Serveur de surveillance Milestone",
-            live: "image://camera/frame",
-            provider: false,
         },
         {
             id: "webcam",
             label: "Webcam du poste",
             role: "Présence et accueil à l'écran",
             live: "image://starvis/live/webcam",
-            provider: true,
         },
     ]
 
@@ -57,7 +48,7 @@ Item {
             delegate: GlassCard {
                 id: tile
                 required property var modelData
-                width: (vision.width - 16) / 3
+                width: (vision.width - 8) / 2
                 height: parent.height
                 flat: true
 
@@ -145,8 +136,6 @@ Item {
                             // Per-source counter, so another feed's frame
                             // never makes this tile refetch the same image.
                             revision: {
-                                if (!tile.modelData.provider)
-                                    return Camera.frameId
                                 Sentry.liveFrameId // re-evaluate on any frame
                                 return Sentry.frameIdFor(tile.modelData.id)
                             }
@@ -169,8 +158,6 @@ Item {
                                        ? "Flux indisponible" : "Connexion au flux…"
                             if (tile.isWebcam && !Sentry.webcamAvailable)
                                 return "Aucune webcam détectée"
-                            if (tile.modelData.id === "xprotect")
-                                return "Flux XProtect inactif"
                             return "En attente d'image…"
                         }
                     }

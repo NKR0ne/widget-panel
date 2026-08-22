@@ -11,7 +11,7 @@ param(
     [int]$ExitAfterMs = 0,
     [ValidateSet('auto', 'vulkan', 'd3d11')]
     [string]$Renderer = 'auto',
-    [ValidateSet('base', 'news', 'monitor', 'live')]
+    [ValidateSet('base', 'news', 'monitor', 'live', 'starvis')]
     [string]$StartMode = 'base',
     # Hosts the scene in a Windows composition tree so the backdrop is the
     # shell's own DesktopAcrylicController. Without it the panel starts on the
