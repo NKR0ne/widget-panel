@@ -314,7 +314,9 @@ explicit site fallbacks and TradingView heatmap/watchlist login.
 **Phase 4 — Starvis + Camera**
 Responses API streaming chat/briefing/TTS, context bus wired to all services,
 agent tool loop with action approval UI, capability report; direct Hikvision
-camera analytics and workstation webcam presence.
+camera analytics and workstation webcam presence. The native sentry service is
+always resident: event subscriptions survive panel and mode visibility changes,
+and a heartbeat watchdog rebuilds silent camera streams.
 *Accept: briefing renders from fresh context; action policy blocks the same
 commands as today (unit-tested against the JS policy table); camera shows live
 frames.*

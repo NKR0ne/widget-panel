@@ -35,6 +35,9 @@ public:
     QString status() const { return m_status; }
 
     void setEnabled(bool enabled);
+    // Re-read endpoint and credentials without coupling the event stream to a
+    // card lifecycle. If monitoring is enabled, the subscription is rebuilt.
+    void reloadConfiguration();
 
     // Full-resolution still from the camera itself; falls back to a null image.
     void fetchSnapshot(QObject* context, std::function<void(const QImage&)> callback);
@@ -90,12 +93,14 @@ private:
     QNetworkReply* m_stream = nullptr;
     QByteArray m_buffer;
     QTimer m_reconnectTimer;
+    QTimer m_watchdogTimer;
     QString m_status = QStringLiteral("idle");
     QString m_smartStatus;
     QHash<QString, QString> m_smartResults; // feature -> état
     QSet<QString> m_seenTypes;             // logged once each, for diagnosis
     QString m_lastActiveType;
     qint64 m_lastEventMs = 0;
+    qint64 m_lastStreamDataMs = 0;
     int m_reconnectDelayMs = 2000;
     bool m_enabled = false;
     bool m_connected = false;

@@ -54,6 +54,8 @@ public:
 signals:
     void statusChanged();
     void configurationChanged();
+    // Endpoint or credentials changed; background consumers must reconnect.
+    void connectionConfigurationChanged();
     void analysisFrame(const QImage& frame);
 
 private:

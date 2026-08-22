@@ -176,6 +176,12 @@ SentryService::SentryService(SettingsStore* settings, SecretVault* vault, HttpCl
     if (m_direct) {
         connect(m_direct, &DirectCameraClient::analysisFrame, this,
                 [this](const QImage& frame) { onFrame(QStringLiteral("direct"), frame); });
+        // Settings can change while the Starvis QML stage does not exist. Keep
+        // the native event subscription current regardless of panel mode.
+        connect(m_direct, &DirectCameraClient::connectionConfigurationChanged, this, [this] {
+            m_directEvents->reloadConfiguration();
+            applyConfig();
+        });
     }
     connect(m_webcam, &WebcamCapture::frameReady, this, [this](const QImage& frame) {
         onFrame(QStringLiteral("webcam"), frame);

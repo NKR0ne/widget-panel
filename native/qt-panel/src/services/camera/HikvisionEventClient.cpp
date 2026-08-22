@@ -20,6 +20,10 @@ namespace {
 // on top for the escalation itself).
 constexpr qint64 kMinEventGapMs = 4000;
 constexpr int kMaxReconnectDelayMs = 60000;
+// SubscribeEvent requests a heartbeat every 30 seconds. Two missed heartbeats
+// plus network jitter means the socket is no longer a trustworthy event path.
+constexpr qint64 kStreamStaleMs = 75000;
+constexpr int kWatchdogIntervalMs = 15000;
 // Keep VCA shapes off the frame border (normalized 0..1000 space).
 constexpr int kBorderMargin = 30;
 
@@ -95,6 +99,18 @@ HikvisionEventClient::HikvisionEventClient(SettingsStore* settings, SecretVault*
         if (m_enabled)
             connectStream();
     });
+    m_watchdogTimer.setInterval(kWatchdogIntervalMs);
+    connect(&m_watchdogTimer, &QTimer::timeout, this, [this] {
+        if (!m_enabled || !m_stream || m_lastStreamDataMs <= 0)
+            return;
+        const qint64 silentMs = QDateTime::currentMSecsSinceEpoch() - m_lastStreamDataMs;
+        if (silentMs < kStreamStaleMs)
+            return;
+        qWarning() << "[starvis.sentry] camera event stream stale for"
+                   << silentMs << "ms; reconnecting";
+        setStatus(QStringLiteral("stale"), false);
+        m_stream->abort();
+    });
 }
 
 QString HikvisionEventClient::baseUrl() const
@@ -163,13 +179,33 @@ void HikvisionEventClient::setEnabled(bool enabled)
     m_enabled = enabled;
     if (!enabled) {
         m_reconnectTimer.stop();
+        m_watchdogTimer.stop();
         if (m_stream) {
             m_stream->abort();
             m_stream = nullptr;
         }
         m_buffer.clear();
+        m_lastStreamDataMs = 0;
         setStatus(QStringLiteral("idle"), false);
         qInfo() << "[starvis.sentry] hikvision events disabled";
+        return;
+    }
+    m_watchdogTimer.start();
+    connectStream();
+}
+
+void HikvisionEventClient::reloadConfiguration()
+{
+    m_subscribed = false;
+    m_reconnectDelayMs = 2000;
+    m_reconnectTimer.stop();
+    m_buffer.clear();
+    m_lastStreamDataMs = 0;
+    if (!m_enabled)
+        return;
+    if (m_stream) {
+        qInfo() << "[starvis.sentry] camera configuration changed; rebuilding event stream";
+        m_stream->abort();
         return;
     }
     connectStream();
@@ -205,10 +241,14 @@ void HikvisionEventClient::openStream()
     const QString url = baseUrl() + QStringLiteral("/ISAPI/Event/notification/alertStream");
     setStatus(QStringLiteral("connecting"), false);
     qInfo() << "[starvis.sentry] subscribing to camera events:" << url;
+    // Also bounds a connection that opens at TCP level but never yields the
+    // first multipart heartbeat.
+    m_lastStreamDataMs = QDateTime::currentMSecsSinceEpoch();
 
     m_stream = m_http->getStreamAuth(
         QUrl(url), user(), password(), this,
         [this](const QByteArray& chunk) {
+            m_lastStreamDataMs = QDateTime::currentMSecsSinceEpoch();
             if (!m_connected) {
                 setStatus(QStringLiteral("live"), true);
                 m_reconnectDelayMs = 2000; // healthy stream resets the backoff
@@ -220,6 +260,7 @@ void HikvisionEventClient::openStream()
         [this](int status, const QString& error) {
             m_stream = nullptr;
             m_buffer.clear();
+            m_lastStreamDataMs = 0;
             const bool aborted = error == QLatin1String("aborted");
             if (status == 401)
                 setStatus(QStringLiteral("auth"), false);

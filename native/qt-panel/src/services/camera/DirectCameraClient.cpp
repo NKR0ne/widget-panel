@@ -300,6 +300,7 @@ void DirectCameraClient::configureAndStart(const QString& user, const QString& p
     if (m_configFingerprint != before)
         setVerificationState(false, protectedAttempts());
     emit configurationChanged();
+    emit connectionConfigurationChanged();
     start();
 }
 
@@ -363,6 +364,7 @@ void DirectCameraClient::forgetCredentials()
     m_configFingerprint = configurationFingerprint();
     setStatus(QStringLiteral("setup"));
     emit configurationChanged();
+    emit connectionConfigurationChanged();
 }
 
 void DirectCameraClient::resetAttemptGuard()
@@ -407,6 +409,7 @@ void DirectCameraClient::handleConfigurationChange()
     setVerificationState(false, protectedAttempts());
     setStatus(configured() ? QStringLiteral("ready") : QStringLiteral("setup"));
     emit configurationChanged();
+    emit connectionConfigurationChanged();
 }
 
 void DirectCameraClient::handleFrame(const QVideoFrame& frame)
