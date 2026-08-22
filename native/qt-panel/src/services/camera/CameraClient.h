@@ -63,6 +63,9 @@ signals:
     void statusChanged();
     void frameChanged();
     void camerasChanged();
+    // Decoded frame tap for analysis consumers (SentryService). The QML card
+    // keeps using the image provider + frameChanged.
+    void frameReady(const QImage& frame);
 
 private:
     void setStatus(const QString& status, const QString& error = {});

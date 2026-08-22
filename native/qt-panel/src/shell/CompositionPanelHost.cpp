@@ -186,6 +186,25 @@ int qtKeyForVirtualKey(quint32 vk)
     }
 }
 
+// Printable keys are normally delivered as text through CharacterReceived, so
+// qtKeyForVirtualKey drops them. In a Ctrl/Alt chord Windows produces no usable
+// character (Ctrl+V is 0x16), so the key event is the ONLY way the chord can
+// reach Qt — without this, paste/copy/cut/select-all and every Ctrl+<digit>
+// shortcut are dead on the composition path.
+int qtChordKeyForVirtualKey(quint32 vk)
+{
+    if (vk >= 'A' && vk <= 'Z') return Qt::Key_A + int(vk - 'A');
+    if (vk >= '0' && vk <= '9') return Qt::Key_0 + int(vk - '0');
+    switch (vk) {
+    case VK_SPACE:      return Qt::Key_Space;
+    case VK_OEM_COMMA:  return Qt::Key_Comma;
+    case VK_OEM_PERIOD: return Qt::Key_Period;
+    case VK_OEM_MINUS:  return Qt::Key_Minus;
+    case VK_OEM_PLUS:   return Qt::Key_Plus;
+    default:            return 0;
+    }
+}
+
 } // namespace
 
 CompositionPanelHost::CompositionPanelHost(QObject* parent)
@@ -423,19 +442,22 @@ void CompositionPanelHost::wireInput()
     // dropped here.
     d->keyboardSource = muinput::InputKeyboardSource::GetForIsland(d->island);
 
-    d->keyboardSource.KeyDown([this](auto&&, const muinput::KeyEventArgs& args) {
+    auto sendKey = [this](QEvent::Type type, quint32 vk) {
         if (!m_quickWindow) return;
-        const int key = qtKeyForVirtualKey(static_cast<quint32>(args.VirtualKey()));
+        const Qt::KeyboardModifiers mods = currentModifiers();
+        int key = qtKeyForVirtualKey(vk);
+        if (!key && (mods & (Qt::ControlModifier | Qt::AltModifier)))
+            key = qtChordKeyForVirtualKey(vk);
         if (!key) return;
-        QKeyEvent ev(QEvent::KeyPress, key, currentModifiers());
+        QKeyEvent ev(type, key, mods);
         QCoreApplication::sendEvent(m_quickWindow, &ev);
+    };
+
+    d->keyboardSource.KeyDown([sendKey](auto&&, const muinput::KeyEventArgs& args) {
+        sendKey(QEvent::KeyPress, static_cast<quint32>(args.VirtualKey()));
     });
-    d->keyboardSource.KeyUp([this](auto&&, const muinput::KeyEventArgs& args) {
-        if (!m_quickWindow) return;
-        const int key = qtKeyForVirtualKey(static_cast<quint32>(args.VirtualKey()));
-        if (!key) return;
-        QKeyEvent ev(QEvent::KeyRelease, key, currentModifiers());
-        QCoreApplication::sendEvent(m_quickWindow, &ev);
+    d->keyboardSource.KeyUp([sendKey](auto&&, const muinput::KeyEventArgs& args) {
+        sendKey(QEvent::KeyRelease, static_cast<quint32>(args.VirtualKey()));
     });
     d->keyboardSource.CharacterReceived([this](auto&&, const muinput::CharacterReceivedEventArgs& args) {
         if (!m_quickWindow) return;

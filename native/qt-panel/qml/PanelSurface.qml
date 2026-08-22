@@ -13,6 +13,7 @@ Item {
     Shortcut { sequence: "Ctrl+3"; onActivated: surface.switchMode("monitor") }
     Shortcut { sequence: "Ctrl+4"; onActivated: surface.openNewsSubMode("live") }
     Shortcut { sequence: "Ctrl+5"; onActivated: surface.openNewsSubMode("pressreader") }
+    Shortcut { sequence: "Ctrl+6"; onActivated: surface.switchMode("starvis") }
     Shortcut { sequence: "Ctrl+R"; onActivated: surface.refreshData() }
     Shortcut { sequence: "Ctrl+Comma"; onActivated: settingsModal.show() }
 
@@ -30,7 +31,7 @@ Item {
     }
     readonly property int columnCount: {
         storeRevision
-        if (panelMode === "monitor" || panelMode === "live")
+        if (panelMode === "monitor" || panelMode === "live" || panelMode === "starvis")
             return 6
         if (panelMode === "news")
             return newsColumnCount(newsSubMode)
@@ -62,6 +63,17 @@ Item {
             Store.set("wp-news-view-mode", "live")
     }
 
+    // Sentry alerts surface app-wide, not just on the Starvis stage.
+    Connections {
+        target: Sentry
+        function onAlertRaised(text, severity) {
+            Ui.notify(text, severity === "alert" ? "warning"
+                          : severity === "notice" ? "info" : "success")
+            if (severity === "alert")
+                SoundFx.tap()
+        }
+    }
+
     function newsColumnKey(mode) {
         const normalized = mode === "reader" || mode === "live"
                            || mode === "pressreader" ? mode : "carousel"
@@ -89,7 +101,7 @@ Item {
         let count = Number(Store.get("wp-base-columns", 3)) || 3
         if (mode === "news")
             count = newsColumnCount(newsSubMode)
-        else if (mode === "monitor" || mode === "live")
+        else if (mode === "monitor" || mode === "live" || mode === "starvis")
             count = 6
         return Panel.fitMode(mode, Math.max(3, Math.min(6, count)), widths,
                              resetWidth === true)
@@ -294,7 +306,7 @@ Item {
                 // Mode switcher
                 Item {
                     id: modeSwitcher
-                    readonly property var modeIds: ["base", "news", "monitor"]
+                    readonly property var modeIds: ["base", "news", "monitor", "starvis"]
                     readonly property int selectedIndex: modeIds.indexOf(surface.panelMode)
                     implicitWidth: modeRow.implicitWidth
                     implicitHeight: 20
@@ -337,6 +349,7 @@ Item {
                             { id: "news", label: "Nouvelles" },
                             // Label only — the persisted mode id stays "monitor".
                             { id: "monitor", label: "Performance" },
+                            { id: "starvis", label: "Starvis" },
                         ]
                             delegate: Rectangle {
                             required property var modelData

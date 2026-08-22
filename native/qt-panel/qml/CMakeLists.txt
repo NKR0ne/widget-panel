@@ -46,6 +46,14 @@ qt_add_qml_module(qtpanel_ui
         NewsStage.qml
         NewsMatrixOverlay.qml
         StarvisWidget.qml
+        StarvisStage.qml
+        StarvisAvatar.qml
+        StarvisAvatar3D.qml
+        StarvisAvatar2D.qml
+        StarvisVoicePanel.qml
+        StarvisSentryPanel.qml
+        StarvisVisionPanel.qml
+        StarvisLiveView.qml
         CameraWidget.qml
         DirectCameraWidget.qml
         PressReaderWidget.qml
@@ -61,6 +69,10 @@ qt_add_qml_module(qtpanel_ui
     RESOURCES
         web/traffic-map.html
         textures/acrylic-noise.png
+        # Quick3D CustomMaterial snippets are compiled at runtime by Quick3D —
+        # they must NOT go through qt_add_shaders/qsb.
+        effects/avatar.vert
+        effects/avatar.frag
 )
 
 qt_add_shaders(qtpanel_ui "qtpanel_shaders"

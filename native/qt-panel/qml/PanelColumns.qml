@@ -13,7 +13,19 @@ Item {
     opacity: 1
     transform: Translate { id: modeShift; y: 0 }
 
+    // The entrance fade must never be armed before the component is complete:
+    // the initial `mode` binding fires onModeChanged during creation, and an
+    // animation started there does not always reach the animation driver — the
+    // opacity then stays at 0 and the whole workspace renders blank. Only a
+    // real mode SWITCH animates; the startup mode is shown outright.
+    property bool entranceArmed: false
+
     onModeChanged: {
+        if (!entranceArmed) {
+            root.opacity = 1
+            modeShift.y = 0
+            return
+        }
         modeEntrance.stop()
         root.opacity = 0
         modeShift.y = 8
@@ -151,16 +163,16 @@ Item {
             return false
         }
         for (const id of workstationIds) {
-            if (!isActive(id))
-                continue
-            const assigned = savedColumns[id] || "monitor"
-            if (assigned !== undefined && visibleColumns.indexOf(assigned) >= 0)
-                return true
+            if (isActive(id))
+                return true; // it renders somewhere: effectiveColumn guarantees it
         }
         return false
     }
     onWorkstationVisibleChanged: Workstation.setActive(workstationVisible)
-    Component.onCompleted: Workstation.setActive(workstationVisible)
+    Component.onCompleted: {
+        Workstation.setActive(workstationVisible)
+        entranceArmed = true
+    }
 
     // ── Card management: drag a card to another column (base mode only) ───────
     property bool dragging: false
@@ -252,14 +264,25 @@ Item {
             setWidgetPlacement(id, col.colName, col.beforeIdAt(sceneY, id))
     }
 
+    // A card the user enabled must never vanish because its saved column is
+    // hidden at the current column count (e.g. anything parked in "feed" while
+    // base shows three columns). Fall back to a column that is on screen.
+    function effectiveColumn(id, fallback) {
+        const assigned = savedColumns[id] || fallback
+        if (visibleColumns.indexOf(assigned) >= 0)
+            return assigned
+        if (visibleColumns.indexOf(fallback) >= 0)
+            return fallback
+        return visibleColumns[visibleColumns.length - 1]
+    }
+
     function widgetsForColumn(name) {
         const result = []
         if (mode === "base") {
             for (const entry of registry) {
                 if (!isActive(entry.id))
                     continue
-                const assigned = savedColumns[entry.id] || entry.column
-                if (assigned === name)
+                if (effectiveColumn(entry.id, entry.column) === name)
                     result.push(entry)
             }
             return sortWidgets(result)
@@ -282,6 +305,13 @@ Item {
         active: root.mode === "monitor"
         visible: active
         source: "MonitorStage.qml"
+    }
+
+    Loader {
+        anchors.fill: parent
+        active: root.mode === "starvis"
+        visible: active
+        source: "StarvisStage.qml"
     }
 
     function setColumnWidth(name, width) {

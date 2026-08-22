@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QImage>
 #include <QMediaPlayer>
 #include <QJsonObject>
 #include <QObject>
@@ -46,12 +47,18 @@ public:
     Q_INVOKABLE void attachVideoSink(QVideoSink* sink);
     Q_INVOKABLE void detachVideoSink(QVideoSink* sink);
 
+    // Analysis fan-out for SentryService: off by default because toImage()
+    // costs a mapped copy per frame.
+    void setAnalysisEnabled(bool enabled) { m_analysisEnabled = enabled; }
+
 signals:
     void statusChanged();
     void configurationChanged();
+    void analysisFrame(const QImage& frame);
 
 private:
     static constexpr int kProtectedAttemptLimit = 2;
+    static constexpr qint64 kAnalysisIntervalMs = 500;
 
     QUrl resolvedEndpoint() const;
     QUrl normalizeEndpoint(const QString& value) const;
@@ -81,6 +88,8 @@ private:
     QString m_status = QStringLiteral("setup");
     QString m_error;
     qint64 m_lastFrameAtMs = 0;
+    qint64 m_lastAnalysisMs = 0;
+    bool m_analysisEnabled = false;
     bool m_attemptActive = false;
     bool m_attemptWasVerified = false;
     bool m_receivedFrame = false;

@@ -22,14 +22,33 @@ Item {
         open = false
         Panel.setModalOpen(false)
     }
+    // One page of configuration per feature; the chip row above the sheet
+    // switches pages. Legacy jumpTo ids map onto the new pages.
+    property string currentPage: "general"
+    readonly property var pages: [
+        { id: "general", label: "Général" },
+        { id: "appearance", label: "Apparence" },
+        { id: "starvis", label: "Starvis" },
+        { id: "news", label: "Nouvelles" },
+        { id: "cameras", label: "Caméras" },
+        { id: "markets", label: "Marchés" },
+        { id: "location", label: "Météo & Circulation" },
+        { id: "microsoft", label: "Microsoft" },
+        { id: "validation", label: "Validation" },
+    ]
     function jumpTo(section) {
-        let target = generalSection
-        if (section === "services") target = starvisSection
-        else if (section === "accounts") target = pressSection
-        else if (section === "validation") target = validationSection
-        else if (section === "interface") target = interfaceSection
-        const point = target.mapToItem(sheet, 0, 0)
-        scroll.contentY = Math.max(0, Math.min(scroll.contentHeight - scroll.height, point.y - 8))
+        const map = { services: "starvis", accounts: "news",
+                      interface: "appearance" }
+        const target = map[section] !== undefined ? map[section] : section
+        for (const page of pages) {
+            if (page.id === target) {
+                currentPage = target
+                scroll.contentY = 0
+                return
+            }
+        }
+        currentPage = "general"
+        scroll.contentY = 0
     }
     function parseJson(raw, fallback) {
         if (raw === undefined || raw === null || raw === "")
@@ -61,9 +80,39 @@ Item {
             while (value.endsWith("/"))
                 value = value.slice(0, -1)
             cfg[key] = value || "https://api.openai.com/v1"
-            Store.set("wp-starvis-base-url", cfg[key])
         }
         Store.set("wp-starvis-config", JSON.stringify(cfg))
+    }
+    function providerConfig() {
+        return parseJson(Store.get("wp-starvis-provider", ""), {})
+    }
+    function providerValue(key, fallback) {
+        const cfg = providerConfig()
+        const value = cfg[key]
+        return value === undefined || value === null || value === "" ? fallback : String(value)
+    }
+    function setProviderValue(key, value) {
+        const cfg = providerConfig()
+        if (key === "maxTokens")
+            value = Math.max(256, Math.min(32000, Number(value) || 8192))
+        cfg[key] = value
+        Store.set("wp-starvis-provider", JSON.stringify(cfg))
+    }
+    // Generic JSON-blob settings accessors (voice / sentry / greeting).
+    function blobValue(storeKey, field, fallback) {
+        const cfg = parseJson(Store.get(storeKey, ""), {})
+        const value = cfg[field]
+        return value === undefined || value === null || value === "" ? fallback : String(value)
+    }
+    function blobBool(storeKey, field, fallback) {
+        const cfg = parseJson(Store.get(storeKey, ""), {})
+        const value = cfg[field]
+        return value === undefined || value === null ? fallback : value === true || value === "true"
+    }
+    function setBlobValue(storeKey, field, value) {
+        const cfg = parseJson(Store.get(storeKey, ""), {})
+        cfg[field] = value
+        Store.set(storeKey, JSON.stringify(cfg))
     }
     function cameraAuth() {
         return parseJson(Store.get("wp-camera-auth", ""), {})
@@ -136,6 +185,102 @@ Item {
     }
 
     Component {
+        id: blobField
+        Rectangle {
+            property string storeKey: ""
+            property string field: ""
+            property string placeholder: ""
+            property string fallback: ""
+            property bool numeric: false
+            width: sheet.width; height: 28; radius: 6
+            color: Qt.rgba(1,1,1,0.05)
+            border.color: bf.activeFocus ? Theme.accent : Theme.cardStroke
+            TextInput {
+                id: bf
+                anchors.fill: parent; anchors.margins: 7
+                verticalAlignment: TextInput.AlignVCenter
+                color: Theme.textPrimary; font.pixelSize: 10; clip: true
+                Component.onCompleted: text = modal.blobValue(parent.storeKey, parent.field,
+                                                              parent.fallback)
+                onEditingFinished: modal.setBlobValue(parent.storeKey, parent.field,
+                                                      parent.numeric ? Number(text.trim()) || 0
+                                                                     : text.trim())
+                Text {
+                    visible: bf.text === "" && !bf.activeFocus
+                    text: parent.parent.placeholder; color: Qt.rgba(1,1,1,0.25)
+                    font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+        }
+    }
+
+    Component {
+        id: blobToggle
+        Row {
+            property string storeKey: ""
+            property string field: ""
+            property string label: ""
+            property bool fallback: true
+            width: sheet.width
+            spacing: 8
+            Text {
+                text: parent.label
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontSizeCaption
+                anchors.verticalCenter: parent.verticalCenter
+            }
+            Item { width: parent.width - x - blobSwitch.width; height: 1 }
+            Rectangle {
+                id: blobSwitch
+                property bool on: modal.blobBool(parent.storeKey, parent.field, parent.fallback)
+                width: 34; height: 18; radius: 9
+                anchors.verticalCenter: parent.verticalCenter
+                color: on ? Theme.accent : Qt.rgba(1,1,1,0.12)
+                Behavior on color { ColorAnimation { duration: Motion.fastMs } }
+                Rectangle {
+                    width: 14; height: 14; radius: 7; y: 2
+                    x: blobSwitch.on ? parent.width - width - 2 : 2
+                    color: "#fff"
+                    Behavior on x { NumberAnimation { duration: Motion.fastMs } }
+                }
+                MouseArea {
+                    anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        blobSwitch.on = !blobSwitch.on
+                        modal.setBlobValue(blobSwitch.parent.storeKey,
+                                           blobSwitch.parent.field, blobSwitch.on)
+                    }
+                }
+            }
+        }
+    }
+
+    Component {
+        id: providerField
+        Rectangle {
+            property string configKey: ""
+            property string placeholder: ""
+            property string fallback: ""
+            width: sheet.width; height: 28; radius: 6
+            color: Qt.rgba(1,1,1,0.05)
+            border.color: pf.activeFocus ? Theme.accent : Theme.cardStroke
+            TextInput {
+                id: pf
+                anchors.fill: parent; anchors.margins: 7
+                verticalAlignment: TextInput.AlignVCenter
+                color: Theme.textPrimary; font.pixelSize: 10; clip: true
+                Component.onCompleted: text = modal.providerValue(parent.configKey, parent.fallback)
+                onEditingFinished: modal.setProviderValue(parent.configKey, text.trim())
+                Text {
+                    visible: pf.text === "" && !pf.activeFocus
+                    text: parent.parent.placeholder; color: Qt.rgba(1,1,1,0.25)
+                    font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter
+                }
+            }
+        }
+    }
+
+    Component {
         id: storeField
         Rectangle {
             property string storeKey: ""
@@ -186,8 +331,9 @@ Item {
     Rectangle {
         id: panel
         anchors.centerIn: parent
-        width: Math.min(520, parent.width - 48)
-        height: Math.min(parent.height - 48, sheet.implicitHeight + 36)
+        width: Math.min(560, parent.width - 48)
+        height: Math.min(parent.height - 48,
+                         header.implicitHeight + sheet.implicitHeight + 48)
         radius: Theme.radiusPanel
         color: "#131722"
         border.color: Theme.cardStroke
@@ -202,19 +348,15 @@ Item {
 
         MouseArea { anchors.fill: parent } // swallow
 
-        Flickable {
-            id: scroll
-            anchors.fill: parent
+        // Title and page tabs stay pinned; only the selected feature's
+        // settings scroll, so the sheet never reads as one long list.
+        Column {
+            id: header
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.right: parent.right
             anchors.margins: 18
-            clip: true
-            contentWidth: width
-            contentHeight: sheet.implicitHeight
-            boundsBehavior: Flickable.StopAtBounds
-
-            Column {
-                id: sheet
-                width: scroll.width
-                spacing: 14
+            spacing: 10
 
             Row {
                 width: parent.width
@@ -233,51 +375,78 @@ Item {
                 }
             }
 
-            Flickable {
+            // Wraps instead of scrolling sideways, so every page stays visible
+            // rather than hiding along a horizontal strip.
+            Flow {
+                id: settingsNav
                 width: parent.width
-                height: 26
-                contentWidth: settingsNav.width
-                clip: true
-                Row {
-                    id: settingsNav
-                    spacing: 4
-                    Repeater {
-                        model: [
-                            { id: "general", label: "G\u00e9n\u00e9ral" },
-                            { id: "services", label: "Services" },
-                            { id: "accounts", label: "Comptes" },
-                            { id: "validation", label: "Validation" },
-                            { id: "interface", label: "Interface" }
-                        ]
-                        delegate: Rectangle {
-                            required property var modelData
-                            width: navLabel.implicitWidth + 16
-                            height: 24
-                            radius: 6
-                            color: navMouse.containsMouse ? Theme.hover : Theme.cardFill
-                            border.color: Theme.cardStroke
-                            Accessible.role: Accessible.Button
-                            Accessible.name: modelData.label
-                            Text {
-                                id: navLabel
-                                anchors.centerIn: parent
-                                text: parent.modelData.label
-                                color: Theme.textSecondary
-                                font.pixelSize: 9
-                            }
-                            MouseArea {
-                                id: navMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: modal.jumpTo(parent.modelData.id)
+                spacing: 4
+                Repeater {
+                    model: modal.pages
+                    delegate: Rectangle {
+                        required property var modelData
+                        readonly property bool selected: modal.currentPage === modelData.id
+                        width: navLabel.implicitWidth + 18
+                        height: 26
+                        radius: 6
+                        color: selected ? Theme.activeFill
+                             : navMouse.containsMouse ? Theme.hover : Theme.cardFill
+                        border.color: selected ? Theme.accent : Theme.cardStroke
+                        Accessible.role: Accessible.Button
+                        Accessible.name: modelData.label
+                        Text {
+                            id: navLabel
+                            anchors.centerIn: parent
+                            text: parent.modelData.label
+                            color: parent.selected ? Theme.textPrimary : Theme.textSecondary
+                            font.pixelSize: 10
+                        }
+                        MouseArea {
+                            id: navMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                modal.currentPage = parent.modelData.id
+                                scroll.contentY = 0
                             }
                         }
                     }
                 }
             }
 
-            Item { id: generalSection; width: 1; height: 1 }
+            Rectangle {
+                width: parent.width
+                height: 1
+                color: Theme.cardStroke
+            }
+        }
+
+        Flickable {
+            id: scroll
+            anchors.top: header.bottom
+            anchors.topMargin: 12
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.leftMargin: 18
+            anchors.rightMargin: 18
+            anchors.bottomMargin: 18
+            clip: true
+            contentWidth: width
+            contentHeight: sheet.implicitHeight
+            boundsBehavior: Flickable.StopAtBounds
+
+            Column {
+                id: sheet
+                width: scroll.width
+                spacing: 14
+
+            // \u2500\u2500 Page: Apparence \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+            Column {
+            visible: modal.currentPage === "appearance"
+            width: parent.width
+            spacing: 14
 
             SettingsSlider {
                 width: parent.width
@@ -399,8 +568,14 @@ Item {
                     Ui.save()
                 }
             }
+            } // page: appearance
 
-            // ── Location ──────────────────────────────────────────────
+            // ── Page: Météo & lieu ────────────────────────────────────
+            Column {
+            visible: modal.currentPage === "location"
+            width: parent.width
+            spacing: 14
+
             Text {
                 text: "EMPLACEMENT"; color: Theme.textSecondary; font.pixelSize: 9
                 font.letterSpacing: 1; topPadding: 4
@@ -456,15 +631,17 @@ Item {
                 target: Weather
                 function onLocationResults(results) { locResults.model = results }
             }
-
-            // ── API keys ──────────────────────────────────────────────
             Text {
-                text: "CLÉS API"; color: Theme.textSecondary; font.pixelSize: 9
+                text: "CIRCULATION"; color: Theme.textSecondary; font.pixelSize: 9
                 font.letterSpacing: 1; topPadding: 4
             }
+            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "tomtom-key"; item.placeholder = "Clé TomTom (circulation)" } }
+            } // page: location
+
             Component {
                 id: keyField
                 Rectangle {
+                    id: keyFieldRoot
                     property string vaultKey: ""
                     property string placeholder: ""
                     property bool secret: true
@@ -473,24 +650,62 @@ Item {
                     border.color: kf.activeFocus ? Theme.accent : Theme.cardStroke
                     TextInput {
                         id: kf
-                        anchors.fill: parent; anchors.margins: 7
+                        anchors.left: parent.left
+                        anchors.right: pasteButton.left
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        anchors.margins: 7
+                        anchors.rightMargin: 4
                         verticalAlignment: TextInput.AlignVCenter
                         color: Theme.textPrimary; font.pixelSize: 10; clip: true
-                        echoMode: parent.secret && !activeFocus ? TextInput.Password : TextInput.Normal
-                        Component.onCompleted: text = Vault.get(parent.vaultKey)
-                        onEditingFinished: Vault.set(parent.vaultKey, text)
+                        echoMode: keyFieldRoot.secret && !activeFocus ? TextInput.Password : TextInput.Normal
+                        Component.onCompleted: text = Vault.get(keyFieldRoot.vaultKey)
+                        onEditingFinished: Vault.set(keyFieldRoot.vaultKey, text)
                         Text {
                             visible: kf.text === "" && !kf.activeFocus
-                            text: parent.parent.placeholder; color: Qt.rgba(1,1,1,0.25)
+                            text: keyFieldRoot.placeholder; color: Qt.rgba(1,1,1,0.25)
                             font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter
+                        }
+                    }
+                    // Long secrets are pasted, and a keyboard chord is the one
+                    // input path that can be missing (composition keyboard
+                    // bridge, remote sessions). This always works.
+                    Rectangle {
+                        id: pasteButton
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.rightMargin: 4
+                        width: pasteLabel.implicitWidth + 12
+                        height: 20
+                        radius: 5
+                        color: pasteMouse.containsMouse ? Theme.hover : Qt.rgba(1,1,1,0.07)
+                        border.color: Theme.cardStroke
+                        Text {
+                            id: pasteLabel
+                            anchors.centerIn: parent
+                            text: "Coller"
+                            color: Theme.textSecondary
+                            font.pixelSize: 9
+                        }
+                        MouseArea {
+                            id: pasteMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                const pasted = Panel.clipboardText().trim()
+                                if (pasted === "") {
+                                    Ui.notify("Presse-papiers vide", "warning")
+                                    return
+                                }
+                                kf.text = pasted
+                                Vault.set(keyFieldRoot.vaultKey, pasted)
+                                Ui.notify("Clé enregistrée", "success")
+                            }
                         }
                     }
                 }
             }
-            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "tomtom-key"; item.placeholder = "Clé TomTom (circulation)" } }
-            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "finnhub-key"; item.placeholder = "Clé Finnhub (cotations)" } }
-            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "starvis-openai-key"; item.placeholder = "Cle OpenAI (Starvis)" } }
-
             Component {
                 id: cameraUserField
                 Rectangle {
@@ -513,11 +728,71 @@ Item {
                 }
             }
 
+            // ── Page: Starvis ─────────────────────────────────────────
+            Column {
+            visible: modal.currentPage === "starvis"
+            width: parent.width
+            spacing: 14
+
             Text {
                 id: starvisSection
-                text: "STARVIS"; color: Theme.textSecondary; font.pixelSize: 9
+                text: "RAISONNEMENT — ANTHROPIC"; color: Theme.textSecondary; font.pixelSize: 9
                 font.letterSpacing: 1; topPadding: 4
             }
+            // Anthropic drives reasoning as soon as its key is stored; the
+            // model is auto-resolved to the top reasoning model daily.
+            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "starvis-anthropic-key"; item.placeholder = "Clé Anthropic (raisonnement)"; item.secret = true } }
+            Loader { sourceComponent: providerField; onLoaded: { item.configKey = "modelPin"; item.fallback = ""; item.placeholder = "Modèle épinglé (vide = auto)" } }
+            Row {
+                width: parent.width
+                spacing: 8
+                Text {
+                    id: starvisModelStatus
+                    property int starvisRev: 0
+                    Connections {
+                        target: Starvis
+                        function onConfiguredChanged() { starvisModelStatus.starvisRev++ }
+                    }
+                    width: parent.width - starvisModelRefresh.width - 8
+                    text: {
+                        starvisModelStatus.starvisRev
+                        const status = Starvis.providerStatus()
+                        if (status.provider !== "anthropic")
+                            return "Anthropic inactif — la clé OpenAI ci-dessous sert de repli."
+                        return "Modèle actif: " + status.model
+                               + (status.pinned ? " (épinglé)" : " (auto)")
+                    }
+                    color: Theme.textSecondary
+                    font.pixelSize: 10
+                    elide: Text.ElideRight
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                Rectangle {
+                    id: starvisModelRefresh
+                    width: starvisModelRefreshLabel.implicitWidth + 14; height: 22; radius: 6
+                    color: starvisModelRefreshMouse.containsMouse ? Theme.hover : Theme.cardFill
+                    border.color: Theme.cardStroke
+                    Text {
+                        id: starvisModelRefreshLabel
+                        anchors.centerIn: parent
+                        text: "Résoudre"
+                        color: Theme.textSecondary
+                        font.pixelSize: 9
+                    }
+                    MouseArea {
+                        id: starvisModelRefreshMouse
+                        anchors.fill: parent; hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Starvis.refreshModel()
+                    }
+                }
+            }
+            Loader { sourceComponent: providerField; onLoaded: { item.configKey = "maxTokens"; item.fallback = "8192"; item.placeholder = "Max tokens (Anthropic)" } }
+            Text {
+                text: "REPLI / VOIX — OPENAI"; color: Theme.textSecondary; font.pixelSize: 9
+                font.letterSpacing: 1; topPadding: 4
+            }
+            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "starvis-openai-key"; item.placeholder = "Clé OpenAI (voix + repli)" } }
             Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "model"; item.fallback = "gpt-5.5"; item.placeholder = "Modèle Starvis" } }
             Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "baseUrl"; item.fallback = "https://api.openai.com/v1"; item.placeholder = "Base URL OpenAI compatible" } }
             Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "maxTokens"; item.fallback = "1800"; item.placeholder = "Maximum tokens" } }
@@ -552,6 +827,273 @@ Item {
                     }
                 }
             }
+
+            Text {
+                text: "VOIX TEMPS RÉEL"; color: Theme.textSecondary; font.pixelSize: 9
+                font.letterSpacing: 1; topPadding: 4
+            }
+            Text {
+                width: parent.width
+                text: Starvis.voice && Starvis.voice.available
+                      ? "Prêt — dialogue continu, interruption possible."
+                      : "Indisponible : " + (Starvis.voice ? Starvis.voice.unavailableReason : "")
+                color: Theme.textSecondary
+                font.pixelSize: 9
+                wrapMode: Text.WordWrap
+            }
+            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "realtimeModel"; item.fallback = "gpt-realtime"; item.placeholder = "Modèle temps réel" } }
+            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "voice"; item.fallback = "marin"; item.placeholder = "Voix" } }
+            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "idleTimeoutMin"; item.fallback = "5"; item.numeric = true; item.placeholder = "Fermeture après inactivité (min)" } }
+            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "maxSessionMin"; item.fallback = "30"; item.numeric = true; item.placeholder = "Durée maximale de session (min)" } }
+
+            Text {
+                text: "SENTINELLE (CAMÉRAS)"; color: Theme.textSecondary; font.pixelSize: 9
+                font.letterSpacing: 1; topPadding: 4
+            }
+            // Perimeter focus: plain movement is not an intrusion.
+            Row {
+                id: scopeRow
+                width: parent.width
+                spacing: 4
+                property int rev: 0
+                Connections {
+                    target: Sentry
+                    function onConfigChanged() { scopeRow.rev++ }
+                }
+                Text {
+                    text: "Portée des alertes"
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSizeCaption
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                Item { width: parent.width - x - scopeModes.width; height: 1 }
+                Row {
+                    id: scopeModes
+                    spacing: 4
+                    anchors.verticalCenter: parent.verticalCenter
+                    Repeater {
+                        model: [
+                            { label: "Intrusions", value: "intrusion" },
+                            { label: "Tout mouvement", value: "all" }
+                        ]
+                        delegate: Rectangle {
+                            required property var modelData
+                            readonly property bool selected: {
+                                scopeRow.rev
+                                return Sentry.eventScope() === modelData.value
+                            }
+                            width: scopeLabel.implicitWidth + 14
+                            height: 22
+                            radius: 5
+                            color: selected ? Theme.activeFill
+                                 : scopeMouse.containsMouse ? Theme.hover : "transparent"
+                            border.color: selected ? Theme.accent : Theme.cardStroke
+                            Text {
+                                id: scopeLabel
+                                anchors.centerIn: parent
+                                text: parent.modelData.label
+                                color: parent.selected ? Theme.textPrimary : Theme.textSecondary
+                                font.pixelSize: 9
+                            }
+                            MouseArea {
+                                id: scopeMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: Sentry.setEventScope(parent.modelData.value)
+                            }
+                        }
+                    }
+                }
+            }
+            Text {
+                width: parent.width
+                text: "Intrusions : franchissement de ligne, entrée de zone et sabotage "
+                      + "signalés par la caméra. Le simple mouvement (pluie, phares, "
+                      + "feuillage) est ignoré — comme la détection locale, qui ne sait "
+                      + "pas faire la différence."
+                color: Theme.textSecondary
+                font.pixelSize: 9
+                wrapMode: Text.WordWrap
+            }
+            // The camera's own analytics are the better trigger when it has
+            // them: on-sensor, zoned and scheduled in the device itself.
+            Row {
+                id: detectionRow
+                width: parent.width
+                spacing: 4
+                // Sentry.detectionMode() is an invokable, so it needs an
+                // explicit revision to re-evaluate. `parent` inside Connections
+                // resolves to the enclosing item's PARENT, hence the id.
+                property int rev: 0
+                Connections {
+                    target: Sentry
+                    function onConfigChanged() { detectionRow.rev++ }
+                }
+                Text {
+                    text: "Détection (caméra directe)"
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSizeCaption
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                Item { width: parent.width - x - detectionModes.width; height: 1 }
+                Row {
+                    id: detectionModes
+                    spacing: 4
+                    anchors.verticalCenter: parent.verticalCenter
+                    Repeater {
+                        model: [
+                            { label: "Caméra", value: "camera" },
+                            { label: "Local", value: "local" },
+                            { label: "Les deux", value: "both" }
+                        ]
+                        delegate: Rectangle {
+                            required property var modelData
+                            readonly property bool selected: {
+                                detectionRow.rev
+                                return Sentry.detectionMode("direct") === modelData.value
+                            }
+                            width: modeLabel.implicitWidth + 14
+                            height: 22
+                            radius: 5
+                            color: selected ? Theme.activeFill
+                                 : detectionMouse.containsMouse ? Theme.hover : "transparent"
+                            border.color: selected ? Theme.accent : Theme.cardStroke
+                            Text {
+                                id: modeLabel
+                                anchors.centerIn: parent
+                                text: parent.modelData.label
+                                color: parent.selected ? Theme.textPrimary : Theme.textSecondary
+                                font.pixelSize: 9
+                            }
+                            MouseArea {
+                                id: detectionMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: Sentry.setDetectionMode("direct", parent.modelData.value)
+                            }
+                        }
+                    }
+                }
+            }
+            Text {
+                id: eventStreamStatus
+                width: parent.width
+                property int rev: 0
+                Connections {
+                    target: Sentry
+                    function onConfigChanged() { eventStreamStatus.rev++ }
+                }
+                text: {
+                    eventStreamStatus.rev
+                    return "Flux d'événements de la caméra : " + Sentry.eventSourceStatus()
+                }
+                color: Theme.textSecondary
+                font.pixelSize: 9
+                wrapMode: Text.WordWrap
+            }
+            // Spoken announcements. Never muted by quiet hours: an intrusion
+            // at 3am is exactly when it must be heard.
+            Row {
+                id: voiceAlertRow
+                width: parent.width
+                spacing: 4
+                property int rev: 0
+                Connections {
+                    target: Sentry
+                    function onConfigChanged() { voiceAlertRow.rev++ }
+                }
+                Text {
+                    text: "Alertes vocales"
+                    color: Theme.textSecondary
+                    font.pixelSize: Theme.fontSizeCaption
+                    anchors.verticalCenter: parent.verticalCenter
+                }
+                Item { width: parent.width - x - voiceAlertModes.width; height: 1 }
+                Row {
+                    id: voiceAlertModes
+                    spacing: 4
+                    anchors.verticalCenter: parent.verticalCenter
+                    Repeater {
+                        model: [
+                            { label: "Aucune", value: "off" },
+                            { label: "Menaces", value: "alerts" },
+                            { label: "Tous", value: "all" }
+                        ]
+                        delegate: Rectangle {
+                            required property var modelData
+                            readonly property bool selected: {
+                                voiceAlertRow.rev
+                                return Sentry.voiceAlertMode() === modelData.value
+                            }
+                            width: voiceAlertLabel.implicitWidth + 14
+                            height: 22
+                            radius: 5
+                            color: selected ? Theme.activeFill
+                                 : voiceAlertMouse.containsMouse ? Theme.hover : "transparent"
+                            border.color: selected ? Theme.accent : Theme.cardStroke
+                            Text {
+                                id: voiceAlertLabel
+                                anchors.centerIn: parent
+                                text: parent.modelData.label
+                                color: parent.selected ? Theme.textPrimary : Theme.textSecondary
+                                font.pixelSize: 9
+                            }
+                            MouseArea {
+                                id: voiceAlertMouse
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: Sentry.setVoiceAlertMode(parent.modelData.value)
+                            }
+                        }
+                    }
+                }
+            }
+            Text {
+                width: parent.width
+                text: Starvis.canSpeak()
+                      ? "Voix hors ligne de Windows si aucune clé OpenAI n'est configurée."
+                      : "Aucune voix disponible sur ce poste."
+                color: Theme.textSecondary
+                font.pixelSize: 9
+                wrapMode: Text.WordWrap
+            }
+            Loader { sourceComponent: blobToggle; onLoaded: { item.storeKey = "wp-starvis-sentry"; item.field = "escalate"; item.label = "Analyse visuelle des événements"; item.fallback = true } }
+            Loader { sourceComponent: blobToggle; onLoaded: { item.storeKey = "wp-starvis-sentry"; item.field = "webcamArmed"; item.label = "Webcam (présence)"; item.fallback = true } }
+            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-sentry"; item.field = "cooldownSec"; item.fallback = "30"; item.numeric = true; item.placeholder = "Délai entre événements (s)" } }
+            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-sentry"; item.field = "diffThreshold"; item.fallback = "0.045"; item.numeric = true; item.placeholder = "Seuil de mouvement (0-1)" } }
+            Text {
+                width: parent.width
+                text: "Les images ne quittent la machine que lors d'un événement, "
+                      + "et chaque envoi est journalisé."
+                color: Theme.textSecondary
+                font.pixelSize: 9
+                wrapMode: Text.WordWrap
+            }
+
+            Text {
+                text: "ACCUEIL"; color: Theme.textSecondary; font.pixelSize: 9
+                font.letterSpacing: 1; topPadding: 4
+            }
+            Loader { sourceComponent: blobToggle; onLoaded: { item.storeKey = "wp-starvis-greet"; item.field = "enabled"; item.label = "Saluer à l'arrivée"; item.fallback = true } }
+            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-greet"; item.field = "cooldownMin"; item.fallback = "240"; item.numeric = true; item.placeholder = "Délai entre accueils (min)" } }
+            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-greet"; item.field = "quietStart"; item.fallback = "22:00"; item.placeholder = "Début heures calmes (HH:mm)" } }
+            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-greet"; item.field = "quietEnd"; item.fallback = "07:00"; item.placeholder = "Fin heures calmes (HH:mm)" } }
+
+            Text {
+                text: "AVATAR"; color: Theme.textSecondary; font.pixelSize: 9
+                font.letterSpacing: 1; topPadding: 4
+            }
+            Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-starvis-avatar-mode"; item.fallback = "auto"; item.placeholder = "Avatar: auto | 3d | 2d" } }
+            } // page: starvis
+
+            // ── Page: Caméras ─────────────────────────────────────────
+            Column {
+            visible: modal.currentPage === "cameras"
+            width: parent.width
+            spacing: 14
 
             Text {
                 text: "CAMÉRA XPROTECT"; color: Theme.textSecondary; font.pixelSize: 9
@@ -704,6 +1246,13 @@ Item {
                     }
                 }
             }
+            } // page: cameras
+
+            // ── Page: Nouvelles ───────────────────────────────────────
+            Column {
+            visible: modal.currentPage === "news"
+            width: parent.width
+            spacing: 14
 
             Text {
                 id: pressSection
@@ -739,7 +1288,15 @@ Item {
                     }
                 }
             }
+            } // page: news (suite carrousel plus bas)
 
+            // ── Page: Marchés ─────────────────────────────────────────
+            Column {
+            visible: modal.currentPage === "markets"
+            width: parent.width
+            spacing: 14
+
+            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "finnhub-key"; item.placeholder = "Clé Finnhub (cotations)" } }
             Text {
                 text: "TRADINGVIEW"; color: Theme.textSecondary; font.pixelSize: 9
                 font.letterSpacing: 1; topPadding: 4
@@ -838,6 +1395,13 @@ Item {
                     }
                 }
             }
+            } // page: markets
+
+            // ── Page: Microsoft ───────────────────────────────────────
+            Column {
+            visible: modal.currentPage === "microsoft"
+            width: parent.width
+            spacing: 14
 
             Text {
                 text: "MICROSOFT"; color: Theme.textSecondary; font.pixelSize: 9
@@ -861,8 +1425,14 @@ Item {
                     }
                 }
             }
+            } // page: microsoft
 
-            // Runtime validation
+            // ── Page: Validation ──────────────────────────────────────
+            Column {
+            visible: modal.currentPage === "validation"
+            width: parent.width
+            spacing: 14
+
             Text {
                 id: validationSection
                 text: "VALIDATION"; color: Theme.textSecondary; font.pixelSize: 9
@@ -948,6 +1518,14 @@ Item {
                 }
             }
 
+            } // page: validation
+
+            // ── Page: Nouvelles (carrousel) ───────────────────────────
+            Column {
+            visible: modal.currentPage === "news"
+            width: parent.width
+            spacing: 14
+
             Row {
                 width: parent.width
                 spacing: 8
@@ -1015,6 +1593,13 @@ Item {
                     }
                 }
             }
+            } // page: news (carrousel)
+
+            // ── Page: Général ─────────────────────────────────────────
+            Column {
+            visible: modal.currentPage === "general"
+            width: parent.width
+            spacing: 14
 
             // Shared workspace column count stepper
             Row {
@@ -1128,6 +1713,7 @@ Item {
                     }
                 }
             }
+            } // page: general
         }
         }
     }

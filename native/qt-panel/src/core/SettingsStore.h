@@ -15,6 +15,10 @@ class SettingsStore : public QObject {
 
 public:
     explicit SettingsStore(QString filePath, QObject* parent = nullptr);
+
+    // Directory holding settings.json — the per-profile data dir, which is
+    // where services put files that must survive a restart.
+    QString dataDir() const;
     ~SettingsStore() override;
 
     // Returns true when legacy data was imported (only happens on an empty store).

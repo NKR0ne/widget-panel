@@ -132,6 +132,11 @@ public:
                                           const QString& error = {});
     Q_INVOKABLE void reportIslandRenderTerminated(int status, int exitCode);
     Q_INVOKABLE bool openExternal(const QString& url);
+    // Clipboard access for QML. Ctrl+V works again on the composition path,
+    // but a paste control is the reliable way to get a long API key into a
+    // field without a keyboard chord.
+    Q_INVOKABLE QString clipboardText() const;
+    Q_INVOKABLE void setClipboardText(const QString& text);
     Q_INVOKABLE void captureTradingViewSession();
     Q_INVOKABLE void closeIsland();
     // Settings surface (persists to the wp-* keys, applies live).

@@ -5,9 +5,11 @@
 #include "WinShellIntegration.h"
 #include "core/SettingsStore.h"
 
+#include <QClipboard>
 #include <QCoreApplication>
 #include <QCursor>
 #include <QDateTime>
+#include <QGuiApplication>
 #include <QDebug>
 #include <QDesktopServices>
 #include <QDir>
@@ -704,6 +706,19 @@ bool PanelWindowController::openExternal(const QString& url)
     return opened;
 }
 
+QString PanelWindowController::clipboardText() const
+{
+    if (QClipboard* clipboard = QGuiApplication::clipboard())
+        return clipboard->text();
+    return {};
+}
+
+void PanelWindowController::setClipboardText(const QString& text)
+{
+    if (QClipboard* clipboard = QGuiApplication::clipboard())
+        clipboard->setText(text);
+}
+
 void PanelWindowController::captureTradingViewSession()
 {
     if (!m_webProfile || !m_webProfile->cookieStore()) {
@@ -1030,7 +1045,7 @@ int PanelWindowController::columnsForMode(const QString& mode) const
 {
     // Mirrors PanelSurface.columnCount so C++ can size any mode on its own.
     const int base = m_settings->getInt(QStringLiteral("wp-base-columns"), 3);
-    if (mode == QLatin1String("monitor"))
+    if (mode == QLatin1String("monitor") || mode == QLatin1String("starvis"))
         return 6;
     if (mode == QLatin1String("news") || mode == QLatin1String("live")) {
         const QString subMode = newsSubMode(mode);

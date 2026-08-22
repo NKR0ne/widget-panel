@@ -417,6 +417,18 @@ void DirectCameraClient::handleFrame(const QVideoFrame& frame)
         return;
 
     m_lastFrameAtMs = QDateTime::currentMSecsSinceEpoch();
+
+    // Analysis fan-out (SentryService). toImage() maps the frame, so it only
+    // runs when a consumer asked for it and never faster than 2 Hz; the render
+    // sink above is untouched.
+    if (m_analysisEnabled
+        && m_lastFrameAtMs - m_lastAnalysisMs >= kAnalysisIntervalMs) {
+        const QImage image = frame.toImage();
+        if (!image.isNull()) {
+            m_lastAnalysisMs = m_lastFrameAtMs;
+            emit analysisFrame(image);
+        }
+    }
     if (m_receivedFrame)
         return;
 

@@ -72,6 +72,10 @@ GlassCard {
     Component.onDestruction: {
         DirectCamera.detachVideoSink(videoOutput.videoSink)
     }
+    // Only one render sink exists. The Starvis Vision tile takes it while that
+    // stage is up, so the card claims it back whenever it is shown again —
+    // otherwise its picture stays dead after a round trip through Starvis.
+    onVisibleChanged: if (visible) DirectCamera.attachVideoSink(videoOutput.videoSink)
 
     Connections {
         target: DirectCamera

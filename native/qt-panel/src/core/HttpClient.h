@@ -1,8 +1,10 @@
 #pragma once
 
+#include <QHash>
 #include <QJsonDocument>
 #include <QNetworkAccessManager>
 #include <QObject>
+#include <QSet>
 #include <QUrl>
 #include <QUrlQuery>
 
@@ -47,8 +49,49 @@ public:
     void postForBytes(const QUrl& url, const QString& bearerToken, const QByteArray& jsonBody,
                       QObject* context, BytesCallback callback);
 
+    // `event` is the SSE event name ("" when the frame has none), `data` the
+    // joined data: payload of one frame.
+    using SseEventCallback = std::function<void(const QString& event, const QByteArray& data)>;
+    using SseDoneCallback = std::function<void(int status, const QString& error)>;
+
+    // Streaming JSON POST for text/event-stream responses (Anthropic Messages,
+    // …). The global transfer timeout does not apply — a reasoning model can
+    // legitimately stay silent past 15 s — instead an inactivity watchdog
+    // aborts after `idleTimeoutMs` without bytes. Returns the reply so the
+    // caller can abort() to cancel; it is owned by the client and deletes
+    // itself after onDone.
+    QNetworkReply* postSse(const QUrl& url,
+                           const QList<QPair<QByteArray, QByteArray>>& headers,
+                           const QByteArray& jsonBody, QObject* context,
+                           SseEventCallback onEvent, SseDoneCallback onDone,
+                           int idleTimeoutMs = 90000);
+
+    using ChunkCallback = std::function<void(const QByteArray& chunk)>;
+
+    // Long-lived GET with HTTP digest/basic auth, delivering body bytes as they
+    // arrive (camera alert streams are multipart/mixed and never finish).
+    // Same timeout treatment as postSse; abort() the reply to stop.
+    QNetworkReply* getStreamAuth(const QUrl& url, const QString& user, const QString& password,
+                                 QObject* context, ChunkCallback onChunk, SseDoneCallback onDone,
+                                 int idleTimeoutMs = 120000);
+
+    // One-shot authenticated GET returning the whole body (camera snapshots).
+    void getBytesAuth(const QUrl& url, const QString& user, const QString& password,
+                      QObject* context, BytesCallback callback);
+
+    // Authenticated request with a body (camera configuration writes).
+    void requestBytesAuth(const QByteArray& verb, const QUrl& url, const QString& user,
+                          const QString& password, const QByteArray& body,
+                          const QByteArray& contentType, QObject* context,
+                          BytesCallback callback);
+
 private:
+    // Per-reply credentials for the shared manager's authenticationRequired.
+    void registerAuth(QNetworkReply* reply, const QString& user, const QString& password);
+
     QNetworkAccessManager m_nam;
+    QHash<QNetworkReply*, QPair<QString, QString>> m_authCredentials;
+    QSet<QNetworkReply*> m_authAnswered;
 };
 
 } // namespace qtpanel

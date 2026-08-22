@@ -9,7 +9,12 @@
 #include "services/pressreader/PressReaderService.h"
 #include "shell/FocusPolicy.h"
 #include "shell/SystemTheme.h"
+#include "services/starvis/ModelResolver.h"
+#include "services/starvis/MotionDetector.h"
 
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QPainter>
 #include <QTemporaryDir>
 
 using namespace qtpanel;
@@ -37,6 +42,126 @@ private slots:
         QByteArray bytes;
         bytes.append(static_cast<char>(0x92));
         QCOMPARE(TextFix::decodeCp1252(bytes), QString(QChar(0x2019)));
+    }
+
+    // ── Starvis: auto model resolution ───────────────────────────────────
+    void modelResolverPrefersTopTier()
+    {
+        const QJsonArray models{
+            QJsonObject{{"id", "claude-sonnet-5"}, {"created_at", "2026-01-05T00:00:00Z"}},
+            QJsonObject{{"id", "claude-opus-5"}, {"created_at", "2026-02-01T00:00:00Z"}},
+            QJsonObject{{"id", "claude-fable-5"}, {"created_at", "2026-03-01T00:00:00Z"}},
+        };
+        QCOMPARE(ModelResolver::rankModels(models, ModelResolver::defaultTierPatterns()),
+                 QStringLiteral("claude-fable-5"));
+    }
+
+    void modelResolverNewestWithinTier()
+    {
+        const QJsonArray models{
+            QJsonObject{{"id", "claude-opus-5"}, {"created_at", "2026-02-01T00:00:00Z"}},
+            QJsonObject{{"id", "claude-opus-6"}, {"created_at", "2026-06-01T00:00:00Z"}},
+        };
+        QCOMPARE(ModelResolver::rankModels(models, ModelResolver::defaultTierPatterns()),
+                 QStringLiteral("claude-opus-6"));
+    }
+
+    void modelResolverSkipsDatedSnapshotWithAlias()
+    {
+        // The dated snapshot is newer, but its alias tracks the live revision.
+        const QJsonArray models{
+            QJsonObject{{"id", "claude-opus-5"}, {"created_at", "2026-02-01T00:00:00Z"}},
+            QJsonObject{{"id", "claude-opus-5-20260401"}, {"created_at", "2026-04-01T00:00:00Z"}},
+        };
+        QCOMPARE(ModelResolver::rankModels(models, ModelResolver::defaultTierPatterns()),
+                 QStringLiteral("claude-opus-5"));
+        // With no alias present the snapshot is the only candidate.
+        const QJsonArray orphan{
+            QJsonObject{{"id", "claude-opus-7-20260501"}, {"created_at", "2026-05-01T00:00:00Z"}},
+        };
+        QCOMPARE(ModelResolver::rankModels(orphan, ModelResolver::defaultTierPatterns()),
+                 QStringLiteral("claude-opus-7-20260501"));
+    }
+
+    void modelResolverEmptyList()
+    {
+        QVERIFY(ModelResolver::rankModels({}, ModelResolver::defaultTierPatterns()).isEmpty());
+        // Non-Claude ids never match the tiers.
+        const QJsonArray foreign{QJsonObject{{"id", "gpt-5.5"}, {"created_at", "2026-05-01"}}};
+        QVERIFY(ModelResolver::rankModels(foreign, ModelResolver::defaultTierPatterns()).isEmpty());
+    }
+
+    // ── Starvis: local motion detection ──────────────────────────────────
+    void motionDetectorBaselineThenMotion()
+    {
+        MotionDetector detector;
+        detector.setThreshold(0.02);
+        detector.setCooldownMs(1000);
+
+        QImage dark(320, 180, QImage::Format_RGB32);
+        dark.fill(Qt::black);
+        // The first frame only establishes the baseline.
+        QVERIFY(!detector.analyze(QStringLiteral("cam"), dark, 0).motion);
+        // An identical frame is not motion.
+        QVERIFY(!detector.analyze(QStringLiteral("cam"), dark, 100).motion);
+
+        QImage bright = dark;
+        bright.fill(Qt::white);
+        const MotionDetector::Result moved =
+            detector.analyze(QStringLiteral("cam"), bright, 200);
+        QVERIFY(moved.motion);
+        QVERIFY(moved.score > 0.5);
+    }
+
+    void motionDetectorCooldownSuppresses()
+    {
+        MotionDetector detector;
+        detector.setThreshold(0.02);
+        detector.setCooldownMs(5000);
+
+        QImage dark(320, 180, QImage::Format_RGB32);
+        dark.fill(Qt::black);
+        QImage bright = dark;
+        bright.fill(Qt::white);
+
+        detector.analyze(QStringLiteral("cam"), dark, 0);
+        QVERIFY(detector.analyze(QStringLiteral("cam"), bright, 100).motion);
+        // Same magnitude of change, inside the cooldown window.
+        const MotionDetector::Result again =
+            detector.analyze(QStringLiteral("cam"), dark, 200);
+        QVERIFY(!again.motion);
+        QVERIFY(again.suppressed);
+        // Past the cooldown it reports again.
+        QVERIFY(detector.analyze(QStringLiteral("cam"), bright, 6000).motion);
+    }
+
+    void motionDetectorZonesIgnoreOutsideChanges()
+    {
+        MotionDetector detector;
+        detector.setThreshold(0.05);
+        detector.setCooldownMs(0);
+        // Watch the left quarter only.
+        detector.setZones(QStringLiteral("cam"), {QRectF(0, 0, 0.25, 1)});
+
+        QImage base(320, 180, QImage::Format_RGB32);
+        base.fill(Qt::black);
+        detector.analyze(QStringLiteral("cam"), base, 0);
+
+        // Change only the right half — outside the zone.
+        QImage rightChanged = base;
+        {
+            QPainter painter(&rightChanged);
+            painter.fillRect(160, 0, 160, 180, Qt::white);
+        }
+        QVERIFY(!detector.analyze(QStringLiteral("cam"), rightChanged, 100).motion);
+
+        // Now change inside the zone.
+        QImage leftChanged = rightChanged;
+        {
+            QPainter painter(&leftChanged);
+            painter.fillRect(0, 0, 80, 180, Qt::white);
+        }
+        QVERIFY(detector.analyze(QStringLiteral("cam"), leftChanged, 200).motion);
     }
 
     void focusPolicyDebounce()

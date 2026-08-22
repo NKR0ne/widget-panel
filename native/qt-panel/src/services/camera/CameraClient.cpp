@@ -550,6 +550,8 @@ void CameraClient::pullFrame()
                     if (m_frameId == 1 || m_frameId % 50 == 0)
                         qInfo() << "[camera] frame" << m_frameId << img.width() << "x" << img.height();
                     emit frameChanged();
+                    // Analysis tap (SentryService); throttles on its own side.
+                    emit frameReady(img);
                 } else if (m_frameId == 0) {
                     qWarning() << "[camera] first frame JPEG decode failed, bytes=" << jpeg.size();
                 }

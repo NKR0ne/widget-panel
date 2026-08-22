@@ -18,6 +18,10 @@ Item {
     property bool resizable: false
     property real minimumUserHeight: 120
     readonly property bool dragging: dragHandler.active
+    property bool componentComplete: false
+    property real entranceOpacity: 0
+    property real entranceScale: 0
+    property real entranceLift: 0
     property int expandedRevision: 0
     readonly property bool collapsed: {
         expandedRevision
@@ -37,7 +41,14 @@ Item {
 
     // setSource (not a source binding) so initialProperties are applied
     // before the widget's Component.onCompleted runs.
-    Component.onCompleted: loader.setSource(source, initialProperties)
+    Component.onCompleted: {
+        // Local QML sources normally load synchronously here. Keep that first
+        // materialization visible outright: startup can precede the animation
+        // driver, leaving a loader permanently transparent if its entrance is
+        // armed too early. Loads after construction still animate normally.
+        loader.setSource(source, initialProperties)
+        componentComplete = true
+    }
 
     function toggleCollapsed() {
         let state = {}
@@ -71,31 +82,42 @@ Item {
         anchors.left: parent.left
         anchors.right: parent.right
         height: host.resizable ? host.height : implicitHeight
-        opacity: dragHandler.active ? 0.85 : 0
-        scale: 0.97
+        opacity: dragHandler.active ? 0.85 : host.entranceOpacity
+        scale: 0.97 + 0.03 * host.entranceScale
 
-        onLoaded: entrance.restart()
+        onLoaded: {
+            if (!host.componentComplete) {
+                host.entranceOpacity = 1
+                host.entranceScale = 1
+                host.entranceLift = 1
+            } else {
+                host.entranceOpacity = 0
+                host.entranceScale = 0
+                host.entranceLift = 0
+                entrance.restart()
+            }
+        }
 
-        transform: Translate { id: lift; y: 12 }
+        transform: Translate { id: lift; y: 12 * (1 - host.entranceLift) }
 
         SequentialAnimation {
             id: entrance
             PauseAnimation { duration: host.stagger }
             ParallelAnimation {
                 NumberAnimation {
-                    target: loader; property: "opacity"; to: 1
+                    target: host; property: "entranceOpacity"; to: 1
                     duration: Motion.normalMs
                     easing.type: Easing.BezierSpline
                     easing.bezierCurve: Motion.emphasized
                 }
                 NumberAnimation {
-                    target: loader; property: "scale"; to: 1
+                    target: host; property: "entranceScale"; to: 1
                     duration: Motion.normalMs + 60
                     easing.type: Easing.BezierSpline
                     easing.bezierCurve: Motion.emphasized
                 }
                 NumberAnimation {
-                    target: lift; property: "y"; to: 0
+                    target: host; property: "entranceLift"; to: 1
                     duration: Motion.normalMs + 60
                     easing.type: Easing.BezierSpline
                     easing.bezierCurve: Motion.emphasized

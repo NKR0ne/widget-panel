@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # so input is injected through QWindowSystemInterface, which lives in the QPA
 # private headers. Gui itself arrives transitively via Quick, but the private
 # target only exists when asked for by name.
-find_package(Qt6 6.8 REQUIRED COMPONENTS Quick QuickControls2 QuickEffects Quick3D Network Xml Multimedia ShaderTools WebEngineQuick GuiPrivate)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Quick QuickControls2 QuickEffects Quick3D Network Xml Multimedia ShaderTools WebEngineQuick WebSockets GuiPrivate)
 qt_standard_project_setup(REQUIRES 6.8)
 
 add_subdirectory(qml)
@@ -27,6 +27,7 @@ qt_add_executable(qt-panel WIN32
     src/core/SecretVault.h src/core/SecretVault.cpp
     src/core/SettingsStore.h src/core/SettingsStore.cpp
     src/core/SoundFx.h src/core/SoundFx.cpp
+    src/core/SpeechService.h src/core/SpeechService.cpp
     src/core/TextFix.h src/core/TextFix.cpp
     src/services/camera/CameraClient.h src/services/camera/CameraClient.cpp
     src/services/camera/DirectCameraClient.h src/services/camera/DirectCameraClient.cpp
@@ -38,6 +39,14 @@ qt_add_executable(qt-panel WIN32
     src/services/pressreader/PressReaderService.h src/services/pressreader/PressReaderService.cpp
     src/services/reader/ReaderService.h src/services/reader/ReaderService.cpp
     src/services/starvis/StarvisService.h src/services/starvis/StarvisService.cpp
+    src/services/starvis/AnthropicClient.h src/services/starvis/AnthropicClient.cpp
+    src/services/starvis/ModelResolver.h src/services/starvis/ModelResolver.cpp
+    src/services/starvis/StarvisState.h src/services/starvis/StarvisState.cpp
+    src/services/starvis/VoiceSession.h src/services/starvis/VoiceSession.cpp
+    src/services/starvis/MotionDetector.h src/services/starvis/MotionDetector.cpp
+    src/services/starvis/WebcamCapture.h src/services/starvis/WebcamCapture.cpp
+    src/services/starvis/SentryService.h src/services/starvis/SentryService.cpp
+    src/services/camera/HikvisionEventClient.h src/services/camera/HikvisionEventClient.cpp
     src/services/stocks/StocksModel.h src/services/stocks/StocksModel.cpp
     src/services/weather/WeatherService.h src/services/weather/WeatherService.cpp
     src/services/workstation/WorkstationClient.h src/services/workstation/WorkstationClient.cpp
@@ -70,12 +79,15 @@ target_link_libraries(qt-panel PRIVATE
     Qt6::Network
     Qt6::Xml
     Qt6::Multimedia
+    Qt6::WebSockets
     Qt6::WebEngineQuick
     qtpanel_uiplugin
     dwmapi
     user32
     bcrypt
     advapi32
+    sapi          # offline speech (ISpVoice) for spoken alerts
+    ole32
     windowsapp
     d3d11
     dxgi

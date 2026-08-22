@@ -12,6 +12,8 @@ qt_add_executable(qt-panel-tests
     ${CMAKE_SOURCE_DIR}/src/services/reader/ReaderService.cpp
     ${CMAKE_SOURCE_DIR}/src/services/live/LiveFeedService.cpp
     ${CMAKE_SOURCE_DIR}/src/services/pressreader/PressReaderService.cpp
+    ${CMAKE_SOURCE_DIR}/src/services/starvis/MotionDetector.cpp
+    ${CMAKE_SOURCE_DIR}/src/services/starvis/ModelResolver.cpp
 )
 
 target_include_directories(qt-panel-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)

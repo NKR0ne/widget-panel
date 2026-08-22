@@ -2,6 +2,7 @@
 
 #include <QDebug>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QSaveFile>
 
@@ -15,6 +16,11 @@ SettingsStore::SettingsStore(QString filePath, QObject* parent)
     m_saveTimer.setInterval(500);
     connect(&m_saveTimer, &QTimer::timeout, this, &SettingsStore::flush);
     load();
+}
+
+QString SettingsStore::dataDir() const
+{
+    return QFileInfo(m_path).absolutePath();
 }
 
 SettingsStore::~SettingsStore()

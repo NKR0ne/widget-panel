@@ -13,6 +13,9 @@ GlassCard {
     property bool allowInternet: false
     property string lastUserMessage: ""
     property string pendingInternetRequest: ""
+    // True while a streamed assistant bubble is open at the end of the
+    // transcript (Anthropic path); replyReceived finalizes it in place.
+    property bool streamOpen: false
 
     function send(text, forceInternet, appendUser) {
         const message = text.trim()
@@ -35,15 +38,47 @@ GlassCard {
 
     Connections {
         target: Starvis
+        function onReplyStarted() {
+            transcript.append({ role: "assistant", text: "" })
+            card.streamOpen = true
+        }
+        function onReplyDelta(text) {
+            if (!card.streamOpen)
+                return
+            const last = transcript.count - 1
+            transcript.setProperty(last, "text", transcript.get(last).text + text)
+        }
         function onReplyReceived(text, model, latencyMs) {
             if (text.indexOf("INTERNET_PERMISSION_REQUEST:") === 0)
                 card.pendingInternetRequest = card.lastUserMessage
             else
                 card.pendingInternetRequest = ""
-            transcript.append({ role: "assistant", text: text })
+            if (card.streamOpen) {
+                // Replace the streamed bubble with the final text (identical
+                // in the normal case; authoritative after tool loops).
+                transcript.setProperty(transcript.count - 1, "text", text)
+                card.streamOpen = false
+            } else {
+                transcript.append({ role: "assistant", text: text })
+            }
         }
         function onChatFailed(error) {
+            // Drop an empty half-open streamed bubble before surfacing.
+            if (card.streamOpen) {
+                const last = transcript.count - 1
+                if (transcript.get(last).text === "")
+                    transcript.remove(last)
+                card.streamOpen = false
+            }
             transcript.append({ role: "assistant", text: "⚠ " + error })
+        }
+    }
+
+    // Voice turns land in the same transcript as typed ones.
+    Connections {
+        target: Starvis.voice
+        function onTranscriptEvent(role, text) {
+            transcript.append({ role: role, text: text })
         }
     }
 

@@ -25,6 +25,7 @@
 #include "core/SecretVault.h"
 #include "core/SettingsStore.h"
 #include "core/SoundFx.h"
+#include "core/SpeechService.h"
 #include "core/TextFix.h"
 #include "shell/SystemTheme.h"
 #include "services/camera/CameraClient.h"
@@ -36,6 +37,9 @@
 #include "services/pressreader/PressReaderService.h"
 #include "services/reader/ReaderService.h"
 #include "services/starvis/StarvisService.h"
+#include "services/starvis/StarvisState.h"
+#include "services/starvis/SentryService.h"
+#include "services/starvis/VoiceSession.h"
 #include "services/stocks/StocksModel.h"
 #include "services/weather/WeatherService.h"
 #include "services/workstation/WorkstationClient.h"
@@ -109,6 +113,18 @@ int main(int argc, char* argv[])
 const QCommandLineOption diagPressReaderOption(
         QStringLiteral("diag-pressreader"),
         QStringLiteral("Open the dedicated PressReader spotlight without automatic login."));
+    const QCommandLineOption fixCameraRulesOption(
+        QStringLiteral("fix-camera-rules"),
+        QStringLiteral("Enable the camera's own perimeter rules (line crossing / zone "
+                       "intrusion) through its API, then exit-after as usual. The web UI "
+                       "writes their coordinates but never their enable flag."));
+    const QCommandLineOption cameraSingleRuleOption(
+        QStringLiteral("camera-single-rule"),
+        QStringLiteral("Keep only one perimeter analytic (LineDetection or FieldDetection) "
+                       "and arm it; these cameras allow one smart function at a time."),
+        QStringLiteral("analytic"), QStringLiteral("LineDetection"));
+    parser.addOption(cameraSingleRuleOption);
+    parser.addOption(fixCameraRulesOption);
     parser.addOption(noHelperOption);
     parser.addOption(profileOption);
     parser.addOption(exitAfterOption);
@@ -125,10 +141,11 @@ const QCommandLineOption diagPressReaderOption(
     const QString diagIslandUrl = parser.value(diagIslandUrlOption).trimmed();
     const QStringList validModes = {
         QStringLiteral("base"), QStringLiteral("news"),
-        QStringLiteral("monitor"), QStringLiteral("live")
+        QStringLiteral("monitor"), QStringLiteral("live"),
+        QStringLiteral("starvis")
     };
     if (!validModes.contains(startMode)) {
-        qCritical() << "[startup] --start-mode must be base, news, monitor, or live";
+        qCritical() << "[startup] --start-mode must be base, news, monitor, live, or starvis";
         return 5;
     }
 
@@ -336,17 +353,23 @@ const QCommandLineOption diagPressReaderOption(
     LiveFeedService live(&http);
     ReaderService reader(&http);
     PressReaderService pressReader(&settings, &vault, profile.isEmpty());
-    StarvisService starvis(&settings, &vault, &http, &weather, &stocks, &news, &workstation);
+    SpeechService speech;
+    StarvisService starvis(&settings, &vault, &http, &weather, &stocks, &news, &workstation,
+                           &speech);
     auto* cameraProvider = new CameraImageProvider(); // engine takes ownership
     CameraClient camera(&settings, &vault, cameraProvider);
     DirectCameraClient directCamera(&settings, &vault);
     DiagnosticsService diagnostics(&settings, &vault, &controller, &pressReader,
                                    &msGraph, &live,
                                    &workstation, &camera, &directCamera, &starvis, &stocks);
+    SentryService sentry(&settings, &vault, &http, &starvis, &camera, &directCamera);
+    starvis.setSentry(&sentry);
 
-    // Outlook unread count → AppBar pill badge (and any future overlay).
+    // Outlook unread count + Starvis sentry alerts → AppBar pill badge.
     QObject::connect(&msGraph, &MsGraphService::unreadCountChanged, &helper,
                      [&] { helper.sendBadge(msGraph.unreadCount()); });
+    QObject::connect(&sentry, &SentryService::badgeCountChanged, &helper,
+                     [&](int alerts) { helper.sendBadge(msGraph.unreadCount() + alerts); });
     QObject::connect(&msGraph, &MsGraphService::authUrlReady, &controller,
                      [&controller](const QString& url) { controller.openIsland(url); });
     QObject::connect(&msGraph, &MsGraphService::authStateChanged, &controller,
@@ -382,6 +405,13 @@ const QCommandLineOption diagPressReaderOption(
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Reader", &reader);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "PressReader", &pressReader);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Starvis", &starvis);
+    qmlRegisterUncreatableType<qtpanel::StarvisState>(
+        "QtPanel.Native", 1, 0, "StarvisState",
+        QStringLiteral("Owned by the Starvis service"));
+    qmlRegisterUncreatableType<qtpanel::VoiceSession>(
+        "QtPanel.Native", 1, 0, "VoiceSession",
+        QStringLiteral("Owned by the Starvis service"));
+    qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Sentry", &sentry);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Camera", &camera);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "DirectCamera", &directCamera);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Diagnostics", &diagnostics);
@@ -400,6 +430,7 @@ const QCommandLineOption diagPressReaderOption(
     QmlNetworkFactory netFactory;
     engine.setNetworkAccessManagerFactory(&netFactory);
     engine.addImageProvider(QStringLiteral("camera"), cameraProvider);
+    engine.addImageProvider(QStringLiteral("starvis"), sentry.imageProvider());
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app,
                      [] { QCoreApplication::exit(1); }, Qt::QueuedConnection);
     // --composition hosts the scene in a Windows composition tree so the panel
@@ -660,7 +691,8 @@ const QCommandLineOption diagPressReaderOption(
                 ? 3
                 : settings.getInt(QStringLiteral("wp-news-columns-") + subMode,
                                   legacyNewsColumns);
-        } else if (startMode == QStringLiteral("monitor")) {
+        } else if (startMode == QStringLiteral("monitor")
+                   || startMode == QStringLiteral("starvis")) {
             startColumns = 6;
         }
         // resetStoredWidth stays false: the mode's remembered width wins.
@@ -671,6 +703,16 @@ const QCommandLineOption diagPressReaderOption(
                            [&controller, diagIslandUrl] { controller.openIsland(diagIslandUrl); });
     } else if (parser.isSet(diagPressReaderOption)) {
         QTimer::singleShot(350, &pressReader, &PressReaderService::openCatalog);
+    }
+    if (parser.isSet(fixCameraRulesOption)) {
+        // After the event client has had a moment to resolve its endpoint.
+        QTimer::singleShot(2500, &sentry, &SentryService::enableCameraPerimeterRules);
+    }
+    if (parser.isSet(cameraSingleRuleOption)) {
+        const QString keep = parser.value(cameraSingleRuleOption);
+        QTimer::singleShot(2500, &sentry, [&sentry, keep] {
+            sentry.useSingleCameraRule(keep);
+        });
     }
     qInfo() << "[startup] ready";
     if (exitAfterOk) {

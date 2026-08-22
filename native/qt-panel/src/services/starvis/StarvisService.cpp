@@ -1,8 +1,14 @@
 #include "StarvisService.h"
 
+#include "AnthropicClient.h"
+#include "ModelResolver.h"
+#include "SentryService.h"
+#include "StarvisState.h"
+#include "VoiceSession.h"
 #include "core/HttpClient.h"
 #include "core/SecretVault.h"
 #include "core/SettingsStore.h"
+#include "core/SpeechService.h"
 #include "services/news/NewsService.h"
 #include "services/stocks/StocksModel.h"
 #include "services/weather/WeatherService.h"
@@ -20,10 +26,13 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMediaPlayer>
+#include <QNetworkReply>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QUrl>
 #include <QUuid>
+
+#include <memory>
 
 namespace qtpanel {
 
@@ -75,12 +84,23 @@ bool supportsTemperature(const QString& model)
              || model.startsWith(QLatin1String("o4")));
 }
 
+// One place for the trailing-slash-tolerant base URL (was three copies).
+QString normalizedOpenAiBaseUrl(const QVariantMap& cfg)
+{
+    QString url = cfg.value(QStringLiteral("baseUrl")).toString().trimmed();
+    if (url.isEmpty())
+        url = QLatin1String(kDefaultBaseUrl);
+    while (url.endsWith(QLatin1Char('/')))
+        url.chop(1);
+    return url;
+}
+
 } // namespace
 
 StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, HttpClient* http,
                                WeatherService* weather, StocksModel* stocks,
                                NewsService* news, WorkstationClient* workstation,
-                               QObject* parent)
+                               SpeechService* speech, QObject* parent)
     : QObject(parent)
     , m_settings(settings)
     , m_vault(vault)
@@ -89,18 +109,37 @@ StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, Http
     , m_stocks(stocks)
     , m_news(news)
     , m_workstation(workstation)
+    , m_speech(speech)
 {
+    m_anthropic = new AnthropicClient(settings, vault, http, this);
+    m_modelResolver = new ModelResolver(settings, vault, http, this);
+    m_state = new StarvisState(this);
+    m_voice = new VoiceSession(settings, vault, this, this);
+    connect(m_modelResolver, &ModelResolver::modelChanged,
+            this, &StarvisService::configuredChanged);
+    connect(this, &StarvisService::busyChanged, m_state,
+            [this] { m_state->setReasoning(m_busy); });
+    connect(this, &StarvisService::speakingChanged, m_state,
+            [this] { m_state->setSpeaking(speaking()); });
+    connect(this, &StarvisService::replyDelta, m_state,
+            [this](const QString& text) { m_state->noteTextDelta(text.size()); });
+    connect(this, &StarvisService::usageUpdated, m_state, &StarvisState::setUsage);
+
     loadActions();
     connect(m_vault, &SecretVault::changed, this, [this](const QString& key) {
-        if (key == QLatin1String("starvis-openai-key"))
+        if (key == QLatin1String("starvis-openai-key")
+            || key == QLatin1String("starvis-anthropic-key"))
             emit configuredChanged();
     });
     connect(m_settings, &SettingsStore::changed, this, [this](const QString& key) {
-        if (key == QLatin1String("wp-starvis-config"))
+        if (key == QLatin1String("wp-starvis-config")
+            || key == QLatin1String("wp-starvis-provider"))
             emit configuredChanged();
     });
-    qInfo() << "[starvis]" << (configured() ? "configured, model:" + model()
-                                            : QStringLiteral("no API key stored"));
+    qInfo() << "[starvis]" << (configured()
+                                   ? QStringLiteral("configured (%1), model: %2")
+                                         .arg(provider(), model())
+                                   : QStringLiteral("no API key stored"));
 }
 
 QString StarvisService::apiKey() const
@@ -108,9 +147,34 @@ QString StarvisService::apiKey() const
     return m_vault->get(QStringLiteral("starvis-openai-key")).trimmed();
 }
 
+QString StarvisService::anthropicKey() const
+{
+    return m_vault->get(QStringLiteral("starvis-anthropic-key")).trimmed();
+}
+
 bool StarvisService::configured() const
 {
-    return !apiKey().isEmpty();
+    return !anthropicKey().isEmpty() || !apiKey().isEmpty();
+}
+
+QString StarvisService::provider() const
+{
+    return anthropicKey().isEmpty() ? QStringLiteral("openai") : QStringLiteral("anthropic");
+}
+
+QVariantMap StarvisService::providerStatus() const
+{
+    return {
+        {QStringLiteral("provider"), provider()},
+        {QStringLiteral("model"), model()},
+        {QStringLiteral("pinned"), m_modelResolver->pinned()},
+        {QStringLiteral("resolvedAt"), m_modelResolver->resolvedAt()},
+    };
+}
+
+void StarvisService::refreshModel()
+{
+    m_modelResolver->refreshNow();
 }
 
 QVariantMap StarvisService::config() const
@@ -128,6 +192,8 @@ QVariantMap StarvisService::config() const
 
 QString StarvisService::model() const
 {
+    if (provider() == QLatin1String("anthropic"))
+        return m_modelResolver->currentModel();
     const QString stored = config().value(QStringLiteral("model")).toString().trimmed();
     return stored.isEmpty() ? QLatin1String(kDefaultModel) : stored;
 }
@@ -216,14 +282,30 @@ void StarvisService::stopSpeaking()
 {
     if (m_ttsPlayer)
         m_ttsPlayer->stop();
+    if (m_speech)
+        m_speech->stop();
+}
+
+bool StarvisService::canSpeak() const
+{
+    return !apiKey().isEmpty() || (m_speech && m_speech->available());
 }
 
 void StarvisService::speak(const QString& text)
 {
     const QString key = apiKey();
     const QString clean = text.trimmed();
-    if (key.isEmpty() || clean.isEmpty())
+    if (clean.isEmpty())
         return;
+    if (key.isEmpty()) {
+        // No cloud key: the offline Windows voice carries the message rather
+        // than the alert being silently dropped.
+        if (m_speech && m_speech->available()) {
+            m_speech->say(clean);
+            qInfo() << "[starvis] spoken offline (SAPI)," << clean.size() << "chars";
+        }
+        return;
+    }
     if (speaking()) {
         stopSpeaking();
         return;
@@ -243,14 +325,7 @@ void StarvisService::speak(const QString& text)
         {QStringLiteral("input"), clean.left(3600)},
         {QStringLiteral("response_format"), QStringLiteral("mp3")},
     };
-    const QString baseUrl = [this] {
-        QString url = config().value(QStringLiteral("baseUrl")).toString().trimmed();
-        if (url.isEmpty())
-            url = QLatin1String(kDefaultBaseUrl);
-        while (url.endsWith(QLatin1Char('/')))
-            url.chop(1);
-        return url;
-    }();
+    const QString baseUrl = normalizedOpenAiBaseUrl(config());
 
     m_http->postForBytes(QUrl(baseUrl + QStringLiteral("/audio/speech")), key,
                          QJsonDocument(body).toJson(QJsonDocument::Compact), this,
@@ -289,18 +364,29 @@ void StarvisService::chat(const QString& message, const QVariantList& history,
 {
     if (message.trimmed().isEmpty() || m_busy)
         return;
-    post(message, history, allowInternet, allowAgent);
+    if (provider() == QLatin1String("anthropic"))
+        postAnthropic(message, history, allowInternet, allowAgent);
+    else
+        post(message, history, allowInternet, allowAgent);
 }
 
 void StarvisService::briefing()
 {
     if (m_busy)
         return;
-    post(QStringLiteral(
+    chat(QStringLiteral(
              "Donne-moi un briefing matinal concis à partir du contexte local: météo, marchés, "
              "thèmes principaux des nouvelles, et état de la station. En français, structuré, "
              "sans détailler chaque métrique."),
          {}, false, false);
+}
+
+void StarvisService::cancelChat()
+{
+    if (m_activeStream) {
+        m_activeStream->abort();
+        m_activeStream = nullptr;
+    }
 }
 
 void StarvisService::post(const QString& userMessage, const QVariantList& history,
@@ -316,14 +402,7 @@ void StarvisService::post(const QString& userMessage, const QVariantList& histor
 
     const QVariantMap cfg = config();
     const QString chatModel = model();
-    const QString baseUrl = [&cfg] {
-        QString url = cfg.value(QStringLiteral("baseUrl")).toString().trimmed();
-        if (url.isEmpty())
-            url = QLatin1String(kDefaultBaseUrl);
-        while (url.endsWith(QLatin1Char('/')))
-            url.chop(1);
-        return url;
-    }();
+    const QString baseUrl = normalizedOpenAiBaseUrl(cfg);
     const int maxTokens = qBound(128, cfg.value(QStringLiteral("maxTokens"), 1800).toInt(), 8192);
 
     QJsonArray input;
@@ -392,6 +471,256 @@ void StarvisService::post(const QString& userMessage, const QVariantList& histor
     });
 }
 
+QString StarvisService::voiceToolSnapshot(const QString& tool) const
+{
+    if (tool == QLatin1String("check_cameras")) {
+        if (!m_sentry)
+            return QStringLiteral("Surveillance non initialisée.");
+        return m_sentry->statusSnapshot();
+    }
+    if (tool == QLatin1String("get_news_summary")) {
+        // News lines only, without the rest of the context bus.
+        QStringList lines;
+        if (m_news) {
+            int categoriesIncluded = 0;
+            for (const QVariant& labelVar : m_news->categories()) {
+                if (categoriesIncluded >= 6)
+                    break;
+                const QString label = labelVar.toString();
+                const QVariantList items = m_news->itemsFor(label);
+                if (items.isEmpty())
+                    continue;
+                QStringList headlines;
+                for (int i = 0; i < items.size() && i < 4; ++i)
+                    headlines << items.at(i).toMap().value(QStringLiteral("title")).toString();
+                lines << label + QStringLiteral(": ") + headlines.join(QStringLiteral(" / "));
+                ++categoriesIncluded;
+            }
+        }
+        return lines.isEmpty() ? QStringLiteral("Aucune nouvelle disponible.")
+                               : lines.join(QLatin1Char('\n'));
+    }
+    // daily_briefing and anything else: full local context snapshot.
+    return buildContextBlock();
+}
+
+void StarvisService::askClaude(const QString& question, QObject* context,
+                               std::function<void(const QString&, const QString&)> callback)
+{
+    if (anthropicKey().isEmpty()) {
+        callback({}, QStringLiteral("Clé Anthropic absente"));
+        return;
+    }
+    const QJsonArray messages{
+        QJsonObject{
+            {QStringLiteral("role"), QStringLiteral("user")},
+            {QStringLiteral("content"),
+             QStringLiteral("Context (do not echo back):\n") + buildContextBlock()},
+        },
+        QJsonObject{
+            {QStringLiteral("role"), QStringLiteral("user")},
+            {QStringLiteral("content"), question},
+        },
+    };
+    auto text = std::make_shared<QString>();
+    AnthropicClient::StreamCallbacks callbacks;
+    callbacks.onTextDelta = [text](const QString& t) { *text += t; };
+    callbacks.onFinished = [text, callback](const QJsonArray&, const QString& stopReason,
+                                            const QString& error) {
+        if (!error.isEmpty())
+            callback({}, error);
+        else if (stopReason == QLatin1String("refusal"))
+            callback({}, QStringLiteral("refus du modèle"));
+        else
+            callback(*text, QString());
+    };
+    m_anthropic->streamMessage(model(), QLatin1String(kSystemPrompt), messages, {},
+                               2048, context, std::move(callbacks));
+}
+
+// ── Anthropic path: streaming chat + tool loop ────────────────────────────────
+
+QJsonArray StarvisService::anthropicTools() const
+{
+    // Same tool set as the OpenAI path, in Anthropic's input_schema shape.
+    QJsonArray tools;
+    for (const QJsonValue& v : agentTools()) {
+        const QJsonObject fn = v.toObject();
+        tools.append(QJsonObject{
+            {QStringLiteral("name"), fn.value(QLatin1String("name"))},
+            {QStringLiteral("description"), fn.value(QLatin1String("description"))},
+            {QStringLiteral("input_schema"), fn.value(QLatin1String("parameters"))},
+        });
+    }
+    return tools;
+}
+
+void StarvisService::postAnthropic(const QString& userMessage, const QVariantList& history,
+                                   bool allowInternet, bool allowAgent)
+{
+    setBusy(true);
+    m_pendingText.clear();
+    m_turnInputTokens = 0;
+    m_turnOutputTokens = 0;
+    const qint64 started = QDateTime::currentMSecsSinceEpoch();
+
+    QJsonArray messages;
+    messages.append(QJsonObject{
+        {QStringLiteral("role"), QStringLiteral("user")},
+        {QStringLiteral("content"),
+         QStringLiteral("Context (do not echo back):\n") + buildContextBlock()},
+    });
+    for (const QVariant& turnVar : history) {
+        const QVariantMap turn = turnVar.toMap();
+        const QString role = turn.value(QStringLiteral("role")).toString();
+        const QString text = turn.value(QStringLiteral("text")).toString();
+        if (text.isEmpty())
+            continue;
+        messages.append(QJsonObject{
+            {QStringLiteral("role"), role == QLatin1String("assistant")
+                                         ? QStringLiteral("assistant") : QStringLiteral("user")},
+            {QStringLiteral("content"), text},
+        });
+    }
+    messages.append(QJsonObject{
+        {QStringLiteral("role"), QStringLiteral("user")},
+        {QStringLiteral("content"), userMessage},
+    });
+
+    runAnthropicTurn(messages, allowInternet, allowAgent, 0, started);
+}
+
+void StarvisService::runAnthropicTurn(const QJsonArray& messages, bool allowInternet,
+                                      bool allowAgent, int loop, qint64 started)
+{
+    QJsonArray tools;
+    if (allowAgent)
+        tools = anthropicTools();
+    if (allowInternet) {
+        // Anthropic's server-side web search: executes during the turn, no
+        // client round-trip, so it never shows up as stop_reason tool_use.
+        tools.append(QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("web_search_20250305")},
+            {QStringLiteral("name"), QStringLiteral("web_search")},
+            {QStringLiteral("max_uses"), 3},
+        });
+    }
+
+    QVariantMap providerCfg;
+    {
+        const QVariant raw = m_settings->get(QStringLiteral("wp-starvis-provider"));
+        if (raw.metaType().id() == QMetaType::QString)
+            providerCfg = QJsonDocument::fromJson(raw.toString().toUtf8()).object().toVariantMap();
+        else if (raw.canConvert<QVariantMap>())
+            providerCfg = raw.toMap();
+    }
+    const int maxTokens =
+        qBound(256, providerCfg.value(QStringLiteral("maxTokens"), 8192).toInt(), 32000);
+    const QString chatModel = model();
+
+    AnthropicClient::StreamCallbacks callbacks;
+    callbacks.onStart = [this, loop, started] {
+        if (loop == 0) {
+            emit replyStarted();
+            qInfo() << "[starvis.anthropic] first event after"
+                    << (QDateTime::currentMSecsSinceEpoch() - started) << "ms";
+        }
+    };
+    callbacks.onTextDelta = [this](const QString& text) {
+        m_pendingText += text;
+        emit replyDelta(text);
+    };
+    callbacks.onThinkingDelta = [this](const QString& text) {
+        emit thinkingDelta(text);
+    };
+    callbacks.onUsage = [this, chatModel](int inputTokens, int outputTokens) {
+        m_turnInputTokens = inputTokens;
+        m_turnOutputTokens = outputTokens;
+        double inUsd = 0, outUsd = 0;
+        ModelResolver::costPerMTok(chatModel, inUsd, outUsd);
+        const qint64 totalIn = m_sessionInputTokens + inputTokens;
+        const qint64 totalOut = m_sessionOutputTokens + outputTokens;
+        emit usageUpdated(static_cast<int>(totalIn), static_cast<int>(totalOut),
+                          totalIn * inUsd / 1e6 + totalOut * outUsd / 1e6);
+    };
+    callbacks.onFinished = [this, messages, allowInternet, allowAgent, loop, started, chatModel]
+                           (const QJsonArray& content, const QString& stopReason,
+                            const QString& error) {
+        m_activeStream = nullptr;
+        m_sessionInputTokens += m_turnInputTokens;
+        m_sessionOutputTokens += m_turnOutputTokens;
+        m_turnInputTokens = 0;
+        m_turnOutputTokens = 0;
+
+        if (!error.isEmpty()) {
+            setBusy(false);
+            const bool cancelled = error.startsWith(QLatin1String("aborted"));
+            qWarning() << "[starvis.anthropic] turn failed:" << error;
+            emit chatFailed(cancelled ? QStringLiteral("Requête annulée.") : error);
+            return;
+        }
+        if (stopReason == QLatin1String("refusal")) {
+            setBusy(false);
+            qWarning() << "[starvis.anthropic] refusal stop reason";
+            emit chatFailed(QStringLiteral("Le modèle a refusé cette requête."));
+            return;
+        }
+
+        if (stopReason == QLatin1String("tool_use") && loop < kMaxToolLoops) {
+            QJsonArray toolResults;
+            for (const QJsonValue& v : content) {
+                const QJsonObject block = v.toObject();
+                if (block.value(QLatin1String("type")).toString() != QLatin1String("tool_use"))
+                    continue;
+                const QString name = block.value(QLatin1String("name")).toString();
+                const QJsonObject args = block.value(QLatin1String("input")).toObject();
+                QString output;
+                if (name == QLatin1String("propose_action")) {
+                    queueAction(name, args);
+                    output = QStringLiteral("Proposed and queued for user approval.");
+                } else {
+                    bool handled = false;
+                    output = executeReadOnlyTool(name, args, handled);
+                    if (!handled)
+                        output = QStringLiteral("Unknown tool.");
+                }
+                qInfo() << "[starvis.anthropic] tool" << name << "loop" << loop;
+                toolResults.append(QJsonObject{
+                    {QStringLiteral("type"), QStringLiteral("tool_result")},
+                    {QStringLiteral("tool_use_id"), block.value(QLatin1String("id"))},
+                    {QStringLiteral("content"), output.left(8000)},
+                });
+            }
+            // The assistant content goes back VERBATIM (thinking blocks and
+            // signatures included) followed by our tool results.
+            QJsonArray next = messages;
+            next.append(QJsonObject{
+                {QStringLiteral("role"), QStringLiteral("assistant")},
+                {QStringLiteral("content"), content},
+            });
+            next.append(QJsonObject{
+                {QStringLiteral("role"), QStringLiteral("user")},
+                {QStringLiteral("content"), toolResults},
+            });
+            runAnthropicTurn(next, allowInternet, allowAgent, loop + 1, started);
+            return;
+        }
+
+        setBusy(false);
+        const int latency = static_cast<int>(QDateTime::currentMSecsSinceEpoch() - started);
+        qInfo() << "[starvis.anthropic] reply" << chatModel << latency << "ms,"
+                << m_pendingText.size() << "chars, session usage in="
+                << m_sessionInputTokens << "out=" << m_sessionOutputTokens;
+        emit replyReceived(m_pendingText.isEmpty() ? QStringLiteral("Command acknowledged.")
+                                                   : m_pendingText,
+                           chatModel, latency);
+    };
+
+    m_activeStream = m_anthropic->streamMessage(chatModel, QLatin1String(kSystemPrompt),
+                                                messages, tools, maxTokens, this,
+                                                std::move(callbacks));
+}
+
 // ── Agent mode: tool loop + read-only tools + action approval queue ───────────
 
 QJsonArray StarvisService::agentTools() const
@@ -450,11 +779,7 @@ void StarvisService::runAgentTurn(const QJsonArray& input, bool allowInternet, i
     const QString key = apiKey();
     const QVariantMap cfg = config();
     const QString chatModel = model();
-    QString baseUrl = cfg.value(QStringLiteral("baseUrl")).toString().trimmed();
-    if (baseUrl.isEmpty())
-        baseUrl = QLatin1String(kDefaultBaseUrl);
-    while (baseUrl.endsWith(QLatin1Char('/')))
-        baseUrl.chop(1);
+    const QString baseUrl = normalizedOpenAiBaseUrl(cfg);
 
     QJsonArray tools = agentTools();
     if (allowInternet)
@@ -537,7 +862,7 @@ QString StarvisService::workspaceRoot() const
     const QString stored = m_settings->get(QStringLiteral("wp-starvis-workspace")).toString();
     if (!stored.isEmpty())
         return stored;
-    return QStringLiteral("C:/Users/nicol/source/repos/widget-panel");
+    return QStringLiteral("C:/Users/nicol/source/repos/widget-panel-qt");
 }
 
 bool StarvisService::resolveInWorkspace(const QString& rel, QString& absOut) const
