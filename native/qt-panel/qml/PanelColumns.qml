@@ -172,6 +172,12 @@ Item {
     Component.onCompleted: {
         Workstation.setActive(workstationVisible)
         entranceArmed = true
+        // Re-evaluate the persisted layout after all compiled-QML property
+        // bindings have settled. Without this pass the initial Repeater model
+        // can omit its trailing cards until wp-config changes interactively.
+        Qt.callLater(function() {
+            root.storeRev++
+        })
     }
 
     // ── Card management: drag a card to another column (base mode only) ───────
@@ -198,20 +204,6 @@ Item {
         if (savedActiveIds.length > 0)
             return savedActiveIds.slice()
         return defaultActiveOrder()
-    }
-
-    function sortWidgets(items) {
-        if (savedActiveIds.length === 0)
-            return items
-        const order = {}
-        for (let i = 0; i < savedActiveIds.length; i++)
-            order[savedActiveIds[i]] = i
-        items.sort((a, b) => {
-            const ai = order[a.id] !== undefined ? order[a.id] : 10000 + registryIndex(a.id)
-            const bi = order[b.id] !== undefined ? order[b.id] : 10000 + registryIndex(b.id)
-            return ai - bi
-        })
-        return items
     }
 
     // Scene-x -> column item/name, by hit-testing the laid-out column Flickables.
@@ -264,40 +256,56 @@ Item {
             setWidgetPlacement(id, col.colName, col.beforeIdAt(sceneY, id))
     }
 
-    // A card the user enabled must never vanish because its saved column is
-    // hidden at the current column count (e.g. anything parked in "feed" while
-    // base shows three columns). Fall back to a column that is on screen.
-    function effectiveColumn(id, fallback) {
-        const assigned = savedColumns[id] || fallback
-        if (visibleColumns.indexOf(assigned) >= 0)
-            return assigned
-        if (visibleColumns.indexOf(fallback) >= 0)
-            return fallback
-        return visibleColumns[visibleColumns.length - 1]
-    }
+    // Materialize the complete column model in one binding. Store.get() and
+    // dependencies reached through JavaScript helpers are not observable to
+    // compiled QML reliably during startup; that left the first model snapshot
+    // with only the early cards until a widget toggle forced a rebuild.
+    readonly property var widgetsByColumn: {
+        root.storeRev
+        const currentMode = root.mode
+        const columns = root.visibleColumns
+        const assignments = root.savedColumns
+        const active = root.activeIdSet
+        const activeOrder = root.savedActiveIds
+        const entries = root.registry
+        const groups = {}
+        const order = {}
 
-    function widgetsForColumn(name) {
-        const result = []
-        if (mode === "base") {
-            for (const entry of registry) {
-                if (!isActive(entry.id))
+        for (const name of root.columnOrder)
+            groups[name] = []
+        for (let i = 0; i < activeOrder.length; i++)
+            order[activeOrder[i]] = i
+
+        if (currentMode === "base") {
+            for (const entry of entries) {
+                if (active[entry.id] !== true)
                     continue
-                if (effectiveColumn(entry.id, entry.column) === name)
-                    result.push(entry)
+
+                const assigned = assignments[entry.id] || entry.column
+                let effective = assigned
+                if (columns.indexOf(effective) < 0) {
+                    effective = columns.indexOf(entry.column) >= 0
+                              ? entry.column : columns[columns.length - 1]
+                }
+                if (groups[effective] !== undefined)
+                    groups[effective].push(entry)
             }
-            return sortWidgets(result)
+        } else if (currentMode === "news") {
+            const cats = entries.filter(entry => entry.id.startsWith("cat:"))
+            for (let i = 0; i < cats.length; i++)
+                groups[root.columnOrder[i % root.columnOrder.length]].push(cats[i])
         }
-        if (mode === "news") {
-            // News stage: categories only, round-robin across all columns.
-            const cats = registry.filter(e => e.id.startsWith("cat:"))
-            const columnIndex = columnOrder.indexOf(name)
-            for (let i = 0; i < cats.length; i++) {
-                if (i % columnOrder.length === columnIndex)
-                    result.push(cats[i])
-            }
-            return sortWidgets(result)
+
+        for (const name of root.columnOrder) {
+            groups[name].sort((a, b) => {
+                const ai = order[a.id] !== undefined
+                         ? order[a.id] : 10000 + root.registryIndex(a.id)
+                const bi = order[b.id] !== undefined
+                         ? order[b.id] : 10000 + root.registryIndex(b.id)
+                return ai - bi
+            })
         }
-        return sortWidgets(result)
+        return groups
     }
 
     Loader {
@@ -393,17 +401,8 @@ Item {
                             easing.bezierCurve: Motion.emphasized
                         }
                     }
-                    add: Transition {
-                        NumberAnimation {
-                            properties: "opacity"
-                            from: 0; to: 1
-                            duration: Motion.normalMs
-                        }
-                    }
-
                     Repeater {
-                        // Re-evaluates when the panel mode changes.
-                        model: root.mode, root.widgetsForColumn(columnFlick.modelData)
+                        model: root.widgetsByColumn[columnFlick.modelData] || []
 
                         delegate: WidgetHost {
                             required property var modelData

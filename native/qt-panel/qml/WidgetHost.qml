@@ -19,6 +19,8 @@ Item {
     property real minimumUserHeight: 120
     readonly property bool dragging: dragHandler.active
     property bool componentComplete: false
+    property string materializedSource: ""
+    property bool initialMaterialization: true
     property real entranceOpacity: 0
     property real entranceScale: 0
     property real entranceLift: 0
@@ -39,16 +41,24 @@ Item {
     clip: collapsed || (resizable && userHeight > 0)
     z: dragging ? 1000 : 0
 
-    // setSource (not a source binding) so initialProperties are applied
-    // before the widget's Component.onCompleted runs.
-    Component.onCompleted: {
-        // Local QML sources normally load synchronously here. Keep that first
-        // materialization visible outright: startup can precede the animation
-        // driver, leaving a loader permanently transparent if its entrance is
-        // armed too early. Loads after construction still animate normally.
+    function materializeSource() {
+        const next = String(source || "")
+        if (next === "" || next === materializedSource)
+            return
+        materializedSource = next
         loader.setSource(source, initialProperties)
-        componentComplete = true
     }
+
+    // setSource (not a source binding) so initialProperties are applied before
+    // the widget's Component.onCompleted runs. Repeater delegates can complete
+    // before their model-backed URL binding settles; retrying onSourceChanged
+    // prevents those delegates from remaining valid but permanently zero-high.
+    Component.onCompleted: {
+        materializeSource()
+        componentComplete = true
+        Qt.callLater(materializeSource)
+    }
+    onSourceChanged: if (componentComplete) Qt.callLater(materializeSource)
 
     function toggleCollapsed() {
         let state = {}
@@ -86,7 +96,8 @@ Item {
         scale: 0.97 + 0.03 * host.entranceScale
 
         onLoaded: {
-            if (!host.componentComplete) {
+            if (host.initialMaterialization) {
+                host.initialMaterialization = false
                 host.entranceOpacity = 1
                 host.entranceScale = 1
                 host.entranceLift = 1
@@ -97,6 +108,8 @@ Item {
                 entrance.restart()
             }
         }
+        onStatusChanged: if (status === Loader.Error)
+            console.warn("[layout] widget source failed:", host.widgetId, host.source)
 
         transform: Translate { id: lift; y: 12 * (1 - host.entranceLift) }
 
