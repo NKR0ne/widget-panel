@@ -358,6 +358,13 @@ void PanelWindowController::notifySurfaceActiveChanged(bool active)
     handleSurfaceActiveChanged(active);
 }
 
+void PanelWindowController::beginStartupVisibilityGrace(int durationMs)
+{
+    m_startupVisibilityGraceUntil = QDateTime::currentMSecsSinceEpoch()
+        + qMax(0, durationMs);
+    qInfo() << "[startup] initial visibility grace" << durationMs << "ms";
+}
+
 void PanelWindowController::onActiveChanged()
 {
     handleSurfaceActiveChanged(m_target && m_target->isActive());
@@ -367,6 +374,8 @@ void PanelWindowController::handleSurfaceActiveChanged(bool active)
 {
     if (!m_target || active)
         return;
+    if (QDateTime::currentMSecsSinceEpoch() < m_startupVisibilityGraceUntil)
+        return;
     if (m_pinned || !m_target->isVisible() || m_hiding || m_islandOpen)
         return;
     // Do not discard a real focus loss during toggle/browser debounce. Recheck
@@ -375,6 +384,8 @@ void PanelWindowController::handleSurfaceActiveChanged(bool active)
         ? FocusPolicy::kRecheckDelayMs : kFocusDebounceRetryMs;
     QTimer::singleShot(delay, this, [this] {
         if (!m_target || !m_target->isVisible() || m_pinned || m_hiding || m_islandOpen)
+            return;
+        if (QDateTime::currentMSecsSinceEpoch() < m_startupVisibilityGraceUntil)
             return;
         if (m_target->isActive())
             return;
@@ -389,8 +400,14 @@ void PanelWindowController::onClickOutside()
 {
     if (m_pinned)
         return;
+    if (QDateTime::currentMSecsSinceEpoch() < m_startupVisibilityGraceUntil) {
+        qInfo() << "[startup] outside click ignored during initial visibility grace";
+        return;
+    }
     QTimer::singleShot(FocusPolicy::kRecheckDelayMs, this, [this] {
         if (!m_target || !m_target->isVisible() || m_pinned || m_hiding)
+            return;
+        if (QDateTime::currentMSecsSinceEpoch() < m_startupVisibilityGraceUntil)
             return;
         if (!m_focus.delayedCheckAllowsHide())
             return;

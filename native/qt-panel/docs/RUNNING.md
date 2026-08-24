@@ -31,7 +31,9 @@ another Qt/MSVC build.
 When autostart is enabled from Settings, build-tree installs register the
 hidden `launch.ps1 -Startup` bootstrap. It waits briefly for the login session,
 checks startup liveness, and retries early exits up to three times. Diagnostics
-are written to `%APPDATA%\qt-panel\startup-launch.log`.
+are written to `%APPDATA%\qt-panel\startup-launch.log`. Login launches preserve
+the panel's initial visibility for 15 seconds so Explorer's transient focus and
+pointer events cannot immediately dismiss an otherwise healthy startup.
 
 ## Stall recovery
 - If a build or Qt tool invocation is interrupted, run

@@ -148,6 +148,9 @@ if ($ExitAfterMs -gt 0) {
 }
 $args += @('--renderer', $Renderer)
 $args += @('--start-mode', $StartMode)
+if ($Startup) {
+    $args += '--login-startup'
+}
 if ($Composition) {
     $args += '--composition'
 } elseif ($NoComposition) {

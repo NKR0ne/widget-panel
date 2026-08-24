@@ -97,6 +97,9 @@ int main(int argc, char* argv[])
         QStringLiteral("Open directly in base, news, monitor, or the News live submode."),
         QStringLiteral("mode"),
         QStringLiteral("base"));
+    const QCommandLineOption loginStartupOption(
+        QStringLiteral("login-startup"),
+        QStringLiteral("Preserve initial visibility while the Windows login session settles."));
     const QCommandLineOption diagIslandUrlOption(
         QStringLiteral("diag-island-url"),
         QStringLiteral("Open a URL in the embedded web island for bounded diagnostics."),
@@ -131,6 +134,7 @@ const QCommandLineOption diagPressReaderOption(
     parser.addOption(diagFitModeOption);
     parser.addOption(rendererOption);
     parser.addOption(startModeOption);
+    parser.addOption(loginStartupOption);
     parser.addOption(diagIslandUrlOption);
     parser.addOption(diagPressReaderOption);
     parser.addOption(compositionOption);
@@ -659,6 +663,8 @@ const QCommandLineOption diagPressReaderOption(
     // Keep a verified direct-camera stream warm independently of whether its
     // card is currently instantiated. Reattaching the card only swaps sinks.
     QTimer::singleShot(0, &directCamera, &DirectCameraClient::startIfVerified);
+    if (parser.isSet(loginStartupOption))
+        controller.beginStartupVisibilityGrace(15000);
     controller.showPanel();
     if (startMode != QStringLiteral("base")) {
         QVariantMap columnWidths;

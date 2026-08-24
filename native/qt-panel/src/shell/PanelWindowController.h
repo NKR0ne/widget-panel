@@ -77,6 +77,9 @@ public:
     // Same policy as the windowed path -- the decision to hide lives in one
     // place, this only delivers the event.
     void notifySurfaceActiveChanged(bool active);
+    // Login startup receives transient Explorer focus/click events while the
+    // desktop settles. Suppress dismissal briefly without changing normal use.
+    void beginStartupVisibilityGrace(int durationMs);
 
     // Rewrites the login command so it matches how the panel is running, the
     // composition flag included. Must be called AFTER the surface is attached,
@@ -269,6 +272,7 @@ private:
     QString m_mode = QStringLiteral("base");
     int m_islandRestoreWidth = 0;
     qint64 m_geometryLockUntil = 0;
+    qint64 m_startupVisibilityGraceUntil = 0;
     QString m_graphicsApiName = QStringLiteral("starting");
 
     QTimer m_hideFallback;
