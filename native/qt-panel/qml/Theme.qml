@@ -149,8 +149,11 @@ QtObject {
     // Fluent's sc_noiseOpacity, verbatim. Both the 0.03 used before and the
     // 0.012 guessed for system mode were wrong in opposite directions.
     readonly property real grainOpacity: contrastEnabled ? 0 : 0.02
-    readonly property color textPrimary: "#e8eaf2"
-    readonly property color textSecondary: contrastEnabled ? "#c9cfda" : "#9aa3b5"
+    // Shell-aligned text ladder. Native glyph rasterization supplies the crisp
+    // edge; these tokens supply enough luminance to hold up over live acrylic
+    // without making metadata compete with titles and values.
+    readonly property color textPrimary: "#f7f8fb"
+    readonly property color textSecondary: contrastEnabled ? "#e0e4ec" : "#b8c0cf"
     // Matches the Windows accent color (falls back to blue).
     readonly property color accent: Sys.accent
     readonly property color success: "#34d399"

@@ -213,6 +213,12 @@ const QCommandLineOption diagPressReaderOption(
         return 4;
     }
 
+    // Qt's distance-field text is efficient when glyphs are transformed, but
+    // it reads noticeably thinner than Windows shell text at the panel's
+    // common 8-12 px sizes. Native rasterization matches Start's small-label
+    // weight and contrast while retaining Qt's layout metrics.
+    QQuickWindow::setTextRenderType(QQuickWindow::NativeTextRendering);
+
     SettingsStore settings(dataDir + QStringLiteral("/settings.json"));
     if (profile.isEmpty())
         settings.importLegacyIfEmpty(appData + QStringLiteral("/widget-panel/config.json"));
