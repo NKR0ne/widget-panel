@@ -210,10 +210,25 @@ QString StarvisService::provider() const
 
 QVariantMap StarvisService::providerStatus() const
 {
+    const QString activeProvider = provider();
+    const bool local = activeProvider == QLatin1String("local");
+    const bool openAiSpeech = !apiKey().isEmpty();
+    const bool reasoningReady = local ? m_localBackendReady
+        : activeProvider == QLatin1String("anthropic") ? !anthropicKey().isEmpty()
+                                                        : !apiKey().isEmpty();
     return {
-        {QStringLiteral("provider"), provider()},
+        {QStringLiteral("provider"), activeProvider},
         {QStringLiteral("model"), model()},
-        {QStringLiteral("ready"), provider() != QLatin1String("local") || m_localBackendReady},
+        {QStringLiteral("ready"), reasoningReady},
+        {QStringLiteral("reasoningReady"), reasoningReady},
+        {QStringLiteral("visionReady"), visionConfigured()},
+        {QStringLiteral("speechProvider"), openAiSpeech ? QStringLiteral("openai")
+                                                         : m_speech && m_speech->available()
+                                                             ? QStringLiteral("windows")
+                                                             : QStringLiteral("none")},
+        {QStringLiteral("realtimeVoiceReady"), m_voice && m_voice->available()},
+        {QStringLiteral("contextWindow"), local ? 8192 : 0},
+        {QStringLiteral("localMultimodal"), local},
         {QStringLiteral("endpoint"), normalizedOpenAiBaseUrl(config())},
         {QStringLiteral("pinned"), m_modelResolver->pinned()},
         {QStringLiteral("resolvedAt"), m_modelResolver->resolvedAt()},
@@ -222,7 +237,12 @@ QVariantMap StarvisService::providerStatus() const
 
 void StarvisService::refreshModel()
 {
-    m_modelResolver->refreshNow();
+    if (provider() == QLatin1String("local"))
+        probeLocalBackend();
+    else if (provider() == QLatin1String("anthropic"))
+        m_modelResolver->refreshNow();
+    else
+        emit configuredChanged();
 }
 
 QVariantMap StarvisService::config() const

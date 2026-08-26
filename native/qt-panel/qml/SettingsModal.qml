@@ -81,7 +81,41 @@ Item {
                 value = value.slice(0, -1)
             cfg[key] = value || "https://api.openai.com/v1"
         }
+        const activeProvider = starvisProvider()
+        if (key === "model" && activeProvider === "local")
+            cfg.localModel = cfg[key]
+        else if (key === "model" && activeProvider === "openai")
+            cfg.openaiModel = cfg[key]
+        else if (key === "baseUrl" && activeProvider === "local")
+            cfg.localBaseUrl = cfg[key]
+        else if (key === "baseUrl" && activeProvider === "openai")
+            cfg.openaiBaseUrl = cfg[key]
         Store.set("wp-starvis-config", JSON.stringify(cfg))
+    }
+    function starvisProvider() {
+        const selected = starvisValue("provider", "local").trim().toLowerCase()
+        return selected === "anthropic" || selected === "openai" ? selected : "local"
+    }
+    function selectStarvisProvider(provider) {
+        const cfg = starvisConfig()
+        const current = starvisProvider()
+        if (current === "local") {
+            cfg.localModel = cfg.model || "starvis-local"
+            cfg.localBaseUrl = cfg.baseUrl || "http://127.0.0.1:1234/v1"
+        } else if (current === "openai") {
+            cfg.openaiModel = cfg.model || "gpt-5.5"
+            cfg.openaiBaseUrl = cfg.baseUrl || "https://api.openai.com/v1"
+        }
+        cfg.provider = provider
+        if (provider === "local") {
+            cfg.model = cfg.localModel || "starvis-local"
+            cfg.baseUrl = cfg.localBaseUrl || "http://127.0.0.1:1234/v1"
+        } else if (provider === "openai") {
+            cfg.model = cfg.openaiModel || "gpt-5.5"
+            cfg.baseUrl = cfg.openaiBaseUrl || "https://api.openai.com/v1"
+        }
+        Store.set("wp-starvis-config", JSON.stringify(cfg))
+        starvisRevision++
     }
     function providerConfig() {
         return parseJson(Store.get("wp-starvis-provider", ""), {})
@@ -158,6 +192,20 @@ Item {
 
     property int columnCountDraft: 3
     property bool autostartDraft: false
+    property int starvisRevision: 0
+
+    Connections {
+        target: Starvis
+        function onConfiguredChanged() { modal.starvisRevision++ }
+    }
+    Connections {
+        target: Store
+        function onChanged(key) {
+            if (key === "wp-starvis-config" || key === "wp-starvis-provider"
+                    || key === "wp-starvis-voice" || key === "wp-starvis-sentry")
+                modal.starvisRevision++
+        }
+    }
 
     Component {
         id: starvisField
@@ -733,81 +781,255 @@ Item {
             visible: modal.currentPage === "starvis"
             width: parent.width
             spacing: 14
+            readonly property string selectedProvider: {
+                modal.starvisRevision
+                return modal.starvisProvider()
+            }
+            readonly property var runtimeStatus: {
+                modal.starvisRevision
+                return Starvis.providerStatus()
+            }
 
             Text {
                 id: starvisSection
-                text: "RAISONNEMENT"; color: Theme.textSecondary; font.pixelSize: 9
+                text: "MOTEUR STARVIS"; color: Theme.textSecondary; font.pixelSize: 9
                 font.letterSpacing: 1; topPadding: 4
             }
-            Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "provider"; item.fallback = "local"; item.placeholder = "Fournisseur: local, anthropic ou openai" } }
-            Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "model"; item.fallback = "starvis-local"; item.placeholder = "Modèle local" } }
-            Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "baseUrl"; item.fallback = "http://127.0.0.1:1234/v1"; item.placeholder = "API locale compatible OpenAI" } }
-            // Anthropic remains available as an explicit cloud provider.
-            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "starvis-anthropic-key"; item.placeholder = "Clé Anthropic (raisonnement)"; item.secret = true } }
-            Loader { sourceComponent: providerField; onLoaded: { item.configKey = "modelPin"; item.fallback = ""; item.placeholder = "Modèle épinglé (vide = auto)" } }
-            Row {
+
+            Rectangle {
+                id: starvisRuntimeCard
                 width: parent.width
-                spacing: 8
-                Text {
-                    id: starvisModelStatus
-                    property int starvisRev: 0
-                    Connections {
-                        target: Starvis
-                        function onConfiguredChanged() { starvisModelStatus.starvisRev++ }
+                height: 122
+                radius: 6
+                color: Qt.rgba(1, 1, 1, 0.045)
+                border.color: Theme.cardStroke
+
+                Column {
+                    anchors.fill: parent
+                    anchors.margins: 11
+                    spacing: 7
+
+                    Row {
+                        width: parent.width
+                        spacing: 8
+                        Rectangle {
+                            width: 8; height: 8; radius: 4
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: starvisRuntimeCard.parent.runtimeStatus.reasoningReady
+                                   ? "#34d399" : "#fbbf24"
+                        }
+                        Text {
+                            width: parent.width - x - runtimeRefresh.width
+                            text: {
+                                const status = starvisRuntimeCard.parent.runtimeStatus
+                                if (status.provider === "local")
+                                    return status.ready ? "Runtime local opérationnel"
+                                                        : "Runtime local en démarrage"
+                                const name = status.provider === "anthropic"
+                                           ? "Anthropic" : "OpenAI"
+                                return status.reasoningReady ? name + " configuré"
+                                                             : name + " requiert une clé"
+                            }
+                            color: Theme.textPrimary
+                            font.pixelSize: 11
+                            font.weight: Font.DemiBold
+                            elide: Text.ElideRight
+                            anchors.verticalCenter: parent.verticalCenter
+                        }
+                        Rectangle {
+                            id: runtimeRefresh
+                            width: runtimeRefreshLabel.implicitWidth + 14
+                            height: 22; radius: 5
+                            color: runtimeRefreshMouse.containsMouse ? Theme.hover : Theme.cardFill
+                            border.color: Theme.cardStroke
+                            Text {
+                                id: runtimeRefreshLabel
+                                anchors.centerIn: parent
+                                text: "Actualiser"
+                                color: Theme.textSecondary
+                                font.pixelSize: 9
+                            }
+                            MouseArea {
+                                id: runtimeRefreshMouse
+                                anchors.fill: parent; hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: Starvis.refreshModel()
+                            }
+                        }
                     }
-                    width: parent.width - starvisModelRefresh.width - 8
-                    text: {
-                        starvisModelStatus.starvisRev
-                        const status = Starvis.providerStatus()
-                        if (status.provider === "local")
-                            return (status.ready ? "Modèle local prêt: " : "Modèle local en démarrage: ")
-                                   + status.model
-                        if (status.provider !== "anthropic")
-                            return "OpenAI actif"
-                        return "Modèle actif: " + status.model
-                               + (status.pinned ? " (épinglé)" : " (auto)")
-                    }
-                    color: Theme.textSecondary
-                    font.pixelSize: 10
-                    elide: Text.ElideRight
-                    anchors.verticalCenter: parent.verticalCenter
-                }
-                Rectangle {
-                    id: starvisModelRefresh
-                    width: starvisModelRefreshLabel.implicitWidth + 14; height: 22; radius: 6
-                    color: starvisModelRefreshMouse.containsMouse ? Theme.hover : Theme.cardFill
-                    border.color: Theme.cardStroke
                     Text {
-                        id: starvisModelRefreshLabel
-                        anchors.centerIn: parent
-                        text: "Résoudre"
+                        width: parent.width
+                        text: starvisRuntimeCard.parent.runtimeStatus.model
+                              + "  ·  " + starvisRuntimeCard.parent.runtimeStatus.endpoint
                         color: Theme.textSecondary
                         font.pixelSize: 9
+                        elide: Text.ElideMiddle
                     }
-                    MouseArea {
-                        id: starvisModelRefreshMouse
-                        anchors.fill: parent; hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: Starvis.refreshModel()
+                    Row {
+                        width: parent.width
+                        spacing: 5
+                        Repeater {
+                            model: [
+                                { label: "Raisonnement", ready: starvisRuntimeCard.parent.runtimeStatus.reasoningReady },
+                                { label: "Vision", ready: starvisRuntimeCard.parent.runtimeStatus.visionReady },
+                                { label: "Outils", ready: starvisRuntimeCard.parent.runtimeStatus.reasoningReady },
+                                { label: "Streaming", ready: starvisRuntimeCard.parent.runtimeStatus.reasoningReady },
+                            ]
+                            delegate: Rectangle {
+                                required property var modelData
+                                width: capabilityLabel.implicitWidth + 16
+                                height: 20; radius: 5
+                                color: modelData.ready ? Qt.rgba(0.20, 0.83, 0.60, 0.12)
+                                                       : Qt.rgba(0.98, 0.75, 0.14, 0.10)
+                                border.color: modelData.ready ? Qt.rgba(0.20, 0.83, 0.60, 0.45)
+                                                              : Qt.rgba(0.98, 0.75, 0.14, 0.35)
+                                Text {
+                                    id: capabilityLabel
+                                    anchors.centerIn: parent
+                                    text: modelData.label
+                                    color: modelData.ready ? "#6ee7b7" : "#fbbf24"
+                                    font.pixelSize: 8
+                                }
+                            }
+                        }
+                    }
+                    Text {
+                        width: parent.width
+                        visible: starvisRuntimeCard.parent.runtimeStatus.localMultimodal
+                        text: "Qwen3-VL 8B · contexte 8192 · CUDA · Flash Attention · cache KV Q8"
+                        color: Theme.textSecondary
+                        font.pixelSize: 8
+                        elide: Text.ElideRight
                     }
                 }
             }
-            Loader { sourceComponent: providerField; onLoaded: { item.configKey = "maxTokens"; item.fallback = "8192"; item.placeholder = "Max tokens (Anthropic)" } }
+
             Text {
-                text: "REPLI / VOIX — OPENAI"; color: Theme.textSecondary; font.pixelSize: 9
+                text: "FOURNISSEUR DE RAISONNEMENT"
+                color: Theme.textSecondary; font.pixelSize: 9; font.letterSpacing: 1
+            }
+            Row {
+                width: parent.width
+                spacing: 4
+                Repeater {
+                    model: [
+                        { label: "Local", value: "local" },
+                        { label: "Anthropic", value: "anthropic" },
+                        { label: "OpenAI", value: "openai" },
+                    ]
+                    delegate: Rectangle {
+                        required property var modelData
+                        readonly property bool selected:
+                            starvisRuntimeCard.parent.selectedProvider === modelData.value
+                        width: (parent.width - 8) / 3
+                        height: 28; radius: 5
+                        color: selected ? Theme.activeFill
+                                        : providerMouse.containsMouse ? Theme.hover : "transparent"
+                        border.color: selected ? Theme.accent : Theme.cardStroke
+                        Text {
+                            anchors.centerIn: parent
+                            text: parent.modelData.label
+                            color: parent.selected ? Theme.textPrimary : Theme.textSecondary
+                            font.pixelSize: 9
+                            font.weight: parent.selected ? Font.DemiBold : Font.Normal
+                        }
+                        MouseArea {
+                            id: providerMouse
+                            anchors.fill: parent; hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: modal.selectStarvisProvider(parent.modelData.value)
+                        }
+                    }
+                }
+            }
+
+            Column {
+                width: parent.width
+                spacing: 7
+                visible: starvisRuntimeCard.parent.selectedProvider === "local"
+                Text { text: "Modèle exposé"; color: Theme.textSecondary; font.pixelSize: 8 }
+                Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "model"; item.fallback = "starvis-local"; item.placeholder = "Alias du modèle local" } }
+                Text { text: "Point d'accès local"; color: Theme.textSecondary; font.pixelSize: 8 }
+                Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "baseUrl"; item.fallback = "http://127.0.0.1:1234/v1"; item.placeholder = "API locale compatible OpenAI" } }
+                Text { text: "Longueur maximale de la réponse"; color: Theme.textSecondary; font.pixelSize: 8 }
+                Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "maxTokens"; item.fallback = "1800"; item.placeholder = "Tokens de sortie (128-8192)" } }
+                Text {
+                    width: parent.width
+                    text: "Le même modèle assure le raisonnement, les outils et l'analyse d'images. "
+                          + "Le serveur local reste chargé en arrière-plan."
+                    color: Theme.textSecondary; font.pixelSize: 9; wrapMode: Text.WordWrap
+                }
+            }
+
+            Column {
+                width: parent.width
+                spacing: 7
+                visible: starvisRuntimeCard.parent.selectedProvider === "anthropic"
+                Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "starvis-anthropic-key"; item.placeholder = "Clé Anthropic (raisonnement + vision)"; item.secret = true } }
+                Loader { sourceComponent: providerField; onLoaded: { item.configKey = "modelPin"; item.fallback = ""; item.placeholder = "Modèle épinglé (vide = résolution automatique)" } }
+                Loader { sourceComponent: providerField; onLoaded: { item.configKey = "maxTokens"; item.fallback = "8192"; item.placeholder = "Tokens de sortie Anthropic" } }
+                Text {
+                    width: parent.width
+                    text: "Le modèle est résolu automatiquement, sauf si un modèle est épinglé."
+                    color: Theme.textSecondary; font.pixelSize: 9; wrapMode: Text.WordWrap
+                }
+            }
+
+            Column {
+                width: parent.width
+                spacing: 7
+                visible: starvisRuntimeCard.parent.selectedProvider === "openai"
+                Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "starvis-openai-key"; item.placeholder = "Clé OpenAI (raisonnement)"; item.secret = true } }
+                Text { text: "Modèle"; color: Theme.textSecondary; font.pixelSize: 8 }
+                Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "model"; item.fallback = "gpt-5.5"; item.placeholder = "Modèle OpenAI" } }
+                Text { text: "Point d'accès"; color: Theme.textSecondary; font.pixelSize: 8 }
+                Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "baseUrl"; item.fallback = "https://api.openai.com/v1"; item.placeholder = "API OpenAI" } }
+                Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "maxTokens"; item.fallback = "1800"; item.placeholder = "Tokens de sortie OpenAI" } }
+            }
+
+            Text {
+                text: "VOIX"; color: Theme.textSecondary; font.pixelSize: 9
                 font.letterSpacing: 1; topPadding: 4
             }
-            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "starvis-openai-key"; item.placeholder = "Clé OpenAI (voix + repli)" } }
-            Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "maxTokens"; item.fallback = "1800"; item.placeholder = "Maximum tokens" } }
-            Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "ttsModel"; item.fallback = "gpt-4o-mini-tts"; item.placeholder = "Modèle vocal" } }
-            Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "ttsVoice"; item.fallback = "alloy"; item.placeholder = "Voix TTS" } }
-            Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-starvis-workspace"; item.fallback = ""; item.placeholder = "Racine workspace Starvis" } }
+            Text {
+                width: parent.width
+                text: {
+                    const status = starvisRuntimeCard.parent.runtimeStatus
+                    const output = status.speechProvider === "openai" ? "OpenAI TTS"
+                                 : status.speechProvider === "windows" ? "Windows SAPI hors ligne"
+                                 : "aucune sortie vocale"
+                    const realtime = status.realtimeVoiceReady
+                                   ? "Dialogue temps réel prêt."
+                                   : "Dialogue temps réel optionnel avec une clé OpenAI."
+                    return "Sortie: " + output + ". " + realtime
+                }
+                color: Theme.textSecondary
+                font.pixelSize: 9
+                wrapMode: Text.WordWrap
+            }
+            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "starvis-openai-key"; item.placeholder = "Clé OpenAI optionnelle (temps réel + TTS)"; item.secret = true } }
+            Column {
+                width: parent.width
+                spacing: 7
+                visible: starvisRuntimeCard.parent.runtimeStatus.speechProvider === "openai"
+                Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "ttsModel"; item.fallback = "gpt-4o-mini-tts"; item.placeholder = "Modèle TTS OpenAI" } }
+                Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "ttsVoice"; item.fallback = "alloy"; item.placeholder = "Voix TTS OpenAI" } }
+            }
+            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "realtimeModel"; item.fallback = "gpt-realtime"; item.placeholder = "Modèle temps réel" } }
+            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "voice"; item.fallback = "marin"; item.placeholder = "Voix" } }
+            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "idleTimeoutMin"; item.fallback = "5"; item.numeric = true; item.placeholder = "Fermeture après inactivité (min)" } }
+            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "maxSessionMin"; item.fallback = "30"; item.numeric = true; item.placeholder = "Durée maximale de session (min)" } }
 
+            Text {
+                text: "AGENT ET ACTIONS"; color: Theme.textSecondary; font.pixelSize: 9
+                font.letterSpacing: 1; topPadding: 4
+            }
+            Loader { sourceComponent: storeField; onLoaded: { item.storeKey = "wp-starvis-workspace"; item.fallback = ""; item.placeholder = "Racine workspace Starvis" } }
             Row {
                 width: parent.width
                 spacing: 8
                 Text {
-                    text: "Execution des actions"
+                    text: "Exécution des actions approuvées"
                     color: Theme.textSecondary
                     font.pixelSize: Theme.fontSizeCaption
                     anchors.verticalCenter: parent.verticalCenter
@@ -830,24 +1052,6 @@ Item {
                     }
                 }
             }
-
-            Text {
-                text: "VOIX TEMPS RÉEL"; color: Theme.textSecondary; font.pixelSize: 9
-                font.letterSpacing: 1; topPadding: 4
-            }
-            Text {
-                width: parent.width
-                text: Starvis.voice && Starvis.voice.available
-                      ? "Prêt — dialogue continu, interruption possible."
-                      : "Indisponible : " + (Starvis.voice ? Starvis.voice.unavailableReason : "")
-                color: Theme.textSecondary
-                font.pixelSize: 9
-                wrapMode: Text.WordWrap
-            }
-            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "realtimeModel"; item.fallback = "gpt-realtime"; item.placeholder = "Modèle temps réel" } }
-            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "voice"; item.fallback = "marin"; item.placeholder = "Voix" } }
-            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "idleTimeoutMin"; item.fallback = "5"; item.numeric = true; item.placeholder = "Fermeture après inactivité (min)" } }
-            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "maxSessionMin"; item.fallback = "30"; item.numeric = true; item.placeholder = "Durée maximale de session (min)" } }
 
             Text {
                 text: "SENTINELLE (CAMÉRAS)"; color: Theme.textSecondary; font.pixelSize: 9
@@ -1069,8 +1273,13 @@ Item {
             Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-sentry"; item.field = "diffThreshold"; item.fallback = "0.045"; item.numeric = true; item.placeholder = "Seuil de mouvement (0-1)" } }
             Text {
                 width: parent.width
-                text: "Les images ne quittent la machine que lors d'un événement, "
-                      + "et chaque envoi est journalisé."
+                text: starvisRuntimeCard.parent.runtimeStatus.provider === "local"
+                      ? "Les événements sont analysés localement par Qwen3-VL; les images "
+                        + "ne quittent pas cette machine."
+                      : starvisRuntimeCard.parent.runtimeStatus.visionReady
+                        ? "Seules les images associées à un événement sont envoyées au "
+                          + "fournisseur visuel configuré, et chaque envoi est journalisé."
+                        : "Analyse visuelle indisponible avec la configuration actuelle."
                 color: Theme.textSecondary
                 font.pixelSize: 9
                 wrapMode: Text.WordWrap

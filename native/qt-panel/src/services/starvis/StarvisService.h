@@ -29,11 +29,9 @@ class StocksModel;
 class WeatherService;
 class WorkstationClient;
 
-// Native Starvis chat, briefing, speech, context injection, and gated agent
-// actions. Reasoning runs on the Anthropic Messages API (streaming, model
-// auto-resolved to the provider's top reasoning model) whenever an Anthropic
-// key is stored; the legacy OpenAI Responses path remains as fallback and
-// still owns TTS.
+// Native Starvis chat, briefing, speech, context injection, vision, and gated
+// agent actions. The default provider is the local OpenAI-compatible Qwen3-VL
+// runtime; Anthropic and OpenAI remain explicit cloud alternatives.
 class StarvisService : public QObject {
     Q_OBJECT
     Q_MOC_INCLUDE("services/starvis/StarvisState.h")
@@ -58,7 +56,7 @@ public:
     bool configured() const;
     bool busy() const { return m_busy; }
     QString model() const;
-    // "anthropic" when the Anthropic key drives reasoning, else "openai".
+    // Explicit provider selection: "local", "anthropic", or "openai".
     QString provider() const;
 
     // history: [{role: "user"|"assistant", text: string}, ...]
@@ -76,7 +74,7 @@ public:
     Q_INVOKABLE void stopSpeaking();
     // True when speech can be produced by either path.
     Q_INVOKABLE bool canSpeak() const;
-    // {provider, model, pinned, resolvedAt} for the settings readout.
+    // Runtime, capability, voice, endpoint, and model details for settings.
     Q_INVOKABLE QVariantMap providerStatus() const;
     Q_INVOKABLE void refreshModel();
 
