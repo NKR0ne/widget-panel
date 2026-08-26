@@ -84,6 +84,15 @@ bool supportsTemperature(const QString& model)
              || model.startsWith(QLatin1String("o4")));
 }
 
+bool isLocalBaseUrl(const QString& value)
+{
+    const QUrl url(value);
+    const QString host = url.host().toLower();
+    return host == QLatin1String("127.0.0.1")
+        || host == QLatin1String("localhost")
+        || host == QLatin1String("::1");
+}
+
 // One place for the trailing-slash-tolerant base URL (was three copies).
 QString normalizedOpenAiBaseUrl(const QVariantMap& cfg)
 {
@@ -154,11 +163,19 @@ QString StarvisService::anthropicKey() const
 
 bool StarvisService::configured() const
 {
-    return !anthropicKey().isEmpty() || !apiKey().isEmpty();
+    return provider() == QLatin1String("local")
+        || !anthropicKey().isEmpty() || !apiKey().isEmpty();
 }
 
 QString StarvisService::provider() const
 {
+    const QVariantMap cfg = config();
+    const QString selected = cfg.value(QStringLiteral("provider")).toString().trimmed().toLower();
+    if (selected == QLatin1String("local")
+        || (selected.isEmpty() && isLocalBaseUrl(normalizedOpenAiBaseUrl(cfg))))
+        return QStringLiteral("local");
+    if (selected == QLatin1String("openai"))
+        return QStringLiteral("openai");
     return anthropicKey().isEmpty() ? QStringLiteral("openai") : QStringLiteral("anthropic");
 }
 
@@ -364,10 +381,73 @@ void StarvisService::chat(const QString& message, const QVariantList& history,
 {
     if (message.trimmed().isEmpty() || m_busy)
         return;
-    if (provider() == QLatin1String("anthropic"))
+    if (provider() == QLatin1String("local"))
+        postLocal(message, history);
+    else if (provider() == QLatin1String("anthropic"))
         postAnthropic(message, history, allowInternet, allowAgent);
     else
         post(message, history, allowInternet, allowAgent);
+}
+
+void StarvisService::postLocal(const QString& userMessage, const QVariantList& history)
+{
+    setBusy(true);
+    const qint64 started = QDateTime::currentMSecsSinceEpoch();
+    const QVariantMap cfg = config();
+    const QString chatModel = model();
+    const int maxTokens = qBound(128, cfg.value(QStringLiteral("maxTokens"), 1800).toInt(), 8192);
+
+    QJsonArray messages;
+    messages.append(QJsonObject{
+        {QStringLiteral("role"), QStringLiteral("system")},
+        {QStringLiteral("content"), QLatin1String(kSystemPrompt) + QStringLiteral("\n\n")
+             + buildContextBlock()},
+    });
+    for (const QVariant& turnVar : history) {
+        const QVariantMap turn = turnVar.toMap();
+        const QString text = turn.value(QStringLiteral("text")).toString().trimmed();
+        if (text.isEmpty())
+            continue;
+        messages.append(QJsonObject{
+            {QStringLiteral("role"), turn.value(QStringLiteral("role")).toString()
+                 == QLatin1String("assistant") ? QStringLiteral("assistant") : QStringLiteral("user")},
+            {QStringLiteral("content"), text},
+        });
+    }
+    messages.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
+                                {QStringLiteral("content"), userMessage}});
+
+    QJsonObject body{{QStringLiteral("model"), chatModel},
+                     {QStringLiteral("messages"), messages},
+                     {QStringLiteral("max_tokens"), maxTokens},
+                     {QStringLiteral("stream"), false},
+                     {QStringLiteral("chat_template_kwargs"),
+                      QJsonObject{{QStringLiteral("enable_thinking"), false}}}};
+    if (cfg.contains(QStringLiteral("temperature")))
+        body.insert(QStringLiteral("temperature"), cfg.value(QStringLiteral("temperature")).toDouble());
+
+    const QString baseUrl = normalizedOpenAiBaseUrl(cfg);
+    m_http->requestJsonAuth(
+        "POST", QUrl(baseUrl + QStringLiteral("/chat/completions")), QString(),
+        QJsonDocument(body).toJson(QJsonDocument::Compact), this,
+        [this, chatModel, started](const QJsonDocument& doc, int status, const QString& error) {
+        setBusy(false);
+        const QJsonObject payload = doc.object();
+        if (status < 200 || status >= 300) {
+            const QString detail = payload.value(QLatin1String("error")).toObject()
+                                       .value(QLatin1String("message")).toString();
+            emit chatFailed(!detail.isEmpty() ? detail : !error.isEmpty() ? error
+                : QStringLiteral("Local model request failed (%1)").arg(status));
+            return;
+        }
+        const QJsonArray choices = payload.value(QLatin1String("choices")).toArray();
+        const QString text = choices.isEmpty() ? QString()
+            : choices.first().toObject().value(QLatin1String("message")).toObject()
+                  .value(QLatin1String("content")).toString().trimmed();
+        const int latency = static_cast<int>(QDateTime::currentMSecsSinceEpoch() - started);
+        emit replyReceived(text.isEmpty() ? QStringLiteral("Command acknowledged.") : text,
+                           chatModel, latency);
+    });
 }
 
 void StarvisService::briefing()

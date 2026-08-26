@@ -24,7 +24,8 @@ public:
     bool stale() const { return m_stale; }
     QVariantMap snapshot() const { return m_snapshot; }
 
-    // Polling runs only while active (a workstation widget is on screen).
+    // Polling runs while workstation cards are configured, keeping snapshots
+    // warm across workspace changes without rendering hidden card graphics.
     Q_INVOKABLE void setActive(bool active);
 
 signals:

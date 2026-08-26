@@ -151,26 +151,21 @@ Item {
     readonly property var visibleColumns: {
         return columnOrder.slice(0, baseColumnCount)
     }
-    readonly property bool workstationVisible: {
+    // Keep the lightweight telemetry subscription warm whenever workstation
+    // cards are configured in either workspace. Tying the pipe to the current
+    // mode made Starvis -> Performance wait for a fresh registration/snapshot,
+    // while the Performance graphics themselves remain unloaded off-screen.
+    readonly property bool workstationConfigured: {
         storeRev
-        if (mode === "news")
-            return false
-        if (mode === "monitor") {
-            for (const id of workstationIds) {
-                if (monitorActiveIdSet[id] === true)
-                    return true
-            }
-            return false
-        }
         for (const id of workstationIds) {
-            if (isActive(id))
-                return true; // it renders somewhere: effectiveColumn guarantees it
+            if (monitorActiveIdSet[id] === true || isActive(id))
+                return true
         }
         return false
     }
-    onWorkstationVisibleChanged: Workstation.setActive(workstationVisible)
+    onWorkstationConfiguredChanged: Workstation.setActive(workstationConfigured)
     Component.onCompleted: {
-        Workstation.setActive(workstationVisible)
+        Workstation.setActive(workstationConfigured)
         entranceArmed = true
         // Re-evaluate the persisted layout after all compiled-QML property
         // bindings have settled. Without this pass the initial Repeater model

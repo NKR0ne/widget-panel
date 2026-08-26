@@ -736,11 +736,13 @@ Item {
 
             Text {
                 id: starvisSection
-                text: "RAISONNEMENT — ANTHROPIC"; color: Theme.textSecondary; font.pixelSize: 9
+                text: "RAISONNEMENT"; color: Theme.textSecondary; font.pixelSize: 9
                 font.letterSpacing: 1; topPadding: 4
             }
-            // Anthropic drives reasoning as soon as its key is stored; the
-            // model is auto-resolved to the top reasoning model daily.
+            Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "provider"; item.fallback = "local"; item.placeholder = "Fournisseur: local, anthropic ou openai" } }
+            Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "model"; item.fallback = "starvis-local"; item.placeholder = "Modèle local" } }
+            Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "baseUrl"; item.fallback = "http://127.0.0.1:1234/v1"; item.placeholder = "API locale compatible OpenAI" } }
+            // Anthropic remains available as an explicit cloud provider.
             Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "starvis-anthropic-key"; item.placeholder = "Clé Anthropic (raisonnement)"; item.secret = true } }
             Loader { sourceComponent: providerField; onLoaded: { item.configKey = "modelPin"; item.fallback = ""; item.placeholder = "Modèle épinglé (vide = auto)" } }
             Row {
@@ -757,8 +759,10 @@ Item {
                     text: {
                         starvisModelStatus.starvisRev
                         const status = Starvis.providerStatus()
+                        if (status.provider === "local")
+                            return "Modèle local actif: " + status.model
                         if (status.provider !== "anthropic")
-                            return "Anthropic inactif — la clé OpenAI ci-dessous sert de repli."
+                            return "OpenAI actif"
                         return "Modèle actif: " + status.model
                                + (status.pinned ? " (épinglé)" : " (auto)")
                     }
@@ -793,8 +797,6 @@ Item {
                 font.letterSpacing: 1; topPadding: 4
             }
             Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "starvis-openai-key"; item.placeholder = "Clé OpenAI (voix + repli)" } }
-            Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "model"; item.fallback = "gpt-5.5"; item.placeholder = "Modèle Starvis" } }
-            Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "baseUrl"; item.fallback = "https://api.openai.com/v1"; item.placeholder = "Base URL OpenAI compatible" } }
             Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "maxTokens"; item.fallback = "1800"; item.placeholder = "Maximum tokens" } }
             Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "ttsModel"; item.fallback = "gpt-4o-mini-tts"; item.placeholder = "Modèle vocal" } }
             Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "ttsVoice"; item.fallback = "alloy"; item.placeholder = "Voix TTS" } }

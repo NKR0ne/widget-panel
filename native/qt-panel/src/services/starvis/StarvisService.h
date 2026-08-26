@@ -117,6 +117,7 @@ signals:
 private:
     void post(const QString& userMessage, const QVariantList& history,
               bool allowInternet, bool allowAgent);
+    void postLocal(const QString& userMessage, const QVariantList& history);
     // Tool loop: runs the request, executes read-only tool calls, re-posts up
     // to kMaxToolLoops times; queues any mutating proposals.
     void runAgentTurn(const QJsonArray& input, bool allowInternet, int loop, qint64 started);
