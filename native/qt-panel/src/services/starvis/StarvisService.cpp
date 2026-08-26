@@ -15,6 +15,7 @@
 #include "services/workstation/WorkstationClient.h"
 
 #include <QAudioOutput>
+#include <QBuffer>
 #include <QDateTime>
 #include <QDebug>
 #include <QDesktopServices>
@@ -29,6 +30,7 @@
 #include <QNetworkReply>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QUrl>
 #include <QUuid>
 
@@ -104,6 +106,26 @@ QString normalizedOpenAiBaseUrl(const QVariantMap& cfg)
     return url;
 }
 
+QJsonObject localImagePart(const QImage& source, int maxDim = 1280, int jpegQuality = 72)
+{
+    if (source.isNull())
+        return {};
+    QImage image = source;
+    if (image.width() > maxDim || image.height() > maxDim)
+        image = image.scaled(maxDim, maxDim, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    QByteArray bytes;
+    QBuffer buffer(&bytes);
+    buffer.open(QIODevice::WriteOnly);
+    image.save(&buffer, "JPEG", jpegQuality);
+    return QJsonObject{
+        {QStringLiteral("type"), QStringLiteral("image_url")},
+        {QStringLiteral("image_url"), QJsonObject{
+            {QStringLiteral("url"), QStringLiteral("data:image/jpeg;base64,")
+                 + QString::fromLatin1(bytes.toBase64())},
+        }},
+    };
+}
+
 } // namespace
 
 StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, HttpClient* http,
@@ -142,9 +164,16 @@ StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, Http
     });
     connect(m_settings, &SettingsStore::changed, this, [this](const QString& key) {
         if (key == QLatin1String("wp-starvis-config")
-            || key == QLatin1String("wp-starvis-provider"))
+            || key == QLatin1String("wp-starvis-provider")) {
             emit configuredChanged();
+            probeLocalBackend();
+        }
     });
+    auto* healthTimer = new QTimer(this);
+    healthTimer->setInterval(10000);
+    connect(healthTimer, &QTimer::timeout, this, &StarvisService::probeLocalBackend);
+    healthTimer->start();
+    QTimer::singleShot(0, this, &StarvisService::probeLocalBackend);
     qInfo() << "[starvis]" << (configured()
                                    ? QStringLiteral("configured (%1), model: %2")
                                          .arg(provider(), model())
@@ -184,6 +213,8 @@ QVariantMap StarvisService::providerStatus() const
     return {
         {QStringLiteral("provider"), provider()},
         {QStringLiteral("model"), model()},
+        {QStringLiteral("ready"), provider() != QLatin1String("local") || m_localBackendReady},
+        {QStringLiteral("endpoint"), normalizedOpenAiBaseUrl(config())},
         {QStringLiteral("pinned"), m_modelResolver->pinned()},
         {QStringLiteral("resolvedAt"), m_modelResolver->resolvedAt()},
     };
@@ -382,20 +413,146 @@ void StarvisService::chat(const QString& message, const QVariantList& history,
     if (message.trimmed().isEmpty() || m_busy)
         return;
     if (provider() == QLatin1String("local"))
-        postLocal(message, history);
+        postLocal(message, history, allowAgent);
     else if (provider() == QLatin1String("anthropic"))
         postAnthropic(message, history, allowInternet, allowAgent);
     else
         post(message, history, allowInternet, allowAgent);
 }
 
-void StarvisService::postLocal(const QString& userMessage, const QVariantList& history)
+void StarvisService::probeLocalBackend()
+{
+    if (provider() != QLatin1String("local")) {
+        if (m_localBackendReady) {
+            m_localBackendReady = false;
+            emit configuredChanged();
+        }
+        return;
+    }
+
+    QUrl health(normalizedOpenAiBaseUrl(config()));
+    QString path = health.path();
+    if (path.endsWith(QLatin1String("/v1")))
+        path.chop(3);
+    while (path.endsWith(QLatin1Char('/')))
+        path.chop(1);
+    health.setPath(path + QStringLiteral("/health"));
+    m_http->getJson(health, this, [this](const QJsonDocument& doc, const QString& error) {
+        const bool ready = error.isEmpty()
+            && doc.object().value(QStringLiteral("status")).toString() == QLatin1String("ok");
+        if (ready == m_localBackendReady)
+            return;
+        m_localBackendReady = ready;
+        emit configuredChanged();
+    });
+}
+
+bool StarvisService::visionConfigured() const
+{
+    return (provider() == QLatin1String("local") && m_localBackendReady)
+        || (m_anthropic && m_anthropic->configured());
+}
+
+void StarvisService::classifyImage(const QImage& image, const QString& prompt,
+                                   QObject* context, ClassifyCallback callback)
+{
+    if (provider() == QLatin1String("local") && m_localBackendReady) {
+        QJsonArray content;
+        content.append(localImagePart(image));
+        content.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
+                                   {QStringLiteral("text"), prompt}});
+        classifyLocalContent(content, context, std::move(callback));
+        return;
+    }
+    if (m_anthropic && m_anthropic->configured()) {
+        m_anthropic->classifyImage(image, prompt, m_modelResolver->currentModel(),
+                                   context, std::move(callback));
+        return;
+    }
+    callback({}, {}, QStringLiteral("vision provider unavailable"));
+}
+
+void StarvisService::classifyWithGallery(const QVector<QPair<QString, QImage>>& gallery,
+                                         const QImage& probe, const QString& prompt,
+                                         QObject* context, ClassifyCallback callback)
+{
+    if (provider() == QLatin1String("local") && m_localBackendReady) {
+        QJsonArray content;
+        for (const auto& entry : gallery) {
+            if (entry.second.isNull())
+                continue;
+            content.append(QJsonObject{
+                {QStringLiteral("type"), QStringLiteral("text")},
+                {QStringLiteral("text"), QStringLiteral("Référence — ") + entry.first},
+            });
+            content.append(localImagePart(entry.second, 400, 70));
+        }
+        content.append(QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("text")},
+            {QStringLiteral("text"), QStringLiteral("Image à analyser :")},
+        });
+        content.append(localImagePart(probe));
+        content.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
+                                   {QStringLiteral("text"), prompt}});
+        classifyLocalContent(content, context, std::move(callback));
+        return;
+    }
+    if (m_anthropic && m_anthropic->configured()) {
+        m_anthropic->classifyWithGallery(gallery, probe, prompt,
+                                         m_modelResolver->currentModel(), context,
+                                         std::move(callback));
+        return;
+    }
+    callback({}, {}, QStringLiteral("vision provider unavailable"));
+}
+
+void StarvisService::classifyLocalContent(const QJsonArray& content, QObject* context,
+                                          ClassifyCallback callback)
+{
+    const QJsonObject body{
+        {QStringLiteral("model"), model()},
+        {QStringLiteral("messages"), QJsonArray{QJsonObject{
+            {QStringLiteral("role"), QStringLiteral("user")},
+            {QStringLiteral("content"), content},
+        }}},
+        {QStringLiteral("max_tokens"), 768},
+        {QStringLiteral("temperature"), 0.1},
+        {QStringLiteral("stream"), false},
+    };
+    m_http->requestJsonAuth(
+        "POST", QUrl(normalizedOpenAiBaseUrl(config())
+                         + QStringLiteral("/chat/completions")),
+        QString(), QJsonDocument(body).toJson(QJsonDocument::Compact), context,
+        [callback = std::move(callback)](const QJsonDocument& doc, int status,
+                                         const QString& error) {
+        const QJsonObject payload = doc.object();
+        if (status < 200 || status >= 300) {
+            const QString detail = payload.value(QStringLiteral("error")).toObject()
+                                       .value(QStringLiteral("message")).toString();
+            callback({}, {}, !detail.isEmpty() ? detail : !error.isEmpty() ? error
+                : QStringLiteral("Local vision request failed (%1)").arg(status));
+            return;
+        }
+        const QJsonArray choices = payload.value(QStringLiteral("choices")).toArray();
+        const QString raw = choices.isEmpty() ? QString()
+            : choices.first().toObject().value(QStringLiteral("message")).toObject()
+                  .value(QStringLiteral("content")).toString().trimmed();
+        const int start = raw.indexOf(QLatin1Char('{'));
+        const int end = raw.lastIndexOf(QLatin1Char('}'));
+        QJsonObject parsed;
+        if (start >= 0 && end > start)
+            parsed = QJsonDocument::fromJson(raw.mid(start, end - start + 1).toUtf8()).object();
+        callback(parsed, raw, QString());
+    });
+}
+
+void StarvisService::postLocal(const QString& userMessage, const QVariantList& history,
+                               bool allowAgent)
 {
     setBusy(true);
+    m_turnInputTokens = 0;
+    m_turnOutputTokens = 0;
     const qint64 started = QDateTime::currentMSecsSinceEpoch();
-    const QVariantMap cfg = config();
-    const QString chatModel = model();
-    const int maxTokens = qBound(128, cfg.value(QStringLiteral("maxTokens"), 1800).toInt(), 8192);
 
     QJsonArray messages;
     messages.append(QJsonObject{
@@ -417,23 +574,103 @@ void StarvisService::postLocal(const QString& userMessage, const QVariantList& h
     messages.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
                                 {QStringLiteral("content"), userMessage}});
 
+    runLocalTurn(messages, allowAgent, 0, started);
+}
+
+QJsonArray StarvisService::localTools() const
+{
+    QJsonArray tools;
+    for (const QJsonValue& value : agentTools()) {
+        const QJsonObject source = value.toObject();
+        tools.append(QJsonObject{
+            {QStringLiteral("type"), QStringLiteral("function")},
+            {QStringLiteral("function"), QJsonObject{
+                {QStringLiteral("name"), source.value(QStringLiteral("name"))},
+                {QStringLiteral("description"), source.value(QStringLiteral("description"))},
+                {QStringLiteral("parameters"), source.value(QStringLiteral("parameters"))},
+            }},
+        });
+    }
+    return tools;
+}
+
+void StarvisService::runLocalTurn(const QJsonArray& messages, bool allowAgent,
+                                  int loop, qint64 started)
+{
+    const QVariantMap cfg = config();
+    const QString chatModel = model();
+    const int maxTokens = qBound(128, cfg.value(QStringLiteral("maxTokens"), 1800).toInt(), 8192);
+    const QString baseUrl = normalizedOpenAiBaseUrl(cfg);
+
     QJsonObject body{{QStringLiteral("model"), chatModel},
                      {QStringLiteral("messages"), messages},
                      {QStringLiteral("max_tokens"), maxTokens},
-                     {QStringLiteral("stream"), false},
                      {QStringLiteral("chat_template_kwargs"),
                       QJsonObject{{QStringLiteral("enable_thinking"), false}}}};
     if (cfg.contains(QStringLiteral("temperature")))
         body.insert(QStringLiteral("temperature"), cfg.value(QStringLiteral("temperature")).toDouble());
 
-    const QString baseUrl = normalizedOpenAiBaseUrl(cfg);
+    if (!allowAgent || loop >= kMaxToolLoops) {
+        body.insert(QStringLiteral("stream"), true);
+        body.insert(QStringLiteral("stream_options"),
+                    QJsonObject{{QStringLiteral("include_usage"), true}});
+        m_pendingText.clear();
+        emit replyStarted();
+        m_activeStream = m_http->postSse(
+            QUrl(baseUrl + QStringLiteral("/chat/completions")), {},
+            QJsonDocument(body).toJson(QJsonDocument::Compact), this,
+            [this](const QString&, const QByteArray& data) {
+            if (data == QByteArrayLiteral("[DONE]"))
+                return;
+            const QJsonObject payload = QJsonDocument::fromJson(data).object();
+            const QJsonObject usage = payload.value(QStringLiteral("usage")).toObject();
+            if (!usage.isEmpty()) {
+                m_turnInputTokens = usage.value(QStringLiteral("prompt_tokens")).toInt();
+                m_turnOutputTokens = usage.value(QStringLiteral("completion_tokens")).toInt();
+            }
+            const QJsonArray choices = payload.value(QStringLiteral("choices")).toArray();
+            if (choices.isEmpty())
+                return;
+            const QString delta = choices.first().toObject().value(QStringLiteral("delta"))
+                                      .toObject().value(QStringLiteral("content")).toString();
+            if (delta.isEmpty())
+                return;
+            m_pendingText += delta;
+            emit replyDelta(delta);
+        },
+            [this, chatModel, started](int status, const QString& error) {
+            m_activeStream = nullptr;
+            setBusy(false);
+            if (error == QLatin1String("aborted"))
+                return;
+            if (status < 200 || status >= 300 || !error.isEmpty()) {
+                emit chatFailed(error.isEmpty()
+                    ? QStringLiteral("Local model request failed (%1)").arg(status) : error);
+                return;
+            }
+            m_sessionInputTokens += m_turnInputTokens;
+            m_sessionOutputTokens += m_turnOutputTokens;
+            emit usageUpdated(static_cast<int>(m_sessionInputTokens),
+                              static_cast<int>(m_sessionOutputTokens), 0.0);
+            const int latency = static_cast<int>(QDateTime::currentMSecsSinceEpoch() - started);
+            emit replyReceived(m_pendingText.isEmpty() ? QStringLiteral("Command acknowledged.")
+                                                       : m_pendingText,
+                               chatModel, latency);
+        });
+        return;
+    }
+
+    body.insert(QStringLiteral("stream"), false);
+    body.insert(QStringLiteral("tools"), localTools());
+    body.insert(QStringLiteral("tool_choice"), QStringLiteral("auto"));
     m_http->requestJsonAuth(
         "POST", QUrl(baseUrl + QStringLiteral("/chat/completions")), QString(),
         QJsonDocument(body).toJson(QJsonDocument::Compact), this,
-        [this, chatModel, started](const QJsonDocument& doc, int status, const QString& error) {
-        setBusy(false);
+        [this, messages, allowAgent, loop, started, chatModel]
+        (const QJsonDocument& doc, int status, const QString& error) {
         const QJsonObject payload = doc.object();
         if (status < 200 || status >= 300) {
+            setBusy(false);
             const QString detail = payload.value(QLatin1String("error")).toObject()
                                        .value(QLatin1String("message")).toString();
             emit chatFailed(!detail.isEmpty() ? detail : !error.isEmpty() ? error
@@ -441,12 +678,50 @@ void StarvisService::postLocal(const QString& userMessage, const QVariantList& h
             return;
         }
         const QJsonArray choices = payload.value(QLatin1String("choices")).toArray();
-        const QString text = choices.isEmpty() ? QString()
-            : choices.first().toObject().value(QLatin1String("message")).toObject()
-                  .value(QLatin1String("content")).toString().trimmed();
-        const int latency = static_cast<int>(QDateTime::currentMSecsSinceEpoch() - started);
-        emit replyReceived(text.isEmpty() ? QStringLiteral("Command acknowledged.") : text,
-                           chatModel, latency);
+        if (choices.isEmpty()) {
+            setBusy(false);
+            emit chatFailed(QStringLiteral("Local model returned no choices."));
+            return;
+        }
+        const QJsonObject message = choices.first().toObject()
+                                        .value(QStringLiteral("message")).toObject();
+        const QJsonArray calls = message.value(QStringLiteral("tool_calls")).toArray();
+        if (calls.isEmpty()) {
+            setBusy(false);
+            const QString text = message.value(QStringLiteral("content")).toString().trimmed();
+            const int latency = static_cast<int>(QDateTime::currentMSecsSinceEpoch() - started);
+            emit replyReceived(text.isEmpty() ? QStringLiteral("Command acknowledged.") : text,
+                               chatModel, latency);
+            return;
+        }
+
+        QJsonArray next = messages;
+        next.append(message);
+        for (const QJsonValue& value : calls) {
+            const QJsonObject call = value.toObject();
+            const QJsonObject function = call.value(QStringLiteral("function")).toObject();
+            const QString name = function.value(QStringLiteral("name")).toString();
+            const QJsonObject args = QJsonDocument::fromJson(
+                function.value(QStringLiteral("arguments")).toString().toUtf8()).object();
+            QString output;
+            if (name == QLatin1String("propose_action")) {
+                queueAction(name, args);
+                output = QStringLiteral("Proposed and queued for user approval.");
+            } else {
+                bool handled = false;
+                output = executeReadOnlyTool(name, args, handled);
+                if (!handled)
+                    output = QStringLiteral("Unknown tool.");
+            }
+            qInfo() << "[starvis.local] tool" << name << "loop" << loop;
+            next.append(QJsonObject{
+                {QStringLiteral("role"), QStringLiteral("tool")},
+                {QStringLiteral("tool_call_id"), call.value(QStringLiteral("id"))},
+                {QStringLiteral("name"), name},
+                {QStringLiteral("content"), output.left(8000)},
+            });
+        }
+        runLocalTurn(next, allowAgent, loop + 1, started);
     });
 }
 

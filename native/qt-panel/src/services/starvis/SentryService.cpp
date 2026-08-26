@@ -1,6 +1,5 @@
 #include "SentryService.h"
 
-#include "AnthropicClient.h"
 #include "StarvisService.h"
 #include "StarvisState.h"
 #include "WebcamCapture.h"
@@ -710,8 +709,7 @@ void SentryService::onFrame(const QString& cameraId, const QImage& frame)
 void SentryService::escalate(const QString& cameraId, const QImage& frame, double score,
                              const QString& hint)
 {
-    AnthropicClient* anthropic = m_starvis ? m_starvis->anthropic() : nullptr;
-    if (!anthropic || !anthropic->configured()) {
+    if (!m_starvis || !m_starvis->visionConfigured()) {
         recordEvent(cameraId, frame, {}, score, hint);
         return;
     }
@@ -729,10 +727,10 @@ void SentryService::escalate(const QString& cameraId, const QImage& frame, doubl
     logActivity(cameraId, QStringLiteral("analysis"),
                 QStringLiteral("Image envoyée à ") + m_starvis->model()
                     + QStringLiteral(" pour analyse"));
-    anthropic->classifyImage(frame, prompt, m_starvis->model(), this,
-                             [this, cameraId, frame, score, hint](const QJsonObject& result,
-                                                                  const QString& raw,
-                                                                  const QString& error) {
+    m_starvis->classifyImage(frame, prompt, this,
+                            [this, cameraId, frame, score, hint](const QJsonObject& result,
+                                                                 const QString& raw,
+                                                                 const QString& error) {
         if (m_starvis->state())
             m_starvis->state()->setAnalyzing(false);
         if (!error.isEmpty()) {
@@ -752,18 +750,16 @@ void SentryService::identifyThenRecord(const QString& cameraId, const QImage& fr
 {
     const bool person = classification.value(QLatin1String("person")).toBool();
     const QVector<QPair<QString, QImage>> gallery = referenceGallery();
-    AnthropicClient* anthropic = m_starvis ? m_starvis->anthropic() : nullptr;
-    if (!person || gallery.isEmpty() || !anthropic) {
+    if (!person || gallery.isEmpty() || !m_starvis || !m_starvis->visionConfigured()) {
         recordEvent(cameraId, frame, classification, score, hint);
         return;
     }
 
     qInfo() << "[starvis.sentry] identification contre" << gallery.size() << "référence(s)";
-    anthropic->classifyWithGallery(gallery, frame, QLatin1String(kIdentifyPrompt),
-                                   m_starvis->model(), this,
-                                   [this, cameraId, frame, classification, score, hint]
-                                   (const QJsonObject& result, const QString&,
-                                    const QString& error) {
+    m_starvis->classifyWithGallery(gallery, frame, QLatin1String(kIdentifyPrompt), this,
+                                  [this, cameraId, frame, classification, score, hint]
+                                  (const QJsonObject& result, const QString&,
+                                   const QString& error) {
         QString name;
         if (error.isEmpty()) {
             const QString confidence = result.value(QLatin1String("confidence")).toString();
@@ -956,8 +952,7 @@ void SentryService::issueGreeting(const QImage& frame)
     // one, so a failing key cannot turn arrivals into a stream of greetings.
     m_lastGreetingMs = now;
 
-    AnthropicClient* anthropic = m_starvis ? m_starvis->anthropic() : nullptr;
-    if (!anthropic || !anthropic->configured()) {
+    if (!m_starvis || !m_starvis->visionConfigured()) {
         // No vision brain: greet from the clock rather than from the face.
         // Staying silent here was the one path that dropped the arrival.
         qInfo() << "[starvis.sentry] greeting without vision (no key)";
@@ -967,9 +962,9 @@ void SentryService::issueGreeting(const QImage& frame)
     if (m_starvis->state())
         m_starvis->state()->setAnalyzing(true);
     qInfo() << "[starvis.sentry] arrival detected, reading non-verbals for greeting";
-    anthropic->classifyImage(frame, QLatin1String(kGreetPrompt), m_starvis->model(), this,
-                             [this](const QJsonObject& result, const QString&,
-                                    const QString& error) {
+    m_starvis->classifyImage(frame, QLatin1String(kGreetPrompt), this,
+                            [this](const QJsonObject& result, const QString&,
+                                   const QString& error) {
         if (m_starvis->state())
             m_starvis->state()->setAnalyzing(false);
         if (!error.isEmpty()) {

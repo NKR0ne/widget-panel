@@ -760,7 +760,8 @@ Item {
                         starvisModelStatus.starvisRev
                         const status = Starvis.providerStatus()
                         if (status.provider === "local")
-                            return "Modèle local actif: " + status.model
+                            return (status.ready ? "Modèle local prêt: " : "Modèle local en démarrage: ")
+                                   + status.model
                         if (status.provider !== "anthropic")
                             return "OpenAI actif"
                         return "Modèle actif: " + status.model

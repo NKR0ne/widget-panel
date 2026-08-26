@@ -64,9 +64,11 @@ Item {
                     }
                     Text {
                         width: parent.width
-                        text: stage.status.provider === "anthropic"
-                              ? (stage.status.pinned ? "Anthropic · épinglé" : "Anthropic · auto")
-                              : "OpenAI (repli) — clé Anthropic absente"
+                        text: stage.status.provider === "local"
+                              ? (stage.status.ready ? "Local · CUDA · prêt" : "Local · démarrage…")
+                              : stage.status.provider === "anthropic"
+                                ? (stage.status.pinned ? "Anthropic · épinglé" : "Anthropic · auto")
+                                : "OpenAI"
                         color: Theme.textSecondary
                         font.pixelSize: 9
                         wrapMode: Text.WordWrap

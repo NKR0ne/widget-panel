@@ -2,8 +2,10 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QImage>
 #include <QObject>
 #include <QVariantList>
+#include <QVector>
 
 #include <functional>
 
@@ -78,6 +80,16 @@ public:
     Q_INVOKABLE QVariantMap providerStatus() const;
     Q_INVOKABLE void refreshModel();
 
+    using ClassifyCallback = std::function<void(const QJsonObject& result,
+                                                const QString& rawText,
+                                                const QString& error)>;
+    bool visionConfigured() const;
+    void classifyImage(const QImage& image, const QString& prompt,
+                       QObject* context, ClassifyCallback callback);
+    void classifyWithGallery(const QVector<QPair<QString, QImage>>& gallery,
+                             const QImage& probe, const QString& prompt,
+                             QObject* context, ClassifyCallback callback);
+
     // The Anthropic client is shared with SentryService (vision escalation).
     AnthropicClient* anthropic() const { return m_anthropic; }
     StarvisState* state() const { return m_state; }
@@ -117,7 +129,11 @@ signals:
 private:
     void post(const QString& userMessage, const QVariantList& history,
               bool allowInternet, bool allowAgent);
-    void postLocal(const QString& userMessage, const QVariantList& history);
+    void postLocal(const QString& userMessage, const QVariantList& history,
+                   bool allowAgent);
+    void runLocalTurn(const QJsonArray& messages, bool allowAgent,
+                      int loop, qint64 started);
+    QJsonArray localTools() const;
     // Tool loop: runs the request, executes read-only tool calls, re-posts up
     // to kMaxToolLoops times; queues any mutating proposals.
     void runAgentTurn(const QJsonArray& input, bool allowInternet, int loop, qint64 started);
@@ -141,6 +157,9 @@ private:
     QVariantMap config() const;
     QString buildContextBlock() const;
     void setBusy(bool busy);
+    void probeLocalBackend();
+    void classifyLocalContent(const QJsonArray& content, QObject* context,
+                              ClassifyCallback callback);
 
     static constexpr int kMaxToolLoops = 3;
 
@@ -164,6 +183,7 @@ private:
     qint64 m_sessionInputTokens = 0;  // …session totals when the turn ends
     qint64 m_sessionOutputTokens = 0;
     bool m_busy = false;
+    bool m_localBackendReady = false;
     QMediaPlayer* m_ttsPlayer = nullptr;
     QAudioOutput* m_ttsAudio = nullptr;
     QVariantList m_actions; // newest first; each: {id,type,summary,detail,status,verdict,reason,severity}
