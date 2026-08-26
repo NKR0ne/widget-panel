@@ -1,4 +1,127 @@
-# qt-panel — Native Rewrite Architecture
+# qt-panel — Native Application Architecture
+
+## Implemented architecture memory (2026-08-26)
+
+This section is the operational source of truth for the current application.
+The inventory, target design, and migration phases below remain useful history,
+but they do not override this implemented topology.
+
+### Runtime topology
+
+```text
+Windows sign-in
+  -> launch.ps1 / QtPanel autostart
+     -> qt-panel.exe (single instance)
+        -> shell host: Windows Composition + Desktop Acrylic
+           or windowed QQuickWindow fallback
+        -> Qt Quick/QML scene (RHI: Vulkan preferred, D3D11 fallback)
+        -> persistent domain services exposed as QtPanel.Native singletons
+        -> two persistent QtWebEngine profiles
+        -> taskbar-btn.exe helper over TCP 127.0.0.1:47321
+
+Starvis runtime task
+  -> llama-server.exe on 127.0.0.1:1234
+     -> Qwen3-VL-8B-Instruct Q4_K_M + Q8 vision projector
+        (alias starvis-local, 8192 context, CUDA offload, Flash Attention)
+```
+
+The shell has two supported hosts. `CompositionPanelHost` renders the QML scene
+with `QQuickRenderControl` into a Windows composition tree backed by Desktop
+Acrylic. The fallback path loads `Main.qml` into a normal `QQuickWindow`.
+`PanelWindowController` and `PanelSurfaceTarget` keep geometry, show/hide,
+focus, pinning, resize, WebEngine spotlight, and autostart behavior identical
+across both hosts. `FocusPolicy`, `WinShellIntegration`, `WorkAreaWatcher`, and
+`HelperServer` own Windows-specific policy outside QML.
+
+### UI workspaces and cards
+
+`PanelSurface.qml` owns the application modes and delegates layout to
+`PanelColumns.qml`. The four top-level workspaces are:
+
+- **Panneau (`base`)** — persisted 3–6 column dashboard. Cards are selected,
+  ordered, moved, and resized independently through the widget manager.
+- **Nouvelles (`news`)** — four persisted sub-workspaces: **Cartes** (matrix and
+  endless randomized five-second carousel), **Lecture** (categories, article
+  list, native article reader), **TV** (live-feed stage), and **Presse**
+  (PressReader spotlight). Each resizable sub-workspace remembers its own width
+  and column count; Lecture keeps its own three-pane proportions.
+- **Performance (`monitor`)** — full-width Windows Task Manager-style CPU, GPU,
+  RAM, disk, and network telemetry. The lightweight named-pipe subscription is
+  kept warm whenever these cards are configured so transitions do not wait for
+  a new snapshot.
+- **Starvis (`starvis`)** — full-width assistant, voice, vision, sentry, briefing,
+  and activity workspace. Starvis services remain alive when the stage is not
+  visible.
+
+The Base card registry currently includes clock, calendar, weather, traffic,
+markets, Outlook agenda/mail/to-do, Starvis, direct camera, legacy camera, and
+five workstation cards. QML owns presentation and interaction only; each live
+domain is backed by a long-lived C++ service singleton.
+
+### Service and data layer
+
+`main.cpp` is the composition root. It creates `SettingsStore`, `SecretVault`,
+`HttpClient`, and the domain services once, registers them in
+`QtPanel.Native`, and then starts the selected shell host. The service graph is:
+
+| Domain | Native owner | External boundary |
+|---|---|---|
+| Weather and traffic | `WeatherService`, QML traffic map | Open-Meteo; TomTom tiles/data |
+| Markets | `StocksModel` | Yahoo/Finnhub/TradingView; persisted authenticated WebEngine session |
+| News and reading | `NewsService`, `ReaderService` | RSS/OPML, article extraction, archive fallback |
+| Microsoft | `MsGraphService` | Graph OAuth PKCE, mail, agenda, to-do |
+| Live media | `LiveFeedService` | direct HLS and resolved YouTube live feeds; Qt Multimedia |
+| PressReader | `PressReaderService` | isolated persistent WebEngine profile and bounded automation |
+| Camera and sentry | `DirectCameraClient`, `HikvisionEventClient`, `SentryService` | always-warm RTSP decode, device/local motion events, frame analysis |
+| Performance | `WorkstationClient` | `\\.\pipe\WorkstationMonitorTelemetry` at 1 Hz |
+| Diagnostics | `DiagnosticsService` | health/status aggregation without blocking the UI |
+
+`QmlNetworkFactory` provides QML network access where a rendered surface needs
+it. Secrets are stored in Windows Credential Manager through `SecretVault`;
+non-secret layout and behavior state is JSON in
+`%APPDATA%\qt-panel\settings.json`. First-run migration imports compatible
+`widget-panel` settings.
+
+### Browser and media surfaces
+
+Authenticated or site-dependent content is embedded, never reparented from an
+external browser. The general `qt-panel-island` profile serves TradingView,
+mail links, and explicit web detail views. The isolated
+`qt-panel-pressreader` profile owns PressReader cookies, cache, and permissions.
+Both profiles are disk-backed and share the panel's spotlight geometry in QML.
+Native content stays native: article reading uses QML, traffic uses an
+interactive map, live streams use Qt Multimedia where possible, and the direct
+camera keeps a decoded RTSP stream warm even while its card is hidden.
+
+### Starvis local AI architecture
+
+`StarvisService` is the single reasoning and vision gateway. The default local
+provider uses the OpenAI-compatible loopback endpoint at `127.0.0.1:1234` with
+one Qwen3-VL 8B model for streamed chat, bounded function-tool loops, image
+classification, and gallery comparison. Health polling gates requests and the
+Anthropic implementation remains an optional provider fallback. Context is
+assembled from weather, markets, news, and workstation services rather than
+from visible widgets. `SentryService` subscribes continuously to direct-camera
+frames/events, invokes Starvis vision only when policy requires it, maintains
+cooldowns and alert state, and reports its badge count through the taskbar
+helper. Immediate speech output uses Windows SAPI; Qwen ASR/TTS models remain
+optional isolated runtimes because loading them beside the vision model exceeds
+the target 10 GB VRAM budget.
+
+### Operational invariants
+
+1. Services that drive alerts, camera readiness, badges, or transition latency
+   are resident independently of QML visibility.
+2. The UI thread never performs network, model, pipe, or media blocking work.
+3. Web authentication state belongs to QtPanel profiles; external browsers are
+   used only for explicit external-open commands.
+4. Mode, sub-mode, column, card, and width persistence are separate concerns;
+   one workspace must not overwrite another workspace's layout.
+5. Every release validation starts with `kill-build-processes.ps1`, then uses a
+   bounded release build and Qt tests, followed by diagnostics in both
+   composition and windowed hosts.
+6. The direct camera and Starvis sentry stay responsive while hidden; display
+   loaders may unload, but their C++ providers may not.
 
 > Current implementation note (2026-07-12): the original migration proposal
 > below used an external `brave-host` island to avoid QtWebEngine. Runtime
