@@ -1,0 +1,408 @@
+{
+  "generatedAt": "2026-08-27T12:16:38-0400",
+  "gpuInitial": {
+    "usedMiB": 8948,
+    "freeMiB": 1106,
+    "utilizationPct": 0,
+    "temperatureC": 49
+  },
+  "speechInitial": {
+    "status": "ok",
+    "asrReady": true,
+    "ttsReady": true,
+    "model": "tts",
+    "device": "cuda:0",
+    "devicePolicy": "auto",
+    "cudaFreeMiB": 1106,
+    "voices": [
+      "Vivian",
+      "Serena",
+      "Uncle_Fu",
+      "Dylan",
+      "Eric",
+      "Ryan",
+      "Aiden",
+      "Ono_Anna",
+      "Sohee"
+    ]
+  },
+  "reasoning": {
+    "warmup": {
+      "totalSeconds": 2.663,
+      "timeToFirstTokenSeconds": 0.435,
+      "completionTokens": 24,
+      "tokensPerSecond": 10.77,
+      "text": "Thinking Process:\n\n1.  **Analyze the Request:**\n    *   Input: \"Reponds uniquement",
+      "usage": {
+        "prompt_tokens": 17,
+        "completion_tokens": 24,
+        "total_tokens": 41,
+        "completion_tokens_details": {
+          "reasoning_tokens": 24
+        }
+      },
+      "gpu": {
+        "usedMiB": 8754,
+        "freeMiB": 1300,
+        "utilizationPct": 0,
+        "temperatureC": 50
+      }
+    },
+    "measured": {
+      "totalSeconds": 26.653,
+      "timeToFirstTokenSeconds": 1.031,
+      "completionTokens": 256,
+      "tokensPerSecond": 9.99,
+      "text": "Thinking Process:\n\n1.  **Analyze the Request:**\n    *   Language: French (\"Reponds uniquement avec un objet JSON valide...\", \"result doit etre le produit de 37 par 24\", \"status doit etre ok\").\n    *   Constraint: Respond *only* with a valid JSON object.\n    *   Content: The JSON must contain two keys: `result` and `status`.\n    *   Values: `result` = 37 * 24, `status` = \"ok\".\n\n2.  **Calculate the result:**\n    *   37 * 24\n    *   37 * 20 = 740\n    *   37 * 4 = 148\n    *   740 + 148 = 888\n\n3.  **Construct the JSON:**\n    *   `{ \"result\": 888, \"status\": \"ok\" }`\n\n4.  **Verify Constraints:**\n    *   Valid JSON? Yes.\n    *   Contains `result` and `status`? Yes.\n    *   `result` is 3",
+      "usage": {
+        "prompt_tokens": 45,
+        "completion_tokens": 256,
+        "total_tokens": 301,
+        "completion_tokens_details": {
+          "reasoning_tokens": 256
+        }
+      },
+      "gpu": {
+        "usedMiB": 8288,
+        "freeMiB": 1766,
+        "utilizationPct": 3,
+        "temperatureC": 50
+      }
+    },
+    "qualityPass": true,
+    "arithmeticPass": true,
+    "instructionPass": false,
+    "toolCall": {
+      "seconds": 8.61,
+      "correct": true,
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "reasoning_content": "The user wants me to use the get_station_status tool to read the current workstation status. I need to call this function with no parameters as it doesn't require any input.\n",
+        "tool_calls": [
+          {
+            "type": "function",
+            "id": "UBogR9H3M6Mwl33905NwW9zh0EJJqbtd",
+            "function": {
+              "name": "get_station_status",
+              "arguments": "{}"
+            }
+          }
+        ]
+      },
+      "gpuBefore": {
+        "usedMiB": 8274,
+        "freeMiB": 1780,
+        "utilizationPct": 0,
+        "temperatureC": 49
+      },
+      "gpuAfter": {
+        "usedMiB": 8288,
+        "freeMiB": 1766,
+        "utilizationPct": 0,
+        "temperatureC": 49
+      }
+    }
+  },
+  "tts": {
+    "warm": {
+      "label": "warm-or-current",
+      "seconds": 40.243,
+      "audioSeconds": 11.6,
+      "realTimeFactor": 3.469,
+      "bytes": 556844,
+      "health": {
+        "status": "ok",
+        "asrReady": true,
+        "ttsReady": true,
+        "model": "tts",
+        "device": "cuda:0",
+        "devicePolicy": "auto",
+        "cudaFreeMiB": 1106,
+        "voices": [
+          "Vivian",
+          "Serena",
+          "Uncle_Fu",
+          "Dylan",
+          "Eric",
+          "Ryan",
+          "Aiden",
+          "Ono_Anna",
+          "Sohee"
+        ]
+      },
+      "gpuBefore": {
+        "usedMiB": 8948,
+        "freeMiB": 1106,
+        "utilizationPct": 8,
+        "temperatureC": 49
+      },
+      "gpuAfter": {
+        "usedMiB": 8948,
+        "freeMiB": 1106,
+        "utilizationPct": 15,
+        "temperatureC": 50
+      }
+    },
+    "secondWarm": {
+      "label": "warm",
+      "seconds": 46.145,
+      "audioSeconds": 13.52,
+      "realTimeFactor": 3.413,
+      "bytes": 649004,
+      "health": {
+        "status": "ok",
+        "asrReady": true,
+        "ttsReady": true,
+        "model": "tts",
+        "device": "cuda:0",
+        "devicePolicy": "auto",
+        "cudaFreeMiB": 1106,
+        "voices": [
+          "Vivian",
+          "Serena",
+          "Uncle_Fu",
+          "Dylan",
+          "Eric",
+          "Ryan",
+          "Aiden",
+          "Ono_Anna",
+          "Sohee"
+        ]
+      },
+      "gpuBefore": {
+        "usedMiB": 8948,
+        "freeMiB": 1106,
+        "utilizationPct": 15,
+        "temperatureC": 50
+      },
+      "gpuAfter": {
+        "usedMiB": 8948,
+        "freeMiB": 1106,
+        "utilizationPct": 52,
+        "temperatureC": 50
+      }
+    },
+    "afterAsr": {
+      "label": "asr-to-tts-switch",
+      "seconds": 50.509,
+      "audioSeconds": 12.8,
+      "realTimeFactor": 3.946,
+      "bytes": 614444,
+      "health": {
+        "status": "ok",
+        "asrReady": true,
+        "ttsReady": true,
+        "model": "tts",
+        "device": "cuda:0",
+        "devicePolicy": "auto",
+        "cudaFreeMiB": 1300,
+        "voices": [
+          "Vivian",
+          "Serena",
+          "Uncle_Fu",
+          "Dylan",
+          "Eric",
+          "Ryan",
+          "Aiden",
+          "Ono_Anna",
+          "Sohee"
+        ]
+      },
+      "gpuBefore": {
+        "usedMiB": 8758,
+        "freeMiB": 1296,
+        "utilizationPct": 21,
+        "temperatureC": 50
+      },
+      "gpuAfter": {
+        "usedMiB": 8754,
+        "freeMiB": 1300,
+        "utilizationPct": 16,
+        "temperatureC": 50
+      }
+    },
+    "preview": {
+      "seconds": 7.329,
+      "audioSeconds": 1.76,
+      "realTimeFactor": 4.164,
+      "bytes": 84524
+    }
+  },
+  "asr": {
+    "afterTts": {
+      "label": "tts-to-asr-switch",
+      "seconds": 31.085,
+      "audioSeconds": 11.6,
+      "realTimeFactor": 2.68,
+      "wordErrorRate": 0.0,
+      "transcript": "Bonjour Nicolas. Starvis analyse la météo, les nouvelles et les performances de la station. Le processeur est stable et aucun événement urgent ne demande votre attention.",
+      "health": {
+        "status": "ok",
+        "asrReady": true,
+        "ttsReady": true,
+        "model": "asr",
+        "device": "cuda:0",
+        "devicePolicy": "auto",
+        "cudaFreeMiB": 1296,
+        "voices": [
+          "Vivian",
+          "Serena",
+          "Uncle_Fu",
+          "Dylan",
+          "Eric",
+          "Ryan",
+          "Aiden",
+          "Ono_Anna",
+          "Sohee"
+        ]
+      },
+      "gpuBefore": {
+        "usedMiB": 8948,
+        "freeMiB": 1106,
+        "utilizationPct": 52,
+        "temperatureC": 50
+      },
+      "gpuAfter": {
+        "usedMiB": 8758,
+        "freeMiB": 1296,
+        "utilizationPct": 21,
+        "temperatureC": 50
+      }
+    },
+    "warm": {
+      "label": "warm",
+      "seconds": 2.473,
+      "audioSeconds": 11.6,
+      "realTimeFactor": 0.213,
+      "wordErrorRate": 0.0,
+      "transcript": "Bonjour Nicolas. Starvis analyse la météo, les nouvelles et les performances de la station. Le processeur est stable et aucun événement urgent ne demande votre attention.",
+      "health": {
+        "status": "ok",
+        "asrReady": true,
+        "ttsReady": true,
+        "model": "asr",
+        "device": "cuda:0",
+        "devicePolicy": "auto",
+        "cudaFreeMiB": 1296,
+        "voices": [
+          "Vivian",
+          "Serena",
+          "Uncle_Fu",
+          "Dylan",
+          "Eric",
+          "Ryan",
+          "Aiden",
+          "Ono_Anna",
+          "Sohee"
+        ]
+      },
+      "gpuBefore": {
+        "usedMiB": 8758,
+        "freeMiB": 1296,
+        "utilizationPct": 0,
+        "temperatureC": 50
+      },
+      "gpuAfter": {
+        "usedMiB": 8758,
+        "freeMiB": 1296,
+        "utilizationPct": 21,
+        "temperatureC": 50
+      }
+    }
+  },
+  "vision": {
+    "seconds": 0.026,
+    "correct": false,
+    "error": "400 Client Error: Bad Request for url: http://127.0.0.1:1234/v1/chat/completions",
+    "gpuBefore": {
+      "usedMiB": 8754,
+      "freeMiB": 1300,
+      "utilizationPct": 0,
+      "temperatureC": 50
+    },
+    "gpuAfter": {
+      "usedMiB": 8754,
+      "freeMiB": 1300,
+      "utilizationPct": 0,
+      "temperatureC": 50
+    }
+  },
+  "voicePipeline": {
+    "estimatedSeconds": 79.635
+  },
+  "gpuFinal": {
+    "usedMiB": 8754,
+    "freeMiB": 1300,
+    "utilizationPct": 0,
+    "temperatureC": 50
+  },
+  "startup": {
+    "coreServicesSeconds": 22.561,
+    "allLocalReadySeconds": 28.464,
+    "healthProbeNonBlocking": true
+  },
+  "visionDedicated": {
+    "startupSeconds": 53.87,
+    "first": {
+      "seconds": 3.984,
+      "correct": false,
+      "response": "{\n  \"redSquares\": 1,\n  \"blueCircles\": 1,\n  \"text\": \"STARS842\"\n}",
+      "gpuBefore": {
+        "usedMiB": 7557,
+        "freeMiB": 2497,
+        "utilizationPct": 0,
+        "temperatureC": 49
+      },
+      "gpuAfter": {
+        "usedMiB": 7703,
+        "freeMiB": 2351,
+        "utilizationPct": 0,
+        "temperatureC": 51
+      }
+    },
+    "warm": {
+      "seconds": 0.349,
+      "correct": false,
+      "response": "{\n  \"redSquares\": 1,\n  \"blueCircles\": 1,\n  \"text\": \"STARS842\"\n}",
+      "gpuBefore": {
+        "usedMiB": 7703,
+        "freeMiB": 2351,
+        "utilizationPct": 0,
+        "temperatureC": 52
+      },
+      "gpuAfter": {
+        "usedMiB": 7703,
+        "freeMiB": 2351,
+        "utilizationPct": 0,
+        "temperatureC": 52
+      }
+    },
+    "uncachedWarm": {
+      "seconds": 0.657,
+      "correct": false,
+      "response": "{\n  \"redSquares\": 1,\n  \"blueCircles\": 1,\n  \"text\": \"STARS8 42\"\n}",
+      "gpuBefore": {
+        "usedMiB": 7703,
+        "freeMiB": 2351,
+        "utilizationPct": 0,
+        "temperatureC": 49
+      },
+      "gpuAfter": {
+        "usedMiB": 7703,
+        "freeMiB": 2351,
+        "utilizationPct": 94,
+        "temperatureC": 58
+      }
+    },
+    "cameraFrame": {
+      "seconds": 0.767,
+      "expected": {
+        "people": 1,
+        "vehicles": 2,
+        "daylight": true
+      },
+      "response": "{\n  \"people\": 1,\n  \"vehicles\": 2,\n  \"daylight\": true,\n  \"summary\": \"A child wearing a helmet and backpack is standing in a driveway near two parked cars, one of which is a black SUV. The scene is captured during daylight hours.\"\n}"
+    }
+  }
+}

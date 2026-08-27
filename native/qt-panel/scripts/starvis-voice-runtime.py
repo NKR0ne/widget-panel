@@ -178,17 +178,19 @@ app = FastAPI(title="Starvis local speech", docs_url=None, redoc_url=None)
 
 @app.get("/health")
 def health():
-    with runtime.lock:
-        return {
-            "status": "ok" if ASR_PATH.exists() and TTS_PATH.exists() else "setup",
-            "asrReady": ASR_PATH.exists(),
-            "ttsReady": TTS_PATH.exists(),
-            "model": runtime.kind,
-            "device": runtime.device,
-            "devicePolicy": DEVICE_POLICY,
-            "cudaFreeMiB": runtime.cuda_free_mib(),
-            "voices": list(SPEAKERS),
-        }
+    # Loading and inference are serialized, but readiness probes must not wait
+    # behind a 30-60 second model operation. Attribute reads are atomic under
+    # the CPython GIL; a transitional snapshot is preferable to a false timeout.
+    return {
+        "status": "ok" if ASR_PATH.exists() and TTS_PATH.exists() else "setup",
+        "asrReady": ASR_PATH.exists(),
+        "ttsReady": TTS_PATH.exists(),
+        "model": runtime.kind,
+        "device": runtime.device,
+        "devicePolicy": DEVICE_POLICY,
+        "cudaFreeMiB": runtime.cuda_free_mib(),
+        "voices": list(SPEAKERS),
+    }
 
 
 @app.post("/v1/audio/transcriptions")

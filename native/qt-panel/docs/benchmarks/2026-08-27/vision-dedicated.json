@@ -1,0 +1,63 @@
+{
+  "startupSeconds": 53.87,
+  "first": {
+    "seconds": 3.984,
+    "correct": false,
+    "response": "{\n  \"redSquares\": 1,\n  \"blueCircles\": 1,\n  \"text\": \"STARS842\"\n}",
+    "gpuBefore": {
+      "usedMiB": 7557,
+      "freeMiB": 2497,
+      "utilizationPct": 0,
+      "temperatureC": 49
+    },
+    "gpuAfter": {
+      "usedMiB": 7703,
+      "freeMiB": 2351,
+      "utilizationPct": 0,
+      "temperatureC": 51
+    }
+  },
+  "warm": {
+    "seconds": 0.349,
+    "correct": false,
+    "response": "{\n  \"redSquares\": 1,\n  \"blueCircles\": 1,\n  \"text\": \"STARS842\"\n}",
+    "gpuBefore": {
+      "usedMiB": 7703,
+      "freeMiB": 2351,
+      "utilizationPct": 0,
+      "temperatureC": 52
+    },
+    "gpuAfter": {
+      "usedMiB": 7703,
+      "freeMiB": 2351,
+      "utilizationPct": 0,
+      "temperatureC": 52
+    }
+  },
+  "uncachedWarm": {
+    "seconds": 0.657,
+    "correct": false,
+    "response": "{\n  \"redSquares\": 1,\n  \"blueCircles\": 1,\n  \"text\": \"STARS8 42\"\n}",
+    "gpuBefore": {
+      "usedMiB": 7703,
+      "freeMiB": 2351,
+      "utilizationPct": 0,
+      "temperatureC": 49
+    },
+    "gpuAfter": {
+      "usedMiB": 7703,
+      "freeMiB": 2351,
+      "utilizationPct": 94,
+      "temperatureC": 58
+    }
+  },
+  "cameraFrame": {
+    "seconds": 0.767,
+    "expected": {
+      "people": 1,
+      "vehicles": 2,
+      "daylight": true
+    },
+    "response": "{\n  \"people\": 1,\n  \"vehicles\": 2,\n  \"daylight\": true,\n  \"summary\": \"A child wearing a helmet and backpack is standing in a driveway near two parked cars, one of which is a black SUV. The scene is captured during daylight hours.\"\n}"
+  }
+}
