@@ -1,9 +1,9 @@
 """Local Qwen ASR/TTS service for QtPanel.
 
-The service is intentionally localhost-only and lazy-loads one speech model at
-a time. On a 10 GB RTX 3080 the resident vision model leaves too little VRAM
-for either speech model, so `auto` uses CUDA only when enough memory is free and
-otherwise runs speech on system RAM without interrupting Starvis vision.
+The service is intentionally localhost-only and keeps one speech model loaded
+at a time. On a 10 GB RTX 3080, `auto` uses CUDA only when enough memory is
+free. TTS fails clearly instead of silently moving to CPU because CPU synthesis
+cannot meet the interactive latency expected by QtPanel.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ TTS_PATH = Path(
 )
 DEVICE_POLICY = os.environ.get("STARVIS_SPEECH_DEVICE", "auto").strip().lower()
 MIN_CUDA_FREE_MIB = int(os.environ.get("STARVIS_SPEECH_MIN_CUDA_MIB", "5200"))
-MODEL_IDLE_SECONDS = int(os.environ.get("STARVIS_SPEECH_MODEL_IDLE_SECONDS", "90"))
+MODEL_IDLE_SECONDS = int(os.environ.get("STARVIS_SPEECH_MODEL_IDLE_SECONDS", "0"))
 PREWARM_TTS = os.environ.get("STARVIS_SPEECH_PREWARM_TTS", "1") != "0"
 SPEAKERS = (
     "Vivian",
@@ -120,6 +120,11 @@ class Runtime:
                 return self.model
             self.unload()
             device = self.choose_device()
+            if kind == "tts" and DEVICE_POLICY == "auto" and device == "cpu":
+                raise RuntimeError(
+                    "insufficient free GPU memory for local Qwen TTS; "
+                    "release another GPU workload and retry"
+                )
             dtype = torch.bfloat16 if device.startswith("cuda") else torch.float32
             common = {"device_map": device, "dtype": dtype}
             try:
@@ -138,6 +143,10 @@ class Runtime:
                 self.unload()
                 if device == "cpu":
                     raise
+                if kind == "tts" and DEVICE_POLICY != "cpu":
+                    raise RuntimeError(
+                        "insufficient GPU memory for local Qwen TTS"
+                    )
                 # Another local model may have claimed VRAM after the initial
                 # check. Retrying on CPU keeps voice functional and bounded.
                 common = {"device_map": "cpu", "dtype": torch.float32}
@@ -243,6 +252,8 @@ def idle_unloader() -> None:
         time.sleep(10)
         with runtime.lock:
             if (
+                MODEL_IDLE_SECONDS > 0
+                and
                 runtime.model is not None
                 and time.monotonic() - runtime.last_used_at >= MODEL_IDLE_SECONDS
             ):
@@ -250,9 +261,9 @@ def idle_unloader() -> None:
 
 
 def prewarm_tts() -> None:
-    # Let LM Studio finish its small GPU allocation first, then absorb the
-    # one-time model load before the user opens Starvis settings.
-    time.sleep(12)
+    # The launcher waits for LM Studio before starting this process. Begin the
+    # one-time model load immediately so the first user request is warm.
+    time.sleep(1)
     try:
         with runtime.lock:
             if runtime.model is None and runtime.choose_device().startswith("cuda"):

@@ -17,7 +17,10 @@ if (!(Test-Path -LiteralPath $python) -or !(Test-Path -LiteralPath $server) `
 
 $env:STARVIS_SPEECH_PORT = [string]$Port
 $env:STARVIS_SPEECH_DEVICE = 'auto'
-$env:STARVIS_SPEECH_MODEL_IDLE_SECONDS = '900'
+# The global model power button is now the explicit GPU release boundary. Keep
+# Dylan and the other Qwen voices resident so a briefing cannot lose CUDA to a
+# later workload and unexpectedly fall back to slow CPU synthesis.
+$env:STARVIS_SPEECH_MODEL_IDLE_SECONDS = '0'
 $env:STARVIS_SPEECH_PREWARM_TTS = '1'
 
 $logRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'qt-panel'

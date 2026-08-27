@@ -74,6 +74,14 @@ Item {
         }
     }
 
+    Connections {
+        target: Starvis
+        function onSpeechOutputFinished(success, error) {
+            if (!success && error && error !== "cancelled")
+                Ui.notify("Voix locale indisponible : " + error, "warning")
+        }
+    }
+
     function newsColumnKey(mode) {
         const normalized = mode === "reader" || mode === "live"
                            || mode === "pressreader" ? mode : "carousel"

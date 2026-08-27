@@ -30,6 +30,7 @@
 #include <QMediaPlayer>
 #include <QNetworkReply>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
@@ -125,6 +126,52 @@ QJsonObject localImagePart(const QImage& source, int maxDim = 1280, int jpegQual
                  + QString::fromLatin1(bytes.toBase64())},
         }},
     };
+}
+
+QString textForSpeech(QString text)
+{
+    text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    text.replace(QRegularExpression(QStringLiteral("```[\\s\\S]*?```")), QStringLiteral(" "));
+    text.replace(QRegularExpression(QStringLiteral("!\\[([^\\]]*)\\]\\([^\\)]*\\)")),
+                 QStringLiteral("\\1"));
+    text.replace(QRegularExpression(QStringLiteral("\\[([^\\]]+)\\]\\([^\\)]*\\)")),
+                 QStringLiteral("\\1"));
+    text.replace(QRegularExpression(QStringLiteral("https?://\\S+"),
+                                    QRegularExpression::CaseInsensitiveOption),
+                 QStringLiteral(" "));
+    text.replace(QRegularExpression(QStringLiteral("`([^`]*)`")), QStringLiteral("\\1"));
+    text.replace(QRegularExpression(QStringLiteral("(?m)^\\s{0,3}#{1,6}\\s*")),
+                 QString());
+    text.replace(QRegularExpression(QStringLiteral("(?m)^\\s*(?:[-*+]|•)\\s+")),
+                 QString());
+    text.replace(QRegularExpression(QStringLiteral("(?m)^\\s*\\d+[.)]\\s+")),
+                 QString());
+    text.replace(QRegularExpression(QStringLiteral("<[^>]+>")), QStringLiteral(" "));
+
+    text.replace(QRegularExpression(QStringLiteral("(-?\\d+(?:[.,]\\d+)?)\\s*°\\s*C\\b"),
+                                    QRegularExpression::CaseInsensitiveOption),
+                 QStringLiteral("\\1 degrés Celsius"));
+    text.replace(QRegularExpression(QStringLiteral("(-?\\d+(?:[.,]\\d+)?)\\s*%")),
+                 QStringLiteral("\\1 pour cent"));
+    text.replace(QRegularExpression(QStringLiteral("\\$\\s*(\\d+(?:[.,]\\d+)?)")),
+                 QStringLiteral("\\1 dollars"));
+    text.replace(QRegularExpression(QStringLiteral("(\\d+(?:[.,]\\d+)?)\\s*\\$")),
+                 QStringLiteral("\\1 dollars"));
+    text.replace(QRegularExpression(QStringLiteral("(\\d+(?:[.,]\\d+)?)\\s*€")),
+                 QStringLiteral("\\1 euros"));
+    text.replace(QStringLiteral("&"), QStringLiteral(" et "));
+    text.replace(QStringLiteral("↑"), QStringLiteral(" en hausse "));
+    text.replace(QStringLiteral("↓"), QStringLiteral(" en baisse "));
+    text.replace(QRegularExpression(QStringLiteral("\\s+[|/]\\s+")), QStringLiteral(", "));
+    text.replace(QRegularExpression(QStringLiteral("[*_~]+")), QString());
+    text.replace(QRegularExpression(QStringLiteral("[{}\\[\\]<>|]")), QStringLiteral(" "));
+    text.replace(QRegularExpression(QStringLiteral("[\\p{So}\\p{Sk}\\x{FE0F}]")),
+                 QStringLiteral(" "));
+    text.replace(QRegularExpression(QStringLiteral("[ \\t]+")), QStringLiteral(" "));
+    text.replace(QRegularExpression(QStringLiteral(" *\\n+ *")), QStringLiteral(". "));
+    text.replace(QRegularExpression(QStringLiteral("(?:[.?!,:;]\\s*){2,}")),
+                 QStringLiteral(". "));
+    return text.trimmed();
 }
 
 } // namespace
@@ -489,7 +536,9 @@ QVariantMap StarvisService::voiceConfig() const
 void StarvisService::fallbackSpeech(const QString& text, const QString& error)
 {
     qWarning() << "[starvis] local/cloud TTS unavailable:" << error;
-    if (m_speech && m_speech->available()) {
+    const bool allowWindowsFallback = voiceConfig().value(
+        QStringLiteral("windowsFallback"), false).toBool();
+    if (allowWindowsFallback && m_speech && m_speech->available()) {
         m_speech->say(text);
         qInfo() << "[starvis] spoken with Windows fallback," << text.size() << "chars";
     }
@@ -545,7 +594,7 @@ void StarvisService::previewVoice(const QString& voice)
 
 void StarvisService::speak(const QString& text)
 {
-    const QString clean = text.trimmed();
+    const QString clean = textForSpeech(text);
     if (clean.isEmpty())
         return;
     if (m_ttsPending || speaking()) {
@@ -620,7 +669,7 @@ void StarvisService::speak(const QString& text)
             return;
         }
         playSpeechBytes(bytes, extension);
-    }, output == QLatin1String("local") ? 90000 : 60000);
+    }, output == QLatin1String("local") ? 240000 : 60000);
 }
 
 void StarvisService::chat(const QString& message, const QVariantList& history,
@@ -978,7 +1027,8 @@ void StarvisService::briefing()
     chat(QStringLiteral(
              "Donne-moi un briefing matinal concis à partir du contexte local: météo, marchés, "
              "thèmes principaux des nouvelles, et état de la station. En français, structuré, "
-             "sans détailler chaque métrique."),
+             "sans détailler chaque métrique. Le texte sera lu à voix haute: 120 mots maximum, "
+             "phrases naturelles, sans Markdown, listes, liens, tableaux ni symboles."),
          {}, false, false);
 }
 
