@@ -47,8 +47,9 @@ public:
     using BytesCallback = std::function<void(const QByteArray& bytes, int status, const QString& error)>;
 
     // Bearer-authorized JSON POST returning the raw response body (audio, …).
-    void postForBytes(const QUrl& url, const QString& bearerToken, const QByteArray& jsonBody,
-                      QObject* context, BytesCallback callback, int timeoutMs = 15000);
+    QNetworkReply* postForBytes(const QUrl& url, const QString& bearerToken,
+                                const QByteArray& jsonBody, QObject* context,
+                                BytesCallback callback, int timeoutMs = 15000);
 
     // `event` is the SSE event name ("" when the frame has none), `data` the
     // joined data: payload of one frame.

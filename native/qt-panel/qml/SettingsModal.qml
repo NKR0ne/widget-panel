@@ -1142,7 +1142,9 @@ Item {
                         Text {
                             id: previewLabel
                             anchors.centerIn: parent
-                            text: Starvis.speaking ? "Arrêter l'aperçu" : "Écouter " + voiceSettings.selectedVoice
+                            text: Starvis.speechPending ? "Annuler la préparation"
+                                  : Starvis.speaking ? "Arrêter l'aperçu"
+                                                     : "Écouter " + voiceSettings.selectedVoice
                             color: Theme.textPrimary
                             font.pixelSize: 9
                         }

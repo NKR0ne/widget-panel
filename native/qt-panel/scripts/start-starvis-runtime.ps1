@@ -23,7 +23,9 @@ if (Test-StarvisModel) { exit 0 }
 if ((Test-Path -LiteralPath $lms) -and (Test-Path -LiteralPath $reasoningModel)) {
     & $lms server start --port $Port
     if ($LASTEXITCODE -eq 0) {
-        & $lms load 'qwen3.8-9b-distill' --gpu 0.4 --context-length 8192 `
+        # Reserve enough VRAM for Qwen3-TTS. Twenty-five percent offload keeps
+        # local reasoning responsive while allowing speech to stay on CUDA.
+        & $lms load 'qwen3.8-9b-distill' --gpu 0.25 --context-length 8192 `
             --parallel 1 --identifier $alias --yes
         if ($LASTEXITCODE -eq 0 -and (Test-StarvisModel)) { exit 0 }
     }

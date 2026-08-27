@@ -4,6 +4,7 @@
 #include <QJsonObject>
 #include <QImage>
 #include <QObject>
+#include <QPointer>
 #include <QVariantList>
 #include <QVector>
 
@@ -39,6 +40,7 @@ class StarvisService : public QObject {
     Q_PROPERTY(bool configured READ configured NOTIFY configuredChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(bool speaking READ speaking NOTIFY speakingChanged)
+    Q_PROPERTY(bool speechPending READ speechPending NOTIFY speakingChanged)
     Q_PROPERTY(QString model READ model NOTIFY configuredChanged)
     Q_PROPERTY(QString provider READ provider NOTIFY configuredChanged)
     Q_PROPERTY(QVariantList pendingActions READ pendingActions NOTIFY actionsChanged)
@@ -61,6 +63,7 @@ public:
 
     // history: [{role: "user"|"assistant", text: string}, ...]
     bool speaking() const;
+    bool speechPending() const { return m_ttsPending; }
 
     // allowAgent enables the tool loop (read-only workspace tools + web search
     // + action proposals). Mutating proposals go to the approval queue.
@@ -189,6 +192,7 @@ private:
     bool m_localBackendReady = false;
     QMediaPlayer* m_ttsPlayer = nullptr;
     QAudioOutput* m_ttsAudio = nullptr;
+    QPointer<QNetworkReply> m_ttsReply;
     bool m_ttsPending = false;
     QVariantList m_actions; // newest first; each: {id,type,summary,detail,status,verdict,reason,severity}
 };

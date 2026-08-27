@@ -37,6 +37,7 @@ TTS_PATH = Path(
 DEVICE_POLICY = os.environ.get("STARVIS_SPEECH_DEVICE", "auto").strip().lower()
 MIN_CUDA_FREE_MIB = int(os.environ.get("STARVIS_SPEECH_MIN_CUDA_MIB", "5200"))
 MODEL_IDLE_SECONDS = int(os.environ.get("STARVIS_SPEECH_MODEL_IDLE_SECONDS", "90"))
+PREWARM_TTS = os.environ.get("STARVIS_SPEECH_PREWARM_TTS", "1") != "0"
 SPEAKERS = (
     "Vivian",
     "Serena",
@@ -155,6 +156,7 @@ class Runtime:
             self.device = device
             self.loaded_at = time.monotonic()
             self.last_used_at = self.loaded_at
+            print(f"[speech] loaded {kind} on {device}", flush=True)
             return model
 
     def touch(self) -> None:
@@ -213,6 +215,7 @@ def speech(request: SpeechRequest):
     if speaker.lower() not in {name.lower() for name in SPEAKERS}:
         raise HTTPException(400, f"Unsupported voice: {speaker}")
     speaker = next(name for name in SPEAKERS if name.lower() == speaker.lower())
+    started = time.monotonic()
     try:
         with runtime.lock:
             model = runtime.load("tts")
@@ -226,6 +229,10 @@ def speech(request: SpeechRequest):
             runtime.touch()
         output = io.BytesIO()
         sf.write(output, wavs[0], sample_rate, format="WAV", subtype="PCM_16")
+        print(
+            f"[speech] synthesized {speaker} in {time.monotonic() - started:.2f}s",
+            flush=True,
+        )
         return Response(output.getvalue(), media_type="audio/wav")
     except Exception as exc:
         raise HTTPException(500, f"TTS failed: {exc}") from exc
@@ -242,9 +249,23 @@ def idle_unloader() -> None:
                 runtime.unload()
 
 
+def prewarm_tts() -> None:
+    # Let LM Studio finish its small GPU allocation first, then absorb the
+    # one-time model load before the user opens Starvis settings.
+    time.sleep(12)
+    try:
+        with runtime.lock:
+            if runtime.model is None and runtime.choose_device().startswith("cuda"):
+                runtime.load("tts")
+    except Exception as exc:
+        print(f"[speech] TTS prewarm skipped: {exc}", flush=True)
+
+
 @app.on_event("startup")
 def start_idle_unloader() -> None:
     threading.Thread(target=idle_unloader, name="model-idle-unloader", daemon=True).start()
+    if PREWARM_TTS:
+        threading.Thread(target=prewarm_tts, name="tts-prewarm", daemon=True).start()
 
 
 if __name__ == "__main__":

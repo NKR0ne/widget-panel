@@ -17,7 +17,8 @@ if (!(Test-Path -LiteralPath $python) -or !(Test-Path -LiteralPath $server) `
 
 $env:STARVIS_SPEECH_PORT = [string]$Port
 $env:STARVIS_SPEECH_DEVICE = 'auto'
-$env:STARVIS_SPEECH_MODEL_IDLE_SECONDS = '90'
+$env:STARVIS_SPEECH_MODEL_IDLE_SECONDS = '900'
+$env:STARVIS_SPEECH_PREWARM_TTS = '1'
 
 $logRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'qt-panel'
 New-Item -ItemType Directory -Path $logRoot -Force | Out-Null

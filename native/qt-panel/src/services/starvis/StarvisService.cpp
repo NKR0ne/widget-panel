@@ -347,12 +347,22 @@ void StarvisService::setBusy(bool busy)
 
 bool StarvisService::speaking() const
 {
-    return m_ttsPending
-        || (m_ttsPlayer && m_ttsPlayer->playbackState() == QMediaPlayer::PlayingState);
+    return m_ttsPlayer && m_ttsPlayer->playbackState() == QMediaPlayer::PlayingState;
 }
 
 void StarvisService::stopSpeaking()
 {
+    if (m_ttsReply) {
+        QObject::disconnect(m_ttsReply, nullptr, this, nullptr);
+        m_ttsReply->abort();
+        m_ttsReply->deleteLater();
+        m_ttsReply = nullptr;
+    }
+    if (m_ttsPending) {
+        m_ttsPending = false;
+        emit speakingChanged();
+        emit speechOutputFinished(false, QStringLiteral("cancelled"));
+    }
     if (m_ttsPlayer)
         m_ttsPlayer->stop();
     if (m_speech)
@@ -434,7 +444,7 @@ void StarvisService::previewVoice(const QString& voice)
     cfg.insert(QStringLiteral("ttsVoice"), voice);
     m_settings->set(QStringLiteral("wp-starvis-voice"),
                     QString::fromUtf8(QJsonDocument::fromVariant(cfg).toJson(QJsonDocument::Compact)));
-    speak(QStringLiteral("Bonjour, je suis Starvis. Voici un aperçu de cette voix."));
+    speak(QStringLiteral("Bonjour, voici ma voix."));
 }
 
 void StarvisService::speak(const QString& text)
@@ -442,7 +452,7 @@ void StarvisService::speak(const QString& text)
     const QString clean = text.trimmed();
     if (clean.isEmpty())
         return;
-    if (speaking()) {
+    if (m_ttsPending || speaking()) {
         stopSpeaking();
         return;
     }
@@ -497,10 +507,12 @@ void StarvisService::speak(const QString& text)
     m_ttsPending = true;
     emit speakingChanged();
 
-    m_http->postForBytes(QUrl(baseUrl + QStringLiteral("/audio/speech")), bearer,
-                         QJsonDocument(body).toJson(QJsonDocument::Compact), this,
-                         [this, clean, extension](const QByteArray& bytes, int status,
-                                                  const QString& error) {
+    m_ttsReply = m_http->postForBytes(
+        QUrl(baseUrl + QStringLiteral("/audio/speech")), bearer,
+        QJsonDocument(body).toJson(QJsonDocument::Compact), this,
+        [this, clean, extension](const QByteArray& bytes, int status,
+                                 const QString& error) {
+        m_ttsReply = nullptr;
         if (status < 200 || status >= 300 || bytes.isEmpty()) {
             m_ttsPending = false;
             emit speakingChanged();
@@ -508,7 +520,7 @@ void StarvisService::speak(const QString& text)
             return;
         }
         playSpeechBytes(bytes, extension);
-    }, output == QLatin1String("local") ? 300000 : 60000);
+    }, output == QLatin1String("local") ? 90000 : 60000);
 }
 
 void StarvisService::chat(const QString& message, const QVariantList& history,

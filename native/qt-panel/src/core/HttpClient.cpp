@@ -155,9 +155,9 @@ void HttpClient::requestJsonAuth(const QByteArray& verb, const QUrl& url,
     });
 }
 
-void HttpClient::postForBytes(const QUrl& url, const QString& bearerToken,
-                              const QByteArray& jsonBody, QObject* context,
-                              BytesCallback callback, int timeoutMs)
+QNetworkReply* HttpClient::postForBytes(const QUrl& url, const QString& bearerToken,
+                                        const QByteArray& jsonBody, QObject* context,
+                                        BytesCallback callback, int timeoutMs)
 {
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, QLatin1String(kUserAgent));
@@ -177,6 +177,7 @@ void HttpClient::postForBytes(const QUrl& url, const QString& bearerToken,
         }
         callback(reply->readAll(), status, QString());
     });
+    return reply;
 }
 
 QNetworkReply* HttpClient::postSse(const QUrl& url,
