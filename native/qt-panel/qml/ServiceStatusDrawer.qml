@@ -42,8 +42,10 @@ Item {
                   : Camera.status === "error" ? "error" : "warn", detail: Camera.status },
             { label: "Station", state: Workstation.connected && !Workstation.stale ? "ok" : "warn",
               detail: Workstation.connected ? (Workstation.stale ? "retard" : "direct") : "hors ligne" },
-            { label: "Starvis", state: Starvis.configured ? "ok" : "setup",
-              detail: Starvis.configured ? Starvis.model : "configuration requise" }
+            { label: "Starvis", state: !Starvis.localModelsEnabled ? "warn"
+                  : Starvis.configured ? "ok" : "setup",
+              detail: !Starvis.localModelsEnabled ? "modèles locaux désactivés · GPU libéré"
+                  : Starvis.configured ? Starvis.model : "configuration requise" }
         ]
     }
 

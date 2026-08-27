@@ -16,6 +16,7 @@
 
 #include <QAudioOutput>
 #include <QBuffer>
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QDebug>
 #include <QDesktopServices>
@@ -196,6 +197,99 @@ bool StarvisService::configured() const
         || !anthropicKey().isEmpty() || !apiKey().isEmpty();
 }
 
+bool StarvisService::localModelsEnabled() const
+{
+    return m_settings->get(QStringLiteral("wp-starvis-local-models-enabled"), true).toBool();
+}
+
+QString StarvisService::localRuntimeScriptPath() const
+{
+    const QDir appDir(QCoreApplication::applicationDirPath());
+    const QStringList candidates{
+        appDir.filePath(QStringLiteral("scripts/set-starvis-local-models.ps1")),
+        appDir.filePath(QStringLiteral("../../scripts/set-starvis-local-models.ps1")),
+    };
+    for (const QString& candidate : candidates) {
+        const QFileInfo file(candidate);
+        if (file.isFile())
+            return file.absoluteFilePath();
+    }
+    return {};
+}
+
+void StarvisService::setLocalModelsEnabled(bool enabled)
+{
+    if (localModelsEnabled() == enabled || m_localModelsTransitioning)
+        return;
+
+    m_settings->set(QStringLiteral("wp-starvis-local-models-enabled"), enabled);
+    m_settings->flush();
+    m_localModelsTransitioning = true;
+    emit localModelsStateChanged();
+
+    if (!enabled) {
+        cancelChat();
+        setBusy(false);
+        stopSpeaking();
+        if (m_voice)
+            m_voice->stop();
+        if (m_localBackendReady) {
+            m_localBackendReady = false;
+            emit configuredChanged();
+        }
+    }
+
+    runLocalRuntimeAction(enabled);
+}
+
+void StarvisService::runLocalRuntimeAction(bool enabled)
+{
+    const QString script = localRuntimeScriptPath();
+    if (script.isEmpty()) {
+        qWarning() << "[starvis] local model runtime control script was not found";
+        m_localModelsTransitioning = false;
+        emit localModelsStateChanged();
+        emit chatFailed(QStringLiteral("Contrôle des modèles locaux introuvable."));
+        return;
+    }
+
+    auto* process = new QProcess(this);
+    process->setProcessChannelMode(QProcess::MergedChannels);
+    connect(process, &QProcess::finished, this,
+            [this, process, enabled](int exitCode, QProcess::ExitStatus status) {
+        const QString output = QString::fromLocal8Bit(process->readAll()).trimmed();
+        process->deleteLater();
+        m_localModelsTransitioning = false;
+        emit localModelsStateChanged();
+        if (status != QProcess::NormalExit || exitCode != 0) {
+            qWarning() << "[starvis] local model runtime action failed:" << output;
+            emit chatFailed(enabled
+                ? QStringLiteral("Le démarrage des modèles locaux a échoué.")
+                : QStringLiteral("L'arrêt des modèles locaux a échoué."));
+            return;
+        }
+        qInfo() << "[starvis] local models" << (enabled ? "enabled" : "disabled")
+                << output;
+        if (enabled)
+            QTimer::singleShot(250, this, &StarvisService::probeLocalBackend);
+        else
+            emit configuredChanged();
+    });
+    process->start(QStringLiteral("powershell.exe"),
+                   {QStringLiteral("-NoProfile"), QStringLiteral("-WindowStyle"),
+                    QStringLiteral("Hidden"), QStringLiteral("-ExecutionPolicy"),
+                    QStringLiteral("Bypass"), QStringLiteral("-File"), script,
+                    enabled ? QStringLiteral("enable") : QStringLiteral("disable")});
+    if (!process->waitForStarted(3000)) {
+        qWarning() << "[starvis] could not start local model runtime action:"
+                   << process->errorString();
+        process->deleteLater();
+        m_localModelsTransitioning = false;
+        emit localModelsStateChanged();
+        emit chatFailed(QStringLiteral("Impossible de lancer le contrôle des modèles locaux."));
+    }
+}
+
 QString StarvisService::provider() const
 {
     const QVariantMap cfg = config();
@@ -219,7 +313,7 @@ QVariantMap StarvisService::providerStatus() const
         && !apiKey().isEmpty() ? QStringLiteral("openai")
         : configuredSpeech == QLatin1String("windows") ? QStringLiteral("windows")
                                                        : QStringLiteral("local");
-    const bool reasoningReady = local ? m_localBackendReady
+    const bool reasoningReady = local ? localModelsEnabled() && m_localBackendReady
         : activeProvider == QLatin1String("anthropic") ? !anthropicKey().isEmpty()
                                                         : !apiKey().isEmpty();
     return {
@@ -227,6 +321,8 @@ QVariantMap StarvisService::providerStatus() const
         {QStringLiteral("model"), model()},
         {QStringLiteral("ready"), reasoningReady},
         {QStringLiteral("reasoningReady"), reasoningReady},
+        {QStringLiteral("localModelsEnabled"), localModelsEnabled()},
+        {QStringLiteral("localModelsTransitioning"), m_localModelsTransitioning},
         {QStringLiteral("visionReady"), visionConfigured()},
         {QStringLiteral("speechProvider"), speechProvider},
         {QStringLiteral("voiceProvider"), m_voice ? m_voice->provider() : QStringLiteral("none")},
@@ -466,6 +562,10 @@ void StarvisService::speak(const QString& text)
             m_speech->say(clean);
         return;
     }
+    if (output == QLatin1String("local") && !localModelsEnabled()) {
+        fallbackSpeech(clean, QStringLiteral("modèles locaux désactivés"));
+        return;
+    }
     if (output == QLatin1String("openai") && key.isEmpty())
         output = QStringLiteral("local");
 
@@ -528,6 +628,10 @@ void StarvisService::chat(const QString& message, const QVariantList& history,
 {
     if (message.trimmed().isEmpty() || m_busy)
         return;
+    if (provider() == QLatin1String("local") && !localModelsEnabled()) {
+        emit chatFailed(QStringLiteral("Les modèles locaux sont désactivés."));
+        return;
+    }
     if (provider() == QLatin1String("local"))
         postLocal(message, history, allowAgent);
     else if (provider() == QLatin1String("anthropic"))
@@ -538,7 +642,7 @@ void StarvisService::chat(const QString& message, const QVariantList& history,
 
 void StarvisService::probeLocalBackend()
 {
-    if (provider() != QLatin1String("local")) {
+    if (provider() != QLatin1String("local") || !localModelsEnabled()) {
         if (m_localBackendReady) {
             m_localBackendReady = false;
             emit configuredChanged();

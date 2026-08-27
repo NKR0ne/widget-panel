@@ -75,6 +75,8 @@ VoiceSession::VoiceSession(SettingsStore* settings, SecretVault* vault,
             probeLocalRuntime();
         }
     });
+    connect(m_starvis, &StarvisService::localModelsStateChanged,
+            this, &VoiceSession::availableChanged);
     // Hot-plugging a microphone flips availability.
     auto* mediaDevices = new QMediaDevices(this);
     connect(mediaDevices, &QMediaDevices::audioInputsChanged, this,
@@ -145,13 +147,16 @@ bool VoiceSession::available() const
 {
     const bool microphone = !QMediaDevices::defaultAudioInput().isNull();
     return microphone && (provider() == QLatin1String("local")
-                              ? m_localRuntimeReady : !openAiKey().isEmpty());
+                              ? m_starvis->localModelsEnabled() && m_localRuntimeReady
+                              : !openAiKey().isEmpty());
 }
 
 QString VoiceSession::unavailableReason() const
 {
     if (QMediaDevices::defaultAudioInput().isNull())
         return QStringLiteral("Aucun microphone détecté");
+    if (provider() == QLatin1String("local") && !m_starvis->localModelsEnabled())
+        return QStringLiteral("Modèles locaux désactivés");
     if (provider() == QLatin1String("local") && !m_localRuntimeReady)
         return QStringLiteral("Service vocal local en démarrage");
     if (provider() != QLatin1String("local") && openAiKey().isEmpty())

@@ -46,11 +46,30 @@ $root = $PSScriptRoot
 $buildName = if ($Generator -eq 'NMake') { "nmake-$Config" } else { $Config }
 $exe = Join-Path $root "build\$buildName\qt-panel.exe"
 
+$settingsRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'qt-panel'
+if (-not [string]::IsNullOrWhiteSpace($Profile)) {
+    $settingsRoot = Join-Path (Join-Path $settingsRoot 'profiles') $Profile
+}
+$localModelsEnabled = $true
+$settingsPath = Join-Path $settingsRoot 'settings.json'
+if (Test-Path -LiteralPath $settingsPath) {
+    try {
+        $storedSettings = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json
+        $localModelsProperty = $storedSettings.PSObject.Properties[
+            'wp-starvis-local-models-enabled']
+        if ($null -ne $localModelsProperty) {
+            $localModelsEnabled = [bool]$localModelsProperty.Value
+        }
+    } catch {
+        Write-Warning ("Could not read local-model startup preference: {0}." -f $_.Exception.Message)
+    }
+}
+
 # Start local reasoning independently so panel startup never waits for the
 # model load. The bootstrapper accepts an existing LM Studio/llama.cpp server
 # and otherwise loads the configured 9B model in a hidden process.
 $reasoningRuntime = Join-Path $root 'scripts\start-starvis-runtime.ps1'
-if (Test-Path -LiteralPath $reasoningRuntime) {
+if ($localModelsEnabled -and (Test-Path -LiteralPath $reasoningRuntime)) {
     try {
         Start-Process -FilePath 'powershell.exe' -ArgumentList @(
             '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $reasoningRuntime
@@ -64,7 +83,7 @@ if (Test-Path -LiteralPath $reasoningRuntime) {
 # lazy-loaded and released after idle. Start it for manual and login launches
 # so local voice never depends on an external terminal or LM Studio window.
 $voiceRuntime = Join-Path $root 'scripts\start-starvis-voice-runtime.ps1'
-if (Test-Path -LiteralPath $voiceRuntime) {
+if ($localModelsEnabled -and (Test-Path -LiteralPath $voiceRuntime)) {
     try {
         & $voiceRuntime
     } catch {

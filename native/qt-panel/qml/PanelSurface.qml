@@ -614,6 +614,27 @@ Item {
 
                 Item { Layout.fillWidth: true }
                 IconButton {
+                    glyph: "\uE7E8"
+                    active: Starvis.localModelsEnabled
+                    enabled: !Starvis.localModelsTransitioning
+                    accessibleName: Starvis.localModelsEnabled
+                                    ? "Désactiver les modèles locaux"
+                                    : "Activer les modèles locaux"
+                    tooltip: Starvis.localModelsTransitioning
+                             ? "Transition des modèles locaux en cours"
+                             : Starvis.localModelsEnabled
+                               ? "Modèles locaux actifs — cliquer pour libérer le GPU"
+                               : "Modèles locaux désactivés — cliquer pour les démarrer"
+                    onClicked: {
+                        const enable = !Starvis.localModelsEnabled
+                        Starvis.setLocalModelsEnabled(enable)
+                        Ui.notify(enable
+                                  ? "Démarrage des modèles locaux"
+                                  : "Arrêt des modèles locaux et libération du GPU",
+                                  "info")
+                    }
+                }
+                IconButton {
                     glyph: "\uE9D9"
                     onClicked: Ui.openStatus()
                     tooltip: "\u00c9tat des services"

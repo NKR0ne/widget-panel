@@ -89,6 +89,8 @@ DiagnosticsService::DiagnosticsService(SettingsStore* settings, SecretVault* vau
                 &DiagnosticsService::updateStarvisRow);
         connect(m_starvis, &StarvisService::busyChanged, this,
                 &DiagnosticsService::updateStarvisRow);
+        connect(m_starvis, &StarvisService::localModelsStateChanged, this,
+                &DiagnosticsService::updateStarvisRow);
     }
     if (m_settings) {
         connect(m_settings, &SettingsStore::changed, this, [this](const QString& key) {
@@ -391,10 +393,13 @@ void DiagnosticsService::updateStarvisRow()
                   QStringLiteral("error"), QStringLiteral("Starvis service missing"));
         return;
     }
-    const QString state = m_starvis->configured()
+    const bool localDisabled = m_starvis->provider() == QLatin1String("local")
+        && !m_starvis->localModelsEnabled();
+    const QString state = localDisabled ? QStringLiteral("warn") : m_starvis->configured()
         ? (m_starvis->busy() ? QStringLiteral("checking") : QStringLiteral("ok"))
         : QStringLiteral("setup");
-    const QString detail = m_starvis->configured()
+    const QString detail = localDisabled ? QStringLiteral("local models disabled; GPU released")
+        : m_starvis->configured()
         ? QStringLiteral("model %1%2").arg(m_starvis->model(),
                                            m_starvis->busy() ? QStringLiteral("; busy") : QString())
         : QStringLiteral("OpenAI-compatible key missing");

@@ -41,6 +41,8 @@ class StarvisService : public QObject {
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(bool speaking READ speaking NOTIFY speakingChanged)
     Q_PROPERTY(bool speechPending READ speechPending NOTIFY speakingChanged)
+    Q_PROPERTY(bool localModelsEnabled READ localModelsEnabled WRITE setLocalModelsEnabled NOTIFY localModelsStateChanged)
+    Q_PROPERTY(bool localModelsTransitioning READ localModelsTransitioning NOTIFY localModelsStateChanged)
     Q_PROPERTY(QString model READ model NOTIFY configuredChanged)
     Q_PROPERTY(QString provider READ provider NOTIFY configuredChanged)
     Q_PROPERTY(QVariantList pendingActions READ pendingActions NOTIFY actionsChanged)
@@ -64,6 +66,9 @@ public:
     // history: [{role: "user"|"assistant", text: string}, ...]
     bool speaking() const;
     bool speechPending() const { return m_ttsPending; }
+    bool localModelsEnabled() const;
+    bool localModelsTransitioning() const { return m_localModelsTransitioning; }
+    Q_INVOKABLE void setLocalModelsEnabled(bool enabled);
 
     // allowAgent enables the tool loop (read-only workspace tools + web search
     // + action proposals). Mutating proposals go to the approval queue.
@@ -118,6 +123,7 @@ signals:
     void speakingChanged();
     void actionsChanged();
     void executionEnabledChanged();
+    void localModelsStateChanged();
     void replyReceived(const QString& text, const QString& model, int latencyMs);
     void chatFailed(const QString& error);
     // Streaming (Anthropic path). replyStarted opens a turn, replyDelta
@@ -166,6 +172,8 @@ private:
     QVariantMap voiceConfig() const;
     void playSpeechBytes(const QByteArray& bytes, const QString& extension);
     void fallbackSpeech(const QString& text, const QString& error);
+    QString localRuntimeScriptPath() const;
+    void runLocalRuntimeAction(bool enabled);
 
     static constexpr int kMaxToolLoops = 3;
 
@@ -194,6 +202,7 @@ private:
     QAudioOutput* m_ttsAudio = nullptr;
     QPointer<QNetworkReply> m_ttsReply;
     bool m_ttsPending = false;
+    bool m_localModelsTransitioning = false;
     QVariantList m_actions; // newest first; each: {id,type,summary,detail,status,verdict,reason,severity}
 };
 

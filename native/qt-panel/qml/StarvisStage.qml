@@ -11,6 +11,7 @@ Item {
     Connections {
         target: Starvis
         function onConfiguredChanged() { stage.rev++ }
+        function onLocalModelsStateChanged() { stage.rev++ }
     }
     readonly property var status: { rev; return Starvis.providerStatus() }
     readonly property var starvisState: Starvis.state
@@ -65,7 +66,10 @@ Item {
                     Text {
                         width: parent.width
                         text: stage.status.provider === "local"
-                              ? (stage.status.ready ? "Local · CUDA · prêt" : "Local · démarrage…")
+                              ? (!stage.status.localModelsEnabled
+                                 ? "Local · désactivé · GPU libéré"
+                                 : stage.status.ready ? "Local · CUDA · prêt"
+                                                      : "Local · démarrage…")
                               : stage.status.provider === "anthropic"
                                 ? (stage.status.pinned ? "Anthropic · épinglé" : "Anthropic · auto")
                                 : "OpenAI"
