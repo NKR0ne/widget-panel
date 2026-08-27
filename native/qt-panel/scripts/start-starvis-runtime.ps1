@@ -3,11 +3,8 @@ param([int]$Port = 1234)
 $ErrorActionPreference = 'Stop'
 $alias = 'starvis-local'
 $baseUrl = "http://127.0.0.1:$Port"
-$lms = 'C:\Users\nicol\.lmstudio\bin\lms.exe'
-$reasoningModel = 'M:\LLModels\LMStudio\empero-ai\Qwen3.8-9B-Distill-GGUF\Qwen3.8-9B-Q5_K_M.gguf'
 $server = 'M:\LLModels\llama.cpp-b10516-cuda12\llama-server.exe'
-$fallbackModel = 'M:\LLModels\Qwen3-VL-8B-Instruct-GGUF\Qwen3VL-8B-Instruct-Q4_K_M.gguf'
-$visionProjector = 'M:\LLModels\Qwen3-VL-8B-Instruct-GGUF\mmproj-Qwen3VL-8B-Instruct-Q8_0.gguf'
+$reasoningModel = 'M:\LLModels\Qwen3-4B-GGUF\Qwen3-4B-Q5_K_M.gguf'
 
 function Test-StarvisModel {
     try {
@@ -20,26 +17,12 @@ function Test-StarvisModel {
 
 if (Test-StarvisModel) { exit 0 }
 
-if ((Test-Path -LiteralPath $lms) -and (Test-Path -LiteralPath $reasoningModel)) {
-    & $lms server start --port $Port
-    if ($LASTEXITCODE -eq 0) {
-        # Reserve enough VRAM for Qwen3-TTS. Twenty-five percent offload keeps
-        # local reasoning responsive while allowing speech to stay on CUDA.
-        & $lms load 'qwen3.8-9b-distill' --gpu 0.25 --context-length 8192 `
-            --parallel 1 --identifier $alias --yes
-        if ($LASTEXITCODE -eq 0 -and (Test-StarvisModel)) { exit 0 }
-    }
-    & $lms server stop 2>$null
-}
-
-if (!(Test-Path -LiteralPath $server) -or !(Test-Path -LiteralPath $fallbackModel) `
-        -or !(Test-Path -LiteralPath $visionProjector)) {
+if (!(Test-Path -LiteralPath $server) -or !(Test-Path -LiteralPath $reasoningModel)) {
     exit 2
 }
 
 $arguments = @(
-    '-m', $fallbackModel,
-    '--mmproj', $visionProjector,
+    '-m', $reasoningModel,
     '--alias', $alias,
     '--host', '127.0.0.1',
     '--port', $Port,

@@ -10,7 +10,9 @@ $ErrorActionPreference = 'Stop'
 $scriptsRoot = $PSScriptRoot
 $lms = 'C:\Users\nicol\.lmstudio\bin\lms.exe'
 $reasoningPort = 1234
-$speechPort = 1235
+$asrPort = 1235
+$visionPort = 1236
+$ttsPort = 1237
 
 function Get-ListeningProcess {
     param([int]$Port)
@@ -25,69 +27,72 @@ function Get-ListeningProcess {
     return $null
 }
 
-function Stop-StarvisSpeechRuntime {
-    $process = Get-ListeningProcess -Port $speechPort
+function Stop-StarvisPythonRuntime {
+    param([int]$Port, [string]$ScriptName)
+    $process = Get-ListeningProcess -Port $Port
     if ($null -eq $process) {
         return
     }
     $command = [string]$process.CommandLine
+    $legacyAsr = $Port -eq $asrPort -and $command -like '*starvis-voice-runtime.py*'
     if ($process.Name -notmatch '^python(?:w)?\.exe$' `
-            -or $command -notlike '*starvis-voice-runtime.py*') {
-        throw "Port $speechPort is owned by a process that is not the Starvis speech runtime."
+            -or ($command -notlike "*$ScriptName*" -and !$legacyAsr)) {
+        throw "Port $Port is owned by a process that is not the expected Starvis runtime."
     }
     Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
 }
 
-function Stop-StarvisFallbackRuntime {
-    $process = Get-ListeningProcess -Port $reasoningPort
+function Stop-StarvisLlamaRuntime {
+    param([int]$Port, [string]$Alias)
+    $process = Get-ListeningProcess -Port $Port
     if ($null -eq $process) {
         return
     }
     $command = [string]$process.CommandLine
     if ($process.Name -match '^llama-server\.exe$' `
-            -and ($command -like '*starvis-local*' `
-                  -or $command -like '*Qwen3VL-8B-Instruct*')) {
+            -and $command -like "*$Alias*") {
         Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+    } elseif ($null -ne $process) {
+        throw "Port $Port is not owned by the expected Starvis llama runtime."
     }
 }
 
-function Wait-StarvisSpeechRuntime {
-    $deadline = (Get-Date).AddSeconds(35)
+function Wait-StarvisHealth {
+    param([int]$Port, [string]$Capability)
+    $deadline = (Get-Date).AddSeconds(60)
     while ((Get-Date) -lt $deadline) {
         try {
-            $health = Invoke-RestMethod -Uri "http://127.0.0.1:$speechPort/health" `
+            $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" `
                 -TimeoutSec 2
-            if ($health.status -eq 'ok') {
+            if ($health.status -eq 'ok' -and $health.$Capability) {
                 return
             }
         } catch { }
         Start-Sleep -Milliseconds 750
     }
-    throw 'Starvis speech runtime did not become healthy within 35 seconds.'
+    throw "Starvis $Capability runtime did not become healthy within 60 seconds."
 }
 
 if ($Action -eq 'enable') {
     & (Join-Path $scriptsRoot 'start-starvis-runtime.ps1')
     & (Join-Path $scriptsRoot 'start-starvis-voice-runtime.ps1')
-    Wait-StarvisSpeechRuntime
-    Write-Output 'Starvis local reasoning and speech runtimes started.'
+    & (Join-Path $scriptsRoot 'start-starvis-vision-runtime.ps1')
+    & (Join-Path $scriptsRoot 'start-starvis-tts-runtime.ps1')
+    Wait-StarvisHealth -Port $asrPort -Capability 'asrReady'
+    Wait-StarvisHealth -Port $ttsPort -Capability 'ttsReady'
+    Write-Output 'Starvis reasoning, vision, ASR, and TTS runtimes started.'
     exit 0
 }
 
-Stop-StarvisSpeechRuntime
-
+Stop-StarvisPythonRuntime -Port $asrPort -ScriptName 'starvis-asr-runtime.py'
+Stop-StarvisPythonRuntime -Port $ttsPort -ScriptName 'starvis-fast-tts-runtime.py'
 if (Test-Path -LiteralPath $lms) {
     $previousErrorAction = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     & $lms unload 'starvis-local' 2>$null
-    $unloadExitCode = $LASTEXITCODE
+    & $lms server stop 2>$null
     $ErrorActionPreference = $previousErrorAction
-    if ($unloadExitCode -ne 0) {
-        Write-Verbose 'LM Studio did not have a loaded starvis-local model.'
-    }
 }
-
-# LM Studio owns its shared server, so only unload our model there. The
-# dedicated llama.cpp fallback can be terminated when it owns the port.
-Stop-StarvisFallbackRuntime
+Stop-StarvisLlamaRuntime -Port $reasoningPort -Alias 'starvis-local'
+Stop-StarvisLlamaRuntime -Port $visionPort -Alias 'starvis-vision'
 Write-Output 'Starvis local models stopped; GPU memory released.'

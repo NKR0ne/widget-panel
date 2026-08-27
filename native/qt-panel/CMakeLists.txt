@@ -87,6 +87,7 @@ target_link_libraries(qt-panel PRIVATE
     bcrypt
     advapi32
     sapi          # offline speech (ISpVoice) for spoken alerts
+    winmm         # native WAV fallback when Qt Multimedia cannot enumerate audio
     ole32
     windowsapp
     d3d11

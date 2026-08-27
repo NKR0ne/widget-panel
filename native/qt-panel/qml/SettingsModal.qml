@@ -800,7 +800,7 @@ Item {
             Rectangle {
                 id: starvisRuntimeCard
                 width: parent.width
-                height: 122
+                height: 148
                 radius: 6
                 color: Qt.rgba(1, 1, 1, 0.045)
                 border.color: Theme.cardStroke
@@ -873,6 +873,8 @@ Item {
                             model: [
                                 { label: "Raisonnement", ready: starvisRuntimeCard.parent.runtimeStatus.reasoningReady },
                                 { label: "Vision", ready: starvisRuntimeCard.parent.runtimeStatus.visionReady },
+                                { label: "ASR", ready: starvisRuntimeCard.parent.runtimeStatus.asrReady },
+                                { label: "TTS", ready: starvisRuntimeCard.parent.runtimeStatus.ttsReady },
                                 { label: "Outils", ready: starvisRuntimeCard.parent.runtimeStatus.reasoningReady },
                                 { label: "Streaming", ready: starvisRuntimeCard.parent.runtimeStatus.reasoningReady },
                             ]
@@ -896,8 +898,8 @@ Item {
                     }
                     Text {
                         width: parent.width
-                        visible: starvisRuntimeCard.parent.runtimeStatus.localMultimodal
-                        text: "Qwen3-VL 8B · contexte 8192 · CUDA · Flash Attention · cache KV Q8"
+                        visible: starvisRuntimeCard.parent.runtimeStatus.provider === "local"
+                        text: "Raisonnement Qwen3 4B · Vision Qwen3-VL 8B · ASR Qwen3 1.7B · TTS Piper CPU"
                         color: Theme.textSecondary
                         font.pixelSize: 8
                         elide: Text.ElideRight
@@ -952,12 +954,16 @@ Item {
                 Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "model"; item.fallback = "starvis-local"; item.placeholder = "Alias du modèle local" } }
                 Text { text: "Point d'accès local"; color: Theme.textSecondary; font.pixelSize: 8 }
                 Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "baseUrl"; item.fallback = "http://127.0.0.1:1234/v1"; item.placeholder = "API locale compatible OpenAI" } }
+                Text { text: "Modèle de vision"; color: Theme.textSecondary; font.pixelSize: 8 }
+                Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "visionModel"; item.fallback = "starvis-vision"; item.placeholder = "Alias du modèle de vision" } }
+                Text { text: "Point d'accès vision"; color: Theme.textSecondary; font.pixelSize: 8 }
+                Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "visionBaseUrl"; item.fallback = "http://127.0.0.1:1236/v1"; item.placeholder = "API locale de vision" } }
                 Text { text: "Longueur maximale de la réponse"; color: Theme.textSecondary; font.pixelSize: 8 }
                 Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "maxTokens"; item.fallback = "1800"; item.placeholder = "Tokens de sortie (128-8192)" } }
                 Text {
                     width: parent.width
-                    text: "Le même modèle assure le raisonnement, les outils et l'analyse d'images. "
-                          + "Le serveur local reste chargé en arrière-plan."
+                    text: "Le raisonnement et la vision utilisent des processus distincts. "
+                          + "Une charge lente ou indisponible ne bloque pas les autres fonctions."
                     color: Theme.textSecondary; font.pixelSize: 9; wrapMode: Text.WordWrap
                 }
             }
@@ -996,7 +1002,7 @@ Item {
                 width: parent.width
                 text: {
                     const status = starvisRuntimeCard.parent.runtimeStatus
-                    const output = status.speechProvider === "local" ? "Qwen3-TTS local"
+                    const output = status.speechProvider === "local" ? "Piper local rapide"
                                  : status.speechProvider === "openai" ? "OpenAI TTS"
                                  : status.speechProvider === "windows" ? "Windows SAPI hors ligne"
                                  : "aucune sortie vocale"
@@ -1024,7 +1030,8 @@ Item {
                 }
                 readonly property string selectedVoice: {
                     modal.starvisRevision
-                    return modal.blobValue("wp-starvis-voice", "ttsVoice", "Ryan")
+                    const saved = modal.blobValue("wp-starvis-voice", "ttsVoice", "Tom")
+                    return ["Tom", "Pierre", "Jessica"].indexOf(saved) >= 0 ? saved : "Tom"
                 }
 
                 Text { text: "CONVERSATION"; color: Theme.textSecondary; font.pixelSize: 8 }
@@ -1033,7 +1040,7 @@ Item {
                     spacing: 4
                     Repeater {
                         model: [
-                            { label: "Qwen local", value: "local" },
+                            { label: "Qwen ASR local", value: "local" },
                             { label: "OpenAI temps réel", value: "openai" }
                         ]
                         delegate: Rectangle {
@@ -1068,7 +1075,7 @@ Item {
                     spacing: 4
                     Repeater {
                         model: [
-                            { label: "Qwen local", value: "local" },
+                            { label: "Piper rapide", value: "local" },
                             { label: "Windows", value: "windows" },
                             { label: "OpenAI", value: "openai" }
                         ]
@@ -1102,13 +1109,12 @@ Item {
                     width: parent.width
                     spacing: 7
                     visible: voiceSettings.speechProvider === "local"
-                    Text { text: "Voix Qwen3-TTS"; color: Theme.textSecondary; font.pixelSize: 8 }
+                    Text { text: "Voix Piper françaises"; color: Theme.textSecondary; font.pixelSize: 8 }
                     Flow {
                         width: parent.width
                         spacing: 4
                         Repeater {
-                            model: ["Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric",
-                                    "Ryan", "Aiden", "Ono_Anna", "Sohee"]
+                            model: ["Tom", "Pierre", "Jessica"]
                             delegate: Rectangle {
                                 required property string modelData
                                 readonly property bool selected: voiceSettings.selectedVoice === modelData
@@ -1155,9 +1161,10 @@ Item {
                             onClicked: Starvis.previewVoice(voiceSettings.selectedVoice)
                         }
                     }
-                    Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "localEndpoint"; item.fallback = "http://127.0.0.1:1235/v1"; item.placeholder = "API vocale locale" } }
-                    Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "voiceInstruction"; item.fallback = "Voix posée, naturelle et concise."; item.placeholder = "Style de voix" } }
+                    Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "ttsEndpoint"; item.fallback = "http://127.0.0.1:1237/v1"; item.placeholder = "API Piper locale" } }
                 }
+
+                Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "asrEndpoint"; item.fallback = "http://127.0.0.1:1235/v1"; item.placeholder = "API ASR locale" } }
 
                 Loader {
                     sourceComponent: keyField

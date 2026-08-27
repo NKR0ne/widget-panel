@@ -175,7 +175,7 @@ QString VoiceSession::provider() const
 
 QString VoiceSession::localEndpoint() const
 {
-    QString endpoint = voiceConfig().value(QStringLiteral("localEndpoint"),
+    QString endpoint = voiceConfig().value(QStringLiteral("asrEndpoint"),
                                             QStringLiteral("http://127.0.0.1:1235/v1"))
                            .toString().trimmed();
     while (endpoint.endsWith(QLatin1Char('/')))
@@ -205,8 +205,7 @@ void VoiceSession::probeLocalRuntime()
         const QJsonObject body = QJsonDocument::fromJson(reply->readAll()).object();
         const bool ready = reply->error() == QNetworkReply::NoError
             && body.value(QStringLiteral("status")).toString() == QLatin1String("ok")
-            && body.value(QStringLiteral("asrReady")).toBool()
-            && body.value(QStringLiteral("ttsReady")).toBool();
+            && body.value(QStringLiteral("asrReady")).toBool();
         reply->deleteLater();
         if (ready != m_localRuntimeReady) {
             m_localRuntimeReady = ready;

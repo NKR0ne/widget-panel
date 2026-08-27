@@ -15,6 +15,7 @@
 #include "services/workstation/WorkstationClient.h"
 
 #include <QAudioOutput>
+#include <QAudioDevice>
 #include <QBuffer>
 #include <QCoreApplication>
 #include <QDateTime>
@@ -28,6 +29,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMediaPlayer>
+#include <QMediaDevices>
 #include <QNetworkReply>
 #include <QProcess>
 #include <QRegularExpression>
@@ -35,8 +37,14 @@
 #include <QTimer>
 #include <QUrl>
 #include <QUuid>
+#include <QtEndian>
 
 #include <memory>
+
+#ifdef Q_OS_WIN
+#include <windows.h>
+#include <mmsystem.h>
+#endif
 
 namespace qtpanel {
 
@@ -280,8 +288,8 @@ void StarvisService::setLocalModelsEnabled(bool enabled)
         stopSpeaking();
         if (m_voice)
             m_voice->stop();
-        if (m_localBackendReady) {
-            m_localBackendReady = false;
+        if (m_localBackendReady || m_localVisionReady || m_localAsrReady || m_localTtsReady) {
+            m_localBackendReady = m_localVisionReady = m_localAsrReady = m_localTtsReady = false;
             emit configuredChanged();
         }
     }
@@ -371,12 +379,21 @@ QVariantMap StarvisService::providerStatus() const
         {QStringLiteral("localModelsEnabled"), localModelsEnabled()},
         {QStringLiteral("localModelsTransitioning"), m_localModelsTransitioning},
         {QStringLiteral("visionReady"), visionConfigured()},
+        {QStringLiteral("asrReady"), localModelsEnabled() && m_localAsrReady},
+        {QStringLiteral("ttsReady"), speechProvider != QLatin1String("local")
+             || (localModelsEnabled() && m_localTtsReady)},
         {QStringLiteral("speechProvider"), speechProvider},
         {QStringLiteral("voiceProvider"), m_voice ? m_voice->provider() : QStringLiteral("none")},
         {QStringLiteral("realtimeVoiceReady"), m_voice && m_voice->available()},
         {QStringLiteral("contextWindow"), local ? 8192 : 0},
-        {QStringLiteral("localMultimodal"), local},
+        {QStringLiteral("localMultimodal"), false},
         {QStringLiteral("endpoint"), normalizedOpenAiBaseUrl(config())},
+        {QStringLiteral("visionEndpoint"), config().value(QStringLiteral("visionBaseUrl"),
+             QStringLiteral("http://127.0.0.1:1236/v1"))},
+        {QStringLiteral("asrEndpoint"), voiceConfig().value(QStringLiteral("asrEndpoint"),
+             QStringLiteral("http://127.0.0.1:1235/v1"))},
+        {QStringLiteral("ttsEndpoint"), voiceConfig().value(QStringLiteral("ttsEndpoint"),
+             QStringLiteral("http://127.0.0.1:1237/v1"))},
         {QStringLiteral("pinned"), m_modelResolver->pinned()},
         {QStringLiteral("resolvedAt"), m_modelResolver->resolvedAt()},
     };
@@ -410,7 +427,10 @@ QString StarvisService::model() const
     if (provider() == QLatin1String("anthropic"))
         return m_modelResolver->currentModel();
     const QString stored = config().value(QStringLiteral("model")).toString().trimmed();
-    return stored.isEmpty() ? QLatin1String(kDefaultModel) : stored;
+    if (!stored.isEmpty())
+        return stored;
+    return provider() == QLatin1String("local") ? QStringLiteral("starvis-local")
+                                                 : QLatin1String(kDefaultModel);
 }
 
 QString StarvisService::buildContextBlock() const
@@ -490,7 +510,8 @@ void StarvisService::setBusy(bool busy)
 
 bool StarvisService::speaking() const
 {
-    return m_ttsPlayer && m_ttsPlayer->playbackState() == QMediaPlayer::PlayingState;
+    return m_nativeSpeechPlaying
+        || (m_ttsPlayer && m_ttsPlayer->playbackState() == QMediaPlayer::PlayingState);
 }
 
 void StarvisService::stopSpeaking()
@@ -508,6 +529,14 @@ void StarvisService::stopSpeaking()
     }
     if (m_ttsPlayer)
         m_ttsPlayer->stop();
+#ifdef Q_OS_WIN
+    if (m_nativeSpeechPlaying) {
+        ++m_nativeSpeechGeneration;
+        PlaySoundW(nullptr, nullptr, 0);
+        m_nativeSpeechPlaying = false;
+        emit speakingChanged();
+    }
+#endif
     if (m_speech)
         m_speech->stop();
 }
@@ -558,6 +587,40 @@ void StarvisService::playSpeechBytes(const QByteArray& bytes, const QString& ext
     }
     file.write(bytes);
     file.close();
+
+#ifdef Q_OS_WIN
+    if (extension.compare(QStringLiteral("wav"), Qt::CaseInsensitive) == 0
+        && QMediaDevices::defaultAudioOutput().isNull()) {
+        const std::wstring nativePath = QDir::toNativeSeparators(path).toStdWString();
+        if (!PlaySoundW(nativePath.c_str(), nullptr,
+                        SND_FILENAME | SND_ASYNC | SND_NODEFAULT)) {
+            m_ttsPending = false;
+            emit speakingChanged();
+            emit speechOutputFinished(false, QStringLiteral("native audio playback failed"));
+            return;
+        }
+        const quint32 byteRate = bytes.size() >= 32
+            ? qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(bytes.constData() + 28))
+            : 0;
+        const int durationMs = byteRate > 0
+            ? qBound(250, int((qint64(bytes.size()) * 1000) / byteRate) + 300, 300000)
+            : 30000;
+        const int generation = ++m_nativeSpeechGeneration;
+        m_ttsPending = false;
+        m_nativeSpeechPlaying = true;
+        emit speakingChanged();
+        QTimer::singleShot(durationMs, this, [this, generation] {
+            if (generation != m_nativeSpeechGeneration || !m_nativeSpeechPlaying)
+                return;
+            m_nativeSpeechPlaying = false;
+            emit speakingChanged();
+            emit speechOutputFinished(true, QString());
+        });
+        qInfo() << "[starvis] TTS playing through native WAV fallback,"
+                << bytes.size() << "bytes";
+        return;
+    }
+#endif
 
     if (!m_ttsPlayer) {
         m_ttsPlayer = new QMediaPlayer(this);
@@ -623,7 +686,7 @@ void StarvisService::speak(const QString& text)
         ttsModel = QStringLiteral("gpt-4o-mini-tts");
     QString voice = cfg.value(QStringLiteral("ttsVoice")).toString().trimmed();
     if (voice.isEmpty())
-        voice = output == QLatin1String("local") ? QStringLiteral("Ryan")
+        voice = output == QLatin1String("local") ? QStringLiteral("Tom")
                                                    : QStringLiteral("alloy");
 
     QJsonObject body{
@@ -638,12 +701,8 @@ void StarvisService::speak(const QString& text)
     QString bearer;
     QString extension;
     if (output == QLatin1String("local")) {
-        baseUrl = cfg.value(QStringLiteral("localEndpoint"),
-                            QStringLiteral("http://127.0.0.1:1235/v1")).toString();
-        body.insert(QStringLiteral("language"),
-                    cfg.value(QStringLiteral("language"), QStringLiteral("French")).toString());
-        body.insert(QStringLiteral("instruct"), cfg.value(QStringLiteral("voiceInstruction"),
-                                                           QString()).toString());
+        baseUrl = cfg.value(QStringLiteral("ttsEndpoint"),
+                            QStringLiteral("http://127.0.0.1:1237/v1")).toString();
         extension = QStringLiteral("wav");
     } else {
         baseUrl = QStringLiteral("https://api.openai.com/v1");
@@ -669,7 +728,7 @@ void StarvisService::speak(const QString& text)
             return;
         }
         playSpeechBytes(bytes, extension);
-    }, output == QLatin1String("local") ? 240000 : 60000);
+    }, output == QLatin1String("local") ? 30000 : 60000);
 }
 
 void StarvisService::chat(const QString& message, const QVariantList& history,
@@ -692,66 +751,72 @@ void StarvisService::chat(const QString& message, const QVariantList& history,
 void StarvisService::probeLocalBackend()
 {
     if (provider() != QLatin1String("local") || !localModelsEnabled()) {
-        if (m_localBackendReady) {
-            m_localBackendReady = false;
+        if (m_localBackendReady || m_localVisionReady || m_localAsrReady || m_localTtsReady) {
+            m_localBackendReady = m_localVisionReady = m_localAsrReady = m_localTtsReady = false;
             emit configuredChanged();
         }
         return;
     }
 
-    QUrl health(normalizedOpenAiBaseUrl(config()));
-    QString path = health.path();
-    if (path.endsWith(QLatin1String("/v1")))
-        path.chop(3);
-    while (path.endsWith(QLatin1Char('/')))
-        path.chop(1);
-    health.setPath(path + QStringLiteral("/health"));
-    auto applyReady = [this](bool ready) {
-        if (ready == m_localBackendReady)
+    const QVariantMap cfg = config();
+    const QVariantMap voice = voiceConfig();
+    auto setReady = [this](bool& target, bool ready) {
+        if (target == ready)
             return;
-        m_localBackendReady = ready;
+        target = ready;
         emit configuredChanged();
     };
-    m_http->getJson(health, this, [this, applyReady](const QJsonDocument& doc,
+    auto probeModel = [this, setReady](QString base, const QString& expected, bool* target) {
+        while (base.endsWith(QLatin1Char('/')))
+            base.chop(1);
+        m_http->getJson(QUrl(base + QStringLiteral("/models")), this,
+                        [setReady, expected, target](const QJsonDocument& doc,
                                                      const QString& error) {
-        const bool llamaReady = error.isEmpty()
-            && doc.object().value(QStringLiteral("status")).toString() == QLatin1String("ok");
-        if (llamaReady) {
-            applyReady(true);
-            return;
-        }
-
-        const QVariantMap cfg = config();
-        const QString expectedModel = model();
-        m_http->getJson(QUrl(normalizedOpenAiBaseUrl(cfg) + QStringLiteral("/models")), this,
-                        [applyReady, expectedModel](const QJsonDocument& models,
-                                                    const QString& modelsError) {
             bool found = false;
-            if (modelsError.isEmpty()) {
-                for (const QJsonValue& value : models.object()
-                         .value(QStringLiteral("data")).toArray()) {
-                    if (value.toObject().value(QStringLiteral("id")).toString()
-                        == expectedModel) {
-                        found = true;
-                        break;
-                    }
-                }
+            if (error.isEmpty()) {
+                for (const QJsonValue& value : doc.object().value(QStringLiteral("data")).toArray())
+                    found = found || value.toObject().value(QStringLiteral("id")).toString() == expected;
             }
-            applyReady(found);
+            setReady(*target, found);
         });
-    });
+    };
+    auto probeHealth = [this, setReady](QString base, const QString& capability, bool* target) {
+        while (base.endsWith(QLatin1Char('/')))
+            base.chop(1);
+        if (base.endsWith(QLatin1String("/v1")))
+            base.chop(3);
+        m_http->getJson(QUrl(base + QStringLiteral("/health")), this,
+                        [setReady, capability, target](const QJsonDocument& doc,
+                                                       const QString& error) {
+            const QJsonObject body = doc.object();
+            setReady(*target, error.isEmpty()
+                && body.value(QStringLiteral("status")).toString() == QLatin1String("ok")
+                && body.value(capability).toBool());
+        });
+    };
+    probeModel(normalizedOpenAiBaseUrl(cfg), model(), &m_localBackendReady);
+    probeModel(cfg.value(QStringLiteral("visionBaseUrl"),
+                         QStringLiteral("http://127.0.0.1:1236/v1")).toString(),
+               cfg.value(QStringLiteral("visionModel"), QStringLiteral("starvis-vision")).toString(),
+               &m_localVisionReady);
+    probeHealth(voice.value(QStringLiteral("asrEndpoint"),
+                            QStringLiteral("http://127.0.0.1:1235/v1")).toString(),
+                QStringLiteral("asrReady"), &m_localAsrReady);
+    probeHealth(voice.value(QStringLiteral("ttsEndpoint"),
+                            QStringLiteral("http://127.0.0.1:1237/v1")).toString(),
+                QStringLiteral("ttsReady"), &m_localTtsReady);
 }
 
 bool StarvisService::visionConfigured() const
 {
-    return (provider() == QLatin1String("local") && m_localBackendReady)
+    return (provider() == QLatin1String("local") && localModelsEnabled() && m_localVisionReady)
         || (m_anthropic && m_anthropic->configured());
 }
 
 void StarvisService::classifyImage(const QImage& image, const QString& prompt,
                                    QObject* context, ClassifyCallback callback)
 {
-    if (provider() == QLatin1String("local") && m_localBackendReady) {
+    if (provider() == QLatin1String("local") && m_localVisionReady) {
         QJsonArray content;
         content.append(localImagePart(image));
         content.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
@@ -771,7 +836,7 @@ void StarvisService::classifyWithGallery(const QVector<QPair<QString, QImage>>& 
                                          const QImage& probe, const QString& prompt,
                                          QObject* context, ClassifyCallback callback)
 {
-    if (provider() == QLatin1String("local") && m_localBackendReady) {
+    if (provider() == QLatin1String("local") && m_localVisionReady) {
         QJsonArray content;
         for (const auto& entry : gallery) {
             if (entry.second.isNull())
@@ -804,8 +869,14 @@ void StarvisService::classifyWithGallery(const QVector<QPair<QString, QImage>>& 
 void StarvisService::classifyLocalContent(const QJsonArray& content, QObject* context,
                                           ClassifyCallback callback)
 {
+    QString visionBaseUrl = config().value(QStringLiteral("visionBaseUrl"),
+                                            QStringLiteral("http://127.0.0.1:1236/v1"))
+                                .toString();
+    while (visionBaseUrl.endsWith(QLatin1Char('/')))
+        visionBaseUrl.chop(1);
     const QJsonObject body{
-        {QStringLiteral("model"), model()},
+        {QStringLiteral("model"), config().value(QStringLiteral("visionModel"),
+                                                   QStringLiteral("starvis-vision")).toString()},
         {QStringLiteral("messages"), QJsonArray{QJsonObject{
             {QStringLiteral("role"), QStringLiteral("user")},
             {QStringLiteral("content"), content},
@@ -815,8 +886,7 @@ void StarvisService::classifyLocalContent(const QJsonArray& content, QObject* co
         {QStringLiteral("stream"), false},
     };
     m_http->requestJsonAuth(
-        "POST", QUrl(normalizedOpenAiBaseUrl(config())
-                         + QStringLiteral("/chat/completions")),
+        "POST", QUrl(visionBaseUrl + QStringLiteral("/chat/completions")),
         QString(), QJsonDocument(body).toJson(QJsonDocument::Compact), context,
         [callback = std::move(callback)](const QJsonDocument& doc, int status,
                                          const QString& error) {

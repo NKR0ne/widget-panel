@@ -31,8 +31,8 @@ class WeatherService;
 class WorkstationClient;
 
 // Native Starvis chat, briefing, speech, context injection, vision, and gated
-// agent actions. The default provider is the local OpenAI-compatible Qwen3-VL
-// runtime; Anthropic and OpenAI remain explicit cloud alternatives.
+// agent actions. Local reasoning, vision, ASR, and TTS use independent
+// runtimes so one slow or unavailable capability cannot block the others.
 class StarvisService : public QObject {
     Q_OBJECT
     Q_MOC_INCLUDE("services/starvis/StarvisState.h")
@@ -198,10 +198,15 @@ private:
     qint64 m_sessionOutputTokens = 0;
     bool m_busy = false;
     bool m_localBackendReady = false;
+    bool m_localVisionReady = false;
+    bool m_localAsrReady = false;
+    bool m_localTtsReady = false;
     QMediaPlayer* m_ttsPlayer = nullptr;
     QAudioOutput* m_ttsAudio = nullptr;
     QPointer<QNetworkReply> m_ttsReply;
     bool m_ttsPending = false;
+    bool m_nativeSpeechPlaying = false;
+    int m_nativeSpeechGeneration = 0;
     bool m_localModelsTransitioning = false;
     QVariantList m_actions; // newest first; each: {id,type,summary,detail,status,verdict,reason,severity}
 };
