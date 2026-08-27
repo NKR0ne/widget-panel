@@ -7,13 +7,30 @@ Item {
 
     // Panel content to blur behind the drawer; set by PanelSurface.
     property Item backdropSource: null
+    // Qt 6.10.3 can invalidate singleton property caches while this dynamic
+    // component is finalized. PanelSurface resolves singletons and passes only
+    // ordinary values into the drawer.
+    property bool drawerOpen: false
+    property int animationDuration: 180
+    property color panelColor: "#202633"
+    property color rowFill: "#2a3140"
+    property color rowStroke: "#465064"
+    property color rowTextPrimary: "#f3f6fb"
+    property color rowTextSecondary: "#b8c0cd"
+    property color rowSuccess: "#34d399"
+    property color rowDanger: "#fb7185"
+    property color rowInfo: "#60a5fa"
+    property color rowWarning: "#fbbf24"
+    property int rowCaptionSize: 10
+    property int titleSize: 13
+    signal closeRequested()
 
     visible: opacity > 0
-    opacity: Ui.statusOpen ? 1 : 0
-    enabled: Ui.statusOpen
-    focus: Ui.statusOpen
-    Behavior on opacity { NumberAnimation { duration: Motion.normalMs } }
-    Keys.onEscapePressed: Ui.closeStatus()
+    opacity: drawerOpen ? 1 : 0
+    enabled: drawerOpen
+    focus: drawerOpen
+    Behavior on opacity { NumberAnimation { duration: drawer.animationDuration } }
+    Keys.onEscapePressed: drawer.closeRequested()
 
     function fallbackRows() {
         return [
@@ -35,17 +52,17 @@ Item {
     }
 
     function tone(state) {
-        return state === "ok" ? Theme.success
-            : state === "error" ? Theme.danger
-            : state === "setup" ? Theme.info : Theme.warning
+        return state === "ok" ? drawer.rowSuccess
+            : state === "error" ? drawer.rowDanger
+            : state === "setup" ? drawer.rowInfo : drawer.rowWarning
     }
 
     ScrimBackdrop {
         anchors.fill: parent
         source: drawer.backdropSource
-        active: Ui.statusOpen
+        active: drawer.drawerOpen
         dim: 0.52
-        MouseArea { anchors.fill: parent; onClicked: Ui.closeStatus() }
+        MouseArea { anchors.fill: parent; onClicked: drawer.closeRequested() }
     }
 
     Rectangle {
@@ -53,8 +70,8 @@ Item {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         anchors.right: parent.right
-        color: Theme.panelSolid
-        border.color: Theme.cardStroke
+        color: drawer.panelColor
+        border.color: drawer.rowStroke
 
         Column {
             anchors.fill: parent
@@ -67,8 +84,8 @@ Item {
                 Text {
                     width: parent.width - runButton.width - closeButton.width - 12
                     text: "\u00c9tat des services"
-                    color: Theme.textPrimary
-                    font.pixelSize: Theme.fontSizeTitle
+                    color: drawer.rowTextPrimary
+                    font.pixelSize: drawer.titleSize
                     font.weight: Font.DemiBold
                     anchors.verticalCenter: parent.verticalCenter
                     elide: Text.ElideRight
@@ -85,7 +102,7 @@ Item {
                     id: closeButton
                     glyph: "\uE8BB"
                     tooltip: "Fermer"
-                    onClicked: Ui.closeStatus()
+                    onClicked: drawer.closeRequested()
                 }
             }
 
@@ -115,8 +132,8 @@ Item {
                             width: serviceColumn.width
                             height: 48
                             radius: 6
-                            color: Theme.cardFill
-                            border.color: Theme.cardStroke
+                            color: drawer.rowFill
+                            border.color: drawer.rowStroke
                             Rectangle {
                                 width: 7; height: 7; radius: 3.5
                                 x: 10
@@ -131,14 +148,14 @@ Item {
                                 Text {
                                     width: parent.width
                                     text: modelData.label || modelData.id || "Service"
-                                    color: Theme.textPrimary
-                                    font.pixelSize: Theme.fontSizeCaption
+                                    color: drawer.rowTextPrimary
+                                    font.pixelSize: drawer.rowCaptionSize
                                     elide: Text.ElideRight
                                 }
                                 Text {
                                     width: parent.width
                                     text: modelData.detail || modelData.state || ""
-                                    color: Theme.textSecondary
+                                    color: drawer.rowTextSecondary
                                     font.pixelSize: 9
                                     elide: Text.ElideRight
                                 }

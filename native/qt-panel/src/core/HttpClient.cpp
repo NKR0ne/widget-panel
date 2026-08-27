@@ -35,6 +35,21 @@ HttpClient::HttpClient(QObject* parent)
     });
 }
 
+HttpClient::~HttpClient()
+{
+    // The manager owns its replies and destroys them after this destructor
+    // body. Silence reply callbacks now, while credential state is alive.
+    const auto replies = m_nam.findChildren<QNetworkReply*>(
+        QString(), Qt::FindDirectChildrenOnly);
+    for (QNetworkReply* reply : replies) {
+        QObject::disconnect(reply, nullptr, nullptr, nullptr);
+        reply->abort();
+    }
+    QObject::disconnect(&m_nam, nullptr, this, nullptr);
+    m_authCredentials.clear();
+    m_authAnswered.clear();
+}
+
 void HttpClient::registerAuth(QNetworkReply* reply, const QString& user, const QString& password)
 {
     m_authCredentials.insert(reply, {user, password});
@@ -142,12 +157,14 @@ void HttpClient::requestJsonAuth(const QByteArray& verb, const QUrl& url,
 
 void HttpClient::postForBytes(const QUrl& url, const QString& bearerToken,
                               const QByteArray& jsonBody, QObject* context,
-                              BytesCallback callback)
+                              BytesCallback callback, int timeoutMs)
 {
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, QLatin1String(kUserAgent));
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
-    request.setRawHeader("Authorization", "Bearer " + bearerToken.toUtf8());
+    if (!bearerToken.isEmpty())
+        request.setRawHeader("Authorization", "Bearer " + bearerToken.toUtf8());
+    request.setTransferTimeout(timeoutMs);
     QNetworkReply* reply = m_nam.post(request, jsonBody);
     connect(reply, &QNetworkReply::finished, context,
             [reply, callback = std::move(callback)] {

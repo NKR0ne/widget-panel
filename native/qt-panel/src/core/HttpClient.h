@@ -20,6 +20,7 @@ class HttpClient : public QObject {
 
 public:
     explicit HttpClient(QObject* parent = nullptr);
+    ~HttpClient() override;
 
     using JsonCallback = std::function<void(const QJsonDocument& doc, const QString& error)>;
     // status is the HTTP status code (0 on transport error).
@@ -47,7 +48,7 @@ public:
 
     // Bearer-authorized JSON POST returning the raw response body (audio, …).
     void postForBytes(const QUrl& url, const QString& bearerToken, const QByteArray& jsonBody,
-                      QObject* context, BytesCallback callback);
+                      QObject* context, BytesCallback callback, int timeoutMs = 15000);
 
     // `event` is the SSE event name ("" when the frame has none), `data` the
     // joined data: payload of one frame.

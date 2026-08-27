@@ -147,6 +147,7 @@ Item {
         const cfg = parseJson(Store.get(storeKey, ""), {})
         cfg[field] = value
         Store.set(storeKey, JSON.stringify(cfg))
+        starvisRevision++
     }
     function cameraAuth() {
         return parseJson(Store.get("wp-camera-auth", ""), {})
@@ -995,28 +996,194 @@ Item {
                 width: parent.width
                 text: {
                     const status = starvisRuntimeCard.parent.runtimeStatus
-                    const output = status.speechProvider === "openai" ? "OpenAI TTS"
+                    const output = status.speechProvider === "local" ? "Qwen3-TTS local"
+                                 : status.speechProvider === "openai" ? "OpenAI TTS"
                                  : status.speechProvider === "windows" ? "Windows SAPI hors ligne"
                                  : "aucune sortie vocale"
                     const realtime = status.realtimeVoiceReady
-                                   ? "Dialogue temps réel prêt."
-                                   : "Dialogue temps réel optionnel avec une clé OpenAI."
+                                   ? "Dialogue " + (status.voiceProvider === "local" ? "local" : "OpenAI") + " prêt."
+                                   : "Service vocal en démarrage."
                     return "Sortie: " + output + ". " + realtime
                 }
                 color: Theme.textSecondary
                 font.pixelSize: 9
                 wrapMode: Text.WordWrap
             }
-            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "starvis-openai-key"; item.placeholder = "Clé OpenAI optionnelle (temps réel + TTS)"; item.secret = true } }
+
             Column {
+                id: voiceSettings
                 width: parent.width
-                spacing: 7
-                visible: starvisRuntimeCard.parent.runtimeStatus.speechProvider === "openai"
-                Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "ttsModel"; item.fallback = "gpt-4o-mini-tts"; item.placeholder = "Modèle TTS OpenAI" } }
-                Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "ttsVoice"; item.fallback = "alloy"; item.placeholder = "Voix TTS OpenAI" } }
+                spacing: 10
+                readonly property string sessionProvider: {
+                    modal.starvisRevision
+                    return modal.blobValue("wp-starvis-voice", "sessionProvider", "local")
+                }
+                readonly property string speechProvider: {
+                    modal.starvisRevision
+                    return modal.blobValue("wp-starvis-voice", "speechProvider", "local")
+                }
+                readonly property string selectedVoice: {
+                    modal.starvisRevision
+                    return modal.blobValue("wp-starvis-voice", "ttsVoice", "Ryan")
+                }
+
+                Text { text: "CONVERSATION"; color: Theme.textSecondary; font.pixelSize: 8 }
+                Row {
+                    width: parent.width
+                    spacing: 4
+                    Repeater {
+                        model: [
+                            { label: "Qwen local", value: "local" },
+                            { label: "OpenAI temps réel", value: "openai" }
+                        ]
+                        delegate: Rectangle {
+                            required property var modelData
+                            readonly property bool selected: voiceSettings.sessionProvider === modelData.value
+                            width: (voiceSettings.width - 4) / 2
+                            height: 27; radius: 5
+                            color: selected ? Theme.activeFill
+                                            : sessionMouse.containsMouse ? Theme.hover : "transparent"
+                            border.color: selected ? Theme.accent : Theme.cardStroke
+                            Text {
+                                anchors.centerIn: parent
+                                text: parent.modelData.label
+                                color: parent.selected ? Theme.textPrimary : Theme.textSecondary
+                                font.pixelSize: 9
+                                font.weight: parent.selected ? Font.DemiBold : Font.Normal
+                            }
+                            MouseArea {
+                                id: sessionMouse
+                                anchors.fill: parent; hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: modal.setBlobValue("wp-starvis-voice", "sessionProvider",
+                                                              parent.modelData.value)
+                            }
+                        }
+                    }
+                }
+
+                Text { text: "SORTIE VOCALE"; color: Theme.textSecondary; font.pixelSize: 8 }
+                Row {
+                    width: parent.width
+                    spacing: 4
+                    Repeater {
+                        model: [
+                            { label: "Qwen local", value: "local" },
+                            { label: "Windows", value: "windows" },
+                            { label: "OpenAI", value: "openai" }
+                        ]
+                        delegate: Rectangle {
+                            required property var modelData
+                            readonly property bool selected: voiceSettings.speechProvider === modelData.value
+                            width: (voiceSettings.width - 8) / 3
+                            height: 27; radius: 5
+                            color: selected ? Theme.activeFill
+                                            : outputMouse.containsMouse ? Theme.hover : "transparent"
+                            border.color: selected ? Theme.accent : Theme.cardStroke
+                            Text {
+                                anchors.centerIn: parent
+                                text: parent.modelData.label
+                                color: parent.selected ? Theme.textPrimary : Theme.textSecondary
+                                font.pixelSize: 9
+                                font.weight: parent.selected ? Font.DemiBold : Font.Normal
+                            }
+                            MouseArea {
+                                id: outputMouse
+                                anchors.fill: parent; hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: modal.setBlobValue("wp-starvis-voice", "speechProvider",
+                                                              parent.modelData.value)
+                            }
+                        }
+                    }
+                }
+
+                Column {
+                    width: parent.width
+                    spacing: 7
+                    visible: voiceSettings.speechProvider === "local"
+                    Text { text: "Voix Qwen3-TTS"; color: Theme.textSecondary; font.pixelSize: 8 }
+                    Flow {
+                        width: parent.width
+                        spacing: 4
+                        Repeater {
+                            model: ["Vivian", "Serena", "Uncle_Fu", "Dylan", "Eric",
+                                    "Ryan", "Aiden", "Ono_Anna", "Sohee"]
+                            delegate: Rectangle {
+                                required property string modelData
+                                readonly property bool selected: voiceSettings.selectedVoice === modelData
+                                width: voiceName.implicitWidth + 16
+                                height: 25; radius: 5
+                                color: selected ? Theme.activeFill
+                                                : voiceMouse.containsMouse ? Theme.hover : "transparent"
+                                border.color: selected ? Theme.accent : Theme.cardStroke
+                                Text {
+                                    id: voiceName
+                                    anchors.centerIn: parent
+                                    text: parent.modelData
+                                    color: parent.selected ? Theme.textPrimary : Theme.textSecondary
+                                    font.pixelSize: 9
+                                }
+                                MouseArea {
+                                    id: voiceMouse
+                                    anchors.fill: parent; hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: modal.setBlobValue("wp-starvis-voice", "ttsVoice",
+                                                                  parent.modelData)
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        width: previewLabel.implicitWidth + 20
+                        height: 27; radius: 5
+                        color: previewMouse.containsMouse ? Theme.hover : Theme.cardFill
+                        border.color: Theme.cardStroke
+                        Text {
+                            id: previewLabel
+                            anchors.centerIn: parent
+                            text: Starvis.speaking ? "Arrêter l'aperçu" : "Écouter " + voiceSettings.selectedVoice
+                            color: Theme.textPrimary
+                            font.pixelSize: 9
+                        }
+                        MouseArea {
+                            id: previewMouse
+                            anchors.fill: parent; hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: Starvis.previewVoice(voiceSettings.selectedVoice)
+                        }
+                    }
+                    Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "localEndpoint"; item.fallback = "http://127.0.0.1:1235/v1"; item.placeholder = "API vocale locale" } }
+                    Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "voiceInstruction"; item.fallback = "Voix posée, naturelle et concise."; item.placeholder = "Style de voix" } }
+                }
+
+                Loader {
+                    sourceComponent: keyField
+                    visible: voiceSettings.sessionProvider === "openai"
+                             || voiceSettings.speechProvider === "openai"
+                    onLoaded: {
+                        item.vaultKey = "starvis-openai-key"
+                        item.placeholder = "Clé OpenAI pour la voix"
+                        item.secret = true
+                    }
+                }
+
+                Column {
+                    width: parent.width
+                    spacing: 7
+                    visible: voiceSettings.speechProvider === "openai"
+                    Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "ttsModel"; item.fallback = "gpt-4o-mini-tts"; item.placeholder = "Modèle TTS OpenAI" } }
+                    Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "ttsVoice"; item.fallback = "alloy"; item.placeholder = "Voix TTS OpenAI" } }
+                }
+
+                Column {
+                    width: parent.width
+                    spacing: 7
+                    visible: voiceSettings.sessionProvider === "openai"
+                    Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "realtimeModel"; item.fallback = "gpt-realtime"; item.placeholder = "Modèle temps réel" } }
+                    Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "voice"; item.fallback = "marin"; item.placeholder = "Voix temps réel" } }
+                }
             }
-            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "realtimeModel"; item.fallback = "gpt-realtime"; item.placeholder = "Modèle temps réel" } }
-            Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "voice"; item.fallback = "marin"; item.placeholder = "Voix" } }
             Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "idleTimeoutMin"; item.fallback = "5"; item.numeric = true; item.placeholder = "Fermeture après inactivité (min)" } }
             Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "maxSessionMin"; item.fallback = "30"; item.numeric = true; item.placeholder = "Durée maximale de session (min)" } }
 

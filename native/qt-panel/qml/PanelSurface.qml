@@ -708,6 +708,20 @@ Item {
         anchors.fill: parent
         z: 90
         backdropSource: chrome
+        drawerOpen: Ui.statusOpen
+        animationDuration: Motion.normalMs
+        panelColor: Theme.panelSolid
+        rowFill: Theme.cardFill
+        rowStroke: Theme.cardStroke
+        rowTextPrimary: Theme.textPrimary
+        rowTextSecondary: Theme.textSecondary
+        rowSuccess: Theme.success
+        rowDanger: Theme.danger
+        rowInfo: Theme.info
+        rowWarning: Theme.warning
+        rowCaptionSize: Theme.fontSizeCaption
+        titleSize: Theme.fontSizeTitle
+        onCloseRequested: Ui.closeStatus()
     }
 
     ToastOverlay {

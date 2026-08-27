@@ -71,6 +71,7 @@ public:
     // Cloud TTS when an OpenAI key is stored, otherwise the offline Windows
     // voice — spoken alerts must not depend on a cloud key being present.
     Q_INVOKABLE void speak(const QString& text);
+    Q_INVOKABLE void previewVoice(const QString& voice);
     Q_INVOKABLE void stopSpeaking();
     // True when speech can be produced by either path.
     Q_INVOKABLE bool canSpeak() const;
@@ -123,6 +124,7 @@ signals:
     void thinkingDelta(const QString& text);
     // Session-cumulative, cost is a family-table estimate in USD.
     void usageUpdated(int inputTokens, int outputTokens, double estCostUsd);
+    void speechOutputFinished(bool success, const QString& error);
 
 private:
     void post(const QString& userMessage, const QVariantList& history,
@@ -158,6 +160,9 @@ private:
     void probeLocalBackend();
     void classifyLocalContent(const QJsonArray& content, QObject* context,
                               ClassifyCallback callback);
+    QVariantMap voiceConfig() const;
+    void playSpeechBytes(const QByteArray& bytes, const QString& extension);
+    void fallbackSpeech(const QString& text, const QString& error);
 
     static constexpr int kMaxToolLoops = 3;
 
@@ -184,6 +189,7 @@ private:
     bool m_localBackendReady = false;
     QMediaPlayer* m_ttsPlayer = nullptr;
     QAudioOutput* m_ttsAudio = nullptr;
+    bool m_ttsPending = false;
     QVariantList m_actions; // newest first; each: {id,type,summary,detail,status,verdict,reason,severity}
 };
 

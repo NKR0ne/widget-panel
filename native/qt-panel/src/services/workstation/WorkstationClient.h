@@ -19,6 +19,7 @@ class WorkstationClient : public QObject {
 
 public:
     explicit WorkstationClient(QObject* parent = nullptr);
+    ~WorkstationClient() override;
 
     bool connected() const { return m_registered; }
     bool stale() const { return m_stale; }

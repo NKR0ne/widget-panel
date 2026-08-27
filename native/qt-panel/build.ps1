@@ -12,7 +12,7 @@ param(
     [string]$Config = 'release',
     [string]$QtDir = 'C:\Qt\6.10.3\msvc2022_64',
     [ValidateSet('Ninja', 'NMake')]
-    [string]$Generator = 'NMake',
+    [string]$Generator = 'Ninja',
     [int]$BuildTimeoutSeconds = 600,
     [switch]$Deploy,
     [switch]$Run,

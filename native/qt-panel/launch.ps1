@@ -4,7 +4,7 @@ param(
     [ValidateSet('debug', 'release')]
     [string]$Config = 'release',
     [ValidateSet('Ninja', 'NMake')]
-    [string]$Generator = 'NMake',
+    [string]$Generator = 'Ninja',
     [string]$QtDir = 'C:\Qt\6.10.3\msvc2022_64',
     [switch]$NoHelper,
     [string]$Profile = '',
@@ -45,6 +45,32 @@ if ($Composition -and $NoComposition) {
 $root = $PSScriptRoot
 $buildName = if ($Generator -eq 'NMake') { "nmake-$Config" } else { $Config }
 $exe = Join-Path $root "build\$buildName\qt-panel.exe"
+
+# Start local reasoning independently so panel startup never waits for the
+# model load. The bootstrapper accepts an existing LM Studio/llama.cpp server
+# and otherwise loads the configured 9B model in a hidden process.
+$reasoningRuntime = Join-Path $root 'scripts\start-starvis-runtime.ps1'
+if (Test-Path -LiteralPath $reasoningRuntime) {
+    try {
+        Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+            '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $reasoningRuntime
+        ) -WindowStyle Hidden
+    } catch {
+        Write-Warning ("Starvis local reasoning runtime could not start: {0}." -f $_.Exception.Message)
+    }
+}
+
+# The speech service is lightweight until a voice request arrives; models are
+# lazy-loaded and released after idle. Start it for manual and login launches
+# so local voice never depends on an external terminal or LM Studio window.
+$voiceRuntime = Join-Path $root 'scripts\start-starvis-voice-runtime.ps1'
+if (Test-Path -LiteralPath $voiceRuntime) {
+    try {
+        & $voiceRuntime
+    } catch {
+        Write-Warning ("Starvis local voice runtime could not start: {0}. Windows speech remains available." -f $_.Exception.Message)
+    }
+}
 
 function Write-StartupEvent {
     param([string]$Message)

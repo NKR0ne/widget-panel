@@ -30,10 +30,21 @@ GlassCard {
                     return card.voice.unavailableReason
                 if (card.connecting)
                     return "Connexion…"
-                if (card.live)
-                    return "En session · " + Math.floor(card.voice.elapsedSec / 60)
+                if (card.live) {
+                    const labels = {
+                        hearing: "Écoute",
+                        transcribing: "Transcription",
+                        reasoning: "Réflexion",
+                        speaking: "Réponse",
+                        listening: "En écoute"
+                    }
+                    const phase = labels[card.voice.phase] || "En session"
+                    return phase + " · " + Math.floor(card.voice.elapsedSec / 60)
                            + "m " + (card.voice.elapsedSec % 60) + "s"
-                return "Prêt — dialogue continu avec interruption."
+                }
+                return "Prêt — " + (card.voice.provider === "local"
+                       ? "Qwen local, privé et sans frais."
+                       : "dialogue OpenAI temps réel.")
             }
             color: card.live ? Theme.textPrimary : Theme.textSecondary
             font.pixelSize: 10

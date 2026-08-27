@@ -52,6 +52,20 @@ WorkstationClient::WorkstationClient(QObject* parent)
     });
 }
 
+WorkstationClient::~WorkstationClient()
+{
+    // QLocalSocket emits state changes from its destructor. Disconnect it
+    // before member teardown so those callbacks cannot restart dead timers.
+    m_active = false;
+    QObject::disconnect(&m_socket, nullptr, this, nullptr);
+    m_pollTimer.stop();
+    m_heartbeatTimer.stop();
+    m_reconnectTimer.stop();
+    m_staleTimer.stop();
+    if (m_socket.state() != QLocalSocket::UnconnectedState)
+        m_socket.abort();
+}
+
 void WorkstationClient::setActive(bool active)
 {
     if (m_active == active)

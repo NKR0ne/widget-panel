@@ -212,7 +212,13 @@ QVariantMap StarvisService::providerStatus() const
 {
     const QString activeProvider = provider();
     const bool local = activeProvider == QLatin1String("local");
-    const bool openAiSpeech = !apiKey().isEmpty();
+    const QString configuredSpeech = voiceConfig().value(QStringLiteral("speechProvider"),
+                                                          QStringLiteral("local"))
+                                         .toString().trimmed().toLower();
+    const QString speechProvider = configuredSpeech == QLatin1String("openai")
+        && !apiKey().isEmpty() ? QStringLiteral("openai")
+        : configuredSpeech == QLatin1String("windows") ? QStringLiteral("windows")
+                                                       : QStringLiteral("local");
     const bool reasoningReady = local ? m_localBackendReady
         : activeProvider == QLatin1String("anthropic") ? !anthropicKey().isEmpty()
                                                         : !apiKey().isEmpty();
@@ -222,10 +228,8 @@ QVariantMap StarvisService::providerStatus() const
         {QStringLiteral("ready"), reasoningReady},
         {QStringLiteral("reasoningReady"), reasoningReady},
         {QStringLiteral("visionReady"), visionConfigured()},
-        {QStringLiteral("speechProvider"), openAiSpeech ? QStringLiteral("openai")
-                                                         : m_speech && m_speech->available()
-                                                             ? QStringLiteral("windows")
-                                                             : QStringLiteral("none")},
+        {QStringLiteral("speechProvider"), speechProvider},
+        {QStringLiteral("voiceProvider"), m_voice ? m_voice->provider() : QStringLiteral("none")},
         {QStringLiteral("realtimeVoiceReady"), m_voice && m_voice->available()},
         {QStringLiteral("contextWindow"), local ? 8192 : 0},
         {QStringLiteral("localMultimodal"), local},
@@ -343,7 +347,8 @@ void StarvisService::setBusy(bool busy)
 
 bool StarvisService::speaking() const
 {
-    return m_ttsPlayer && m_ttsPlayer->playbackState() == QMediaPlayer::PlayingState;
+    return m_ttsPending
+        || (m_ttsPlayer && m_ttsPlayer->playbackState() == QMediaPlayer::PlayingState);
 }
 
 void StarvisService::stopSpeaking()
@@ -356,75 +361,154 @@ void StarvisService::stopSpeaking()
 
 bool StarvisService::canSpeak() const
 {
-    return !apiKey().isEmpty() || (m_speech && m_speech->available());
+    const QString output = voiceConfig().value(QStringLiteral("speechProvider"),
+                                                QStringLiteral("local")).toString();
+    return output == QLatin1String("local") || !apiKey().isEmpty()
+        || (m_speech && m_speech->available());
+}
+
+QVariantMap StarvisService::voiceConfig() const
+{
+    const QVariant raw = m_settings->get(QStringLiteral("wp-starvis-voice"));
+    if (raw.metaType().id() == QMetaType::QString) {
+        const QJsonDocument doc = QJsonDocument::fromJson(raw.toString().toUtf8());
+        if (doc.isObject())
+            return doc.object().toVariantMap();
+    } else if (raw.canConvert<QVariantMap>()) {
+        return raw.toMap();
+    }
+    return {};
+}
+
+void StarvisService::fallbackSpeech(const QString& text, const QString& error)
+{
+    qWarning() << "[starvis] local/cloud TTS unavailable:" << error;
+    if (m_speech && m_speech->available()) {
+        m_speech->say(text);
+        qInfo() << "[starvis] spoken with Windows fallback," << text.size() << "chars";
+    }
+    emit speechOutputFinished(false, error);
+}
+
+void StarvisService::playSpeechBytes(const QByteArray& bytes, const QString& extension)
+{
+    const QString path = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+        + QStringLiteral("/qt-panel-tts.") + extension;
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        m_ttsPending = false;
+        emit speakingChanged();
+        emit speechOutputFinished(false, QStringLiteral("temporary audio file unavailable"));
+        return;
+    }
+    file.write(bytes);
+    file.close();
+
+    if (!m_ttsPlayer) {
+        m_ttsPlayer = new QMediaPlayer(this);
+        m_ttsAudio = new QAudioOutput(this);
+        m_ttsAudio->setVolume(0.85f);
+        m_ttsPlayer->setAudioOutput(m_ttsAudio);
+        connect(m_ttsPlayer, &QMediaPlayer::playbackStateChanged, this,
+                [this](QMediaPlayer::PlaybackState state) {
+            emit speakingChanged();
+            if (state == QMediaPlayer::StoppedState && !m_ttsPending)
+                emit speechOutputFinished(true, QString());
+        });
+        connect(m_ttsPlayer, &QMediaPlayer::errorOccurred, this,
+                [this](QMediaPlayer::Error, const QString& error) {
+            emit speechOutputFinished(false, error);
+        });
+    }
+    m_ttsPlayer->setSource(QUrl());
+    m_ttsPlayer->setSource(QUrl::fromLocalFile(path));
+    m_ttsPending = false;
+    emit speakingChanged();
+    m_ttsPlayer->play();
+    qInfo() << "[starvis] TTS playing," << bytes.size() << "bytes";
+}
+
+void StarvisService::previewVoice(const QString& voice)
+{
+    QVariantMap cfg = voiceConfig();
+    cfg.insert(QStringLiteral("ttsVoice"), voice);
+    m_settings->set(QStringLiteral("wp-starvis-voice"),
+                    QString::fromUtf8(QJsonDocument::fromVariant(cfg).toJson(QJsonDocument::Compact)));
+    speak(QStringLiteral("Bonjour, je suis Starvis. Voici un aperçu de cette voix."));
 }
 
 void StarvisService::speak(const QString& text)
 {
-    const QString key = apiKey();
     const QString clean = text.trimmed();
     if (clean.isEmpty())
         return;
-    if (key.isEmpty()) {
-        // No cloud key: the offline Windows voice carries the message rather
-        // than the alert being silently dropped.
-        if (m_speech && m_speech->available()) {
-            m_speech->say(clean);
-            qInfo() << "[starvis] spoken offline (SAPI)," << clean.size() << "chars";
-        }
-        return;
-    }
     if (speaking()) {
         stopSpeaking();
         return;
     }
 
-    const QVariantMap cfg = config();
+    const QVariantMap cfg = voiceConfig();
+    QString output = cfg.value(QStringLiteral("speechProvider"),
+                               QStringLiteral("local")).toString().trimmed().toLower();
+    const QString key = apiKey();
+    if (output == QLatin1String("windows")) {
+        if (m_speech && m_speech->available())
+            m_speech->say(clean);
+        return;
+    }
+    if (output == QLatin1String("openai") && key.isEmpty())
+        output = QStringLiteral("local");
+
     QString ttsModel = cfg.value(QStringLiteral("ttsModel")).toString().trimmed();
     if (ttsModel.isEmpty())
         ttsModel = QStringLiteral("gpt-4o-mini-tts");
     QString voice = cfg.value(QStringLiteral("ttsVoice")).toString().trimmed();
     if (voice.isEmpty())
-        voice = QStringLiteral("alloy");
+        voice = output == QLatin1String("local") ? QStringLiteral("Ryan")
+                                                   : QStringLiteral("alloy");
 
-    const QJsonObject body{
+    QJsonObject body{
         {QStringLiteral("model"), ttsModel},
         {QStringLiteral("voice"), voice},
         {QStringLiteral("input"), clean.left(3600)},
-        {QStringLiteral("response_format"), QStringLiteral("mp3")},
+        {QStringLiteral("response_format"), output == QLatin1String("local")
+                                                    ? QStringLiteral("wav")
+                                                    : QStringLiteral("mp3")},
     };
-    const QString baseUrl = normalizedOpenAiBaseUrl(config());
+    QString baseUrl;
+    QString bearer;
+    QString extension;
+    if (output == QLatin1String("local")) {
+        baseUrl = cfg.value(QStringLiteral("localEndpoint"),
+                            QStringLiteral("http://127.0.0.1:1235/v1")).toString();
+        body.insert(QStringLiteral("language"),
+                    cfg.value(QStringLiteral("language"), QStringLiteral("French")).toString());
+        body.insert(QStringLiteral("instruct"), cfg.value(QStringLiteral("voiceInstruction"),
+                                                           QString()).toString());
+        extension = QStringLiteral("wav");
+    } else {
+        baseUrl = QStringLiteral("https://api.openai.com/v1");
+        bearer = key;
+        extension = QStringLiteral("mp3");
+    }
+    while (baseUrl.endsWith(QLatin1Char('/')))
+        baseUrl.chop(1);
 
-    m_http->postForBytes(QUrl(baseUrl + QStringLiteral("/audio/speech")), key,
+    m_ttsPending = true;
+    emit speakingChanged();
+
+    m_http->postForBytes(QUrl(baseUrl + QStringLiteral("/audio/speech")), bearer,
                          QJsonDocument(body).toJson(QJsonDocument::Compact), this,
-                         [this](const QByteArray& bytes, int status, const QString& error) {
+                         [this, clean, extension](const QByteArray& bytes, int status,
+                                                  const QString& error) {
         if (status < 200 || status >= 300 || bytes.isEmpty()) {
-            qWarning() << "[starvis] tts failed:" << status << error;
+            m_ttsPending = false;
+            emit speakingChanged();
+            fallbackSpeech(clean, error.isEmpty() ? QStringLiteral("HTTP %1").arg(status) : error);
             return;
         }
-        const QString path = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
-            + QStringLiteral("/qt-panel-tts.mp3");
-        QFile file(path);
-        if (!file.open(QIODevice::WriteOnly)) {
-            qWarning() << "[starvis] tts temp write failed:" << path;
-            return;
-        }
-        file.write(bytes);
-        file.close();
-
-        if (!m_ttsPlayer) {
-            m_ttsPlayer = new QMediaPlayer(this);
-            m_ttsAudio = new QAudioOutput(this);
-            m_ttsAudio->setVolume(0.85f);
-            m_ttsPlayer->setAudioOutput(m_ttsAudio);
-            connect(m_ttsPlayer, &QMediaPlayer::playbackStateChanged,
-                    this, &StarvisService::speakingChanged);
-        }
-        m_ttsPlayer->setSource(QUrl()); // force reload of the same file path
-        m_ttsPlayer->setSource(QUrl::fromLocalFile(path));
-        m_ttsPlayer->play();
-        qInfo() << "[starvis] tts playing," << bytes.size() << "bytes";
-    });
+        playSpeechBytes(bytes, extension);
+    }, output == QLatin1String("local") ? 300000 : 60000);
 }
 
 void StarvisService::chat(const QString& message, const QVariantList& history,
@@ -457,13 +541,39 @@ void StarvisService::probeLocalBackend()
     while (path.endsWith(QLatin1Char('/')))
         path.chop(1);
     health.setPath(path + QStringLiteral("/health"));
-    m_http->getJson(health, this, [this](const QJsonDocument& doc, const QString& error) {
-        const bool ready = error.isEmpty()
-            && doc.object().value(QStringLiteral("status")).toString() == QLatin1String("ok");
+    auto applyReady = [this](bool ready) {
         if (ready == m_localBackendReady)
             return;
         m_localBackendReady = ready;
         emit configuredChanged();
+    };
+    m_http->getJson(health, this, [this, applyReady](const QJsonDocument& doc,
+                                                     const QString& error) {
+        const bool llamaReady = error.isEmpty()
+            && doc.object().value(QStringLiteral("status")).toString() == QLatin1String("ok");
+        if (llamaReady) {
+            applyReady(true);
+            return;
+        }
+
+        const QVariantMap cfg = config();
+        const QString expectedModel = model();
+        m_http->getJson(QUrl(normalizedOpenAiBaseUrl(cfg) + QStringLiteral("/models")), this,
+                        [applyReady, expectedModel](const QJsonDocument& models,
+                                                    const QString& modelsError) {
+            bool found = false;
+            if (modelsError.isEmpty()) {
+                for (const QJsonValue& value : models.object()
+                         .value(QStringLiteral("data")).toArray()) {
+                    if (value.toObject().value(QStringLiteral("id")).toString()
+                        == expectedModel) {
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            applyReady(found);
+        });
     });
 }
 

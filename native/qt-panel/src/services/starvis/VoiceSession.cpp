@@ -7,11 +7,15 @@
 
 #include <QAudioSink>
 #include <QAudioSource>
+#include <QBuffer>
+#include <QDataStream>
 #include <QDebug>
+#include <QHttpMultiPart>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMediaDevices>
+#include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QWebSocket>
 
@@ -56,19 +60,62 @@ VoiceSession::VoiceSession(SettingsStore* settings, SecretVault* vault,
     });
     m_idleTimer.setSingleShot(true);
     connect(&m_idleTimer, &QTimer::timeout, this,
-            [this] { closeSession(QStringLiteral("idle")); });
+            [this] { m_localMode ? stopLocal() : closeSession(QStringLiteral("idle")); });
     m_capTimer.setSingleShot(true);
     connect(&m_capTimer, &QTimer::timeout, this,
-            [this] { closeSession(QStringLiteral("session cap")); });
+            [this] { m_localMode ? stopLocal() : closeSession(QStringLiteral("session cap")); });
 
     connect(m_vault, &SecretVault::changed, this, [this](const QString& key) {
         if (key == QLatin1String("starvis-openai-key"))
             emit availableChanged();
     });
+    connect(m_settings, &SettingsStore::changed, this, [this](const QString& key) {
+        if (key == QLatin1String("wp-starvis-voice")) {
+            emit availableChanged();
+            probeLocalRuntime();
+        }
+    });
     // Hot-plugging a microphone flips availability.
     auto* mediaDevices = new QMediaDevices(this);
     connect(mediaDevices, &QMediaDevices::audioInputsChanged, this,
             [this] { emit availableChanged(); });
+
+    // The launcher owns service startup, so avoid emitting availability while
+    // the QML object tree is still being constructed. A delayed health probe is
+    // installed after the UI startup path has completed.
+    m_localRuntimeReady = true;
+    auto* localHealthTimer = new QTimer(this);
+    localHealthTimer->setInterval(15000);
+    connect(localHealthTimer, &QTimer::timeout, this, &VoiceSession::probeLocalRuntime);
+    QTimer::singleShot(8000, this, [this, localHealthTimer] {
+        if (provider() == QLatin1String("local"))
+            probeLocalRuntime();
+        localHealthTimer->start();
+    });
+
+    connect(m_starvis, &StarvisService::replyReceived, this,
+            [this](const QString& text, const QString&, int) {
+        if (!m_localMode || !m_waitingLocalReply)
+            return;
+        m_waitingLocalReply = false;
+        setPhase(QStringLiteral("speaking"));
+        m_starvis->speak(text);
+    });
+    connect(m_starvis, &StarvisService::chatFailed, this, [this](const QString&) {
+        if (m_localMode && m_waitingLocalReply) {
+            m_waitingLocalReply = false;
+            resumeLocalListening();
+        }
+    });
+    connect(m_starvis, &StarvisService::speechOutputFinished, this,
+            [this](bool success, const QString&) {
+        if (!m_localMode || !m_localProcessing)
+            return;
+        if (success)
+            resumeLocalListening();
+        else
+            QTimer::singleShot(3500, this, &VoiceSession::resumeLocalListening);
+    });
 }
 
 VoiceSession::~VoiceSession()
@@ -96,16 +143,71 @@ QVariantMap VoiceSession::voiceConfig() const
 
 bool VoiceSession::available() const
 {
-    return !openAiKey().isEmpty() && !QMediaDevices::defaultAudioInput().isNull();
+    const bool microphone = !QMediaDevices::defaultAudioInput().isNull();
+    return microphone && (provider() == QLatin1String("local")
+                              ? m_localRuntimeReady : !openAiKey().isEmpty());
 }
 
 QString VoiceSession::unavailableReason() const
 {
-    if (openAiKey().isEmpty())
-        return QStringLiteral("Clé OpenAI absente");
     if (QMediaDevices::defaultAudioInput().isNull())
         return QStringLiteral("Aucun microphone détecté");
+    if (provider() == QLatin1String("local") && !m_localRuntimeReady)
+        return QStringLiteral("Service vocal local en démarrage");
+    if (provider() != QLatin1String("local") && openAiKey().isEmpty())
+        return QStringLiteral("Clé OpenAI absente");
     return {};
+}
+
+QString VoiceSession::provider() const
+{
+    const QString selected = voiceConfig().value(QStringLiteral("sessionProvider"),
+                                                  QStringLiteral("local"))
+                                 .toString().trimmed().toLower();
+    return selected == QLatin1String("openai") ? QStringLiteral("openai")
+                                                : QStringLiteral("local");
+}
+
+QString VoiceSession::localEndpoint() const
+{
+    QString endpoint = voiceConfig().value(QStringLiteral("localEndpoint"),
+                                            QStringLiteral("http://127.0.0.1:1235/v1"))
+                           .toString().trimmed();
+    while (endpoint.endsWith(QLatin1Char('/')))
+        endpoint.chop(1);
+    return endpoint;
+}
+
+void VoiceSession::setPhase(const QString& phase)
+{
+    if (m_phase == phase)
+        return;
+    m_phase = phase;
+    emit phaseChanged();
+}
+
+void VoiceSession::probeLocalRuntime()
+{
+    QUrl health(localEndpoint());
+    QString path = health.path();
+    if (path.endsWith(QLatin1String("/v1")))
+        path.chop(3);
+    health.setPath(path + QStringLiteral("/health"));
+    QNetworkRequest request(health);
+    request.setTransferTimeout(3000);
+    QNetworkReply* reply = m_localNetwork.get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+        const QJsonObject body = QJsonDocument::fromJson(reply->readAll()).object();
+        const bool ready = reply->error() == QNetworkReply::NoError
+            && body.value(QStringLiteral("status")).toString() == QLatin1String("ok")
+            && body.value(QStringLiteral("asrReady")).toBool()
+            && body.value(QStringLiteral("ttsReady")).toBool();
+        reply->deleteLater();
+        if (ready != m_localRuntimeReady) {
+            m_localRuntimeReady = ready;
+            emit availableChanged();
+        }
+    });
 }
 
 void VoiceSession::setMuted(bool muted)
@@ -130,6 +232,11 @@ void VoiceSession::start()
         return;
     if (!available()) {
         qWarning() << "[starvis.voice] start refused:" << unavailableReason();
+        return;
+    }
+
+    if (provider() == QLatin1String("local")) {
+        startLocal();
         return;
     }
 
@@ -193,6 +300,10 @@ void VoiceSession::start()
 
 void VoiceSession::stop()
 {
+    if (m_localMode) {
+        stopLocal();
+        return;
+    }
     closeSession(QStringLiteral("user"));
 }
 
@@ -284,6 +395,10 @@ void VoiceSession::startAudio()
             const QByteArray data = m_micDevice->readAll();
             if (data.isEmpty())
                 return;
+            if (m_localMode) {
+                handleLocalAudio(data);
+                return;
+            }
             if (m_starvis && m_starvis->state() && !m_responding)
                 m_starvis->state()->setAudioLevel(rmsLevel(data));
             if (m_muted)
@@ -300,8 +415,10 @@ void VoiceSession::startAudio()
         });
     }
 
-    m_sink = new QAudioSink(QMediaDevices::defaultAudioOutput(), m_format, this);
-    m_sinkDevice = m_sink->start();
+    if (!m_localMode) {
+        m_sink = new QAudioSink(QMediaDevices::defaultAudioOutput(), m_format, this);
+        m_sinkDevice = m_sink->start();
+    }
 }
 
 void VoiceSession::stopAudio()
@@ -319,7 +436,190 @@ void VoiceSession::stopAudio()
         m_sinkDevice = nullptr;
     }
     m_micBuffer.clear();
+    m_preRoll.clear();
+    m_localRecording.clear();
     m_responding = false;
+}
+
+void VoiceSession::startLocal()
+{
+    m_localMode = true;
+    m_localProcessing = false;
+    m_waitingLocalReply = false;
+    m_elapsedSec = 0;
+    emit elapsedChanged();
+    setStatus(QStringLiteral("live"));
+    setPhase(QStringLiteral("listening"));
+    startAudio();
+    m_elapsedTimer.start();
+    const QVariantMap cfg = voiceConfig();
+    const int idleMin = qBound(1, cfg.value(QStringLiteral("idleTimeoutMin"), 10).toInt(), 60);
+    const int capMin = qBound(2, cfg.value(QStringLiteral("maxSessionMin"), 60).toInt(), 180);
+    m_idleTimer.start(idleMin * 60 * 1000);
+    m_capTimer.start(capMin * 60 * 1000);
+    if (m_starvis && m_starvis->state())
+        m_starvis->state()->setListening(true);
+    qInfo() << "[starvis.voice] local continuous session open";
+}
+
+void VoiceSession::stopLocal()
+{
+    qInfo() << "[starvis.voice] local session closed after" << m_elapsedSec << "s";
+    m_elapsedTimer.stop();
+    m_idleTimer.stop();
+    m_capTimer.stop();
+    stopAudio();
+    m_localMode = false;
+    m_localProcessing = false;
+    m_localHeardSpeech = false;
+    m_waitingLocalReply = false;
+    if (m_starvis && m_starvis->state()) {
+        m_starvis->state()->setListening(false);
+        m_starvis->state()->setAudioLevel(0);
+    }
+    setPhase(QStringLiteral("idle"));
+    setStatus(QStringLiteral("idle"));
+}
+
+void VoiceSession::handleLocalAudio(const QByteArray& data)
+{
+    const double level = rmsLevel(data);
+    if (m_starvis && m_starvis->state())
+        m_starvis->state()->setAudioLevel(level);
+    if (m_muted || m_localProcessing || (m_starvis && m_starvis->busy()))
+        return;
+
+    const QVariantMap cfg = voiceConfig();
+    const double threshold = qBound(0.004,
+        cfg.value(QStringLiteral("vadThreshold"), 0.018).toDouble(), 0.20);
+    const int silenceTarget = qBound(350,
+        cfg.value(QStringLiteral("silenceMs"), 750).toInt(), 2000);
+    const int chunkMs = qMax(1, data.size() * 1000 / (kSampleRate * 2));
+    const bool speech = level >= threshold;
+
+    if (!m_localHeardSpeech) {
+        m_preRoll.append(data);
+        constexpr int kPreRollBytes = kSampleRate * 2 * 350 / 1000;
+        if (m_preRoll.size() > kPreRollBytes)
+            m_preRoll.remove(0, m_preRoll.size() - kPreRollBytes);
+        if (!speech)
+            return;
+        m_localHeardSpeech = true;
+        m_localRecording = m_preRoll;
+        m_preRoll.clear();
+        m_localSilenceMs = 0;
+        setPhase(QStringLiteral("hearing"));
+    }
+
+    m_localRecording.append(data);
+    m_localSilenceMs = speech ? 0 : m_localSilenceMs + chunkMs;
+    constexpr int kMaximumBytes = kSampleRate * 2 * 15;
+    if (m_localSilenceMs >= silenceTarget || m_localRecording.size() >= kMaximumBytes)
+        submitLocalUtterance();
+}
+
+void VoiceSession::submitLocalUtterance()
+{
+    constexpr int kMinimumBytes = kSampleRate * 2 * 300 / 1000;
+    QByteArray pcm = std::move(m_localRecording);
+    m_localRecording.clear();
+    m_preRoll.clear();
+    m_localHeardSpeech = false;
+    m_localSilenceMs = 0;
+    if (pcm.size() < kMinimumBytes)
+        return;
+
+    m_localProcessing = true;
+    setPhase(QStringLiteral("transcribing"));
+    m_idleTimer.start();
+    if (m_starvis && m_starvis->state()) {
+        m_starvis->state()->setListening(false);
+        m_starvis->state()->setAudioLevel(0);
+    }
+    transcribeLocal(pcm);
+}
+
+QByteArray VoiceSession::pcmToWav(const QByteArray& pcm)
+{
+    QByteArray wav;
+    QBuffer buffer(&wav);
+    buffer.open(QIODevice::WriteOnly);
+    QDataStream stream(&buffer);
+    stream.setByteOrder(QDataStream::LittleEndian);
+    stream.writeRawData("RIFF", 4);
+    stream << quint32(36 + pcm.size());
+    stream.writeRawData("WAVEfmt ", 8);
+    stream << quint32(16) << quint16(1) << quint16(1) << quint32(kSampleRate)
+           << quint32(kSampleRate * 2) << quint16(2) << quint16(16);
+    stream.writeRawData("data", 4);
+    stream << quint32(pcm.size());
+    stream.writeRawData(pcm.constData(), pcm.size());
+    return wav;
+}
+
+void VoiceSession::transcribeLocal(const QByteArray& pcm)
+{
+    auto* multipart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
+    QHttpPart audioPart;
+    audioPart.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("audio/wav"));
+    audioPart.setHeader(QNetworkRequest::ContentDispositionHeader,
+                        QStringLiteral("form-data; name=\"file\"; filename=\"voice.wav\""));
+    audioPart.setBody(pcmToWav(pcm));
+    multipart->append(audioPart);
+
+    const QVariantMap cfg = voiceConfig();
+    QHttpPart languagePart;
+    languagePart.setHeader(QNetworkRequest::ContentDispositionHeader,
+                           QStringLiteral("form-data; name=\"language\""));
+    languagePart.setBody(cfg.value(QStringLiteral("language"),
+                                   QStringLiteral("French")).toString().toUtf8());
+    multipart->append(languagePart);
+
+    QNetworkRequest request(QUrl(localEndpoint() + QStringLiteral("/audio/transcriptions")));
+    request.setTransferTimeout(300000);
+    QNetworkReply* reply = m_localNetwork.post(request, multipart);
+    multipart->setParent(reply);
+    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QJsonObject body = QJsonDocument::fromJson(reply->readAll()).object();
+        const QString transportError = reply->error() == QNetworkReply::NoError
+            ? QString() : reply->errorString();
+        reply->deleteLater();
+        if (status < 200 || status >= 300 || !transportError.isEmpty()) {
+            qWarning() << "[starvis.voice] local ASR failed" << status << transportError
+                       << body.value(QStringLiteral("detail")).toString();
+            resumeLocalListening();
+            return;
+        }
+        const QString transcript = body.value(QStringLiteral("text")).toString().trimmed();
+        if (transcript.isEmpty()) {
+            resumeLocalListening();
+            return;
+        }
+        qInfo() << "[starvis.voice] local transcript:" << transcript;
+        emit transcriptEvent(QStringLiteral("user"), transcript);
+        setPhase(QStringLiteral("reasoning"));
+        m_waitingLocalReply = true;
+        m_starvis->chat(transcript, {}, false, false);
+        if (!m_starvis->busy()) {
+            m_waitingLocalReply = false;
+            resumeLocalListening();
+        }
+    });
+}
+
+void VoiceSession::resumeLocalListening()
+{
+    if (!m_localMode)
+        return;
+    m_localProcessing = false;
+    m_waitingLocalReply = false;
+    m_localHeardSpeech = false;
+    m_localRecording.clear();
+    m_preRoll.clear();
+    setPhase(QStringLiteral("listening"));
+    if (m_starvis && m_starvis->state())
+        m_starvis->state()->setListening(true);
 }
 
 void VoiceSession::handleMessage(const QString& message)
