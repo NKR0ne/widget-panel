@@ -145,7 +145,8 @@ private:
     QJsonArray localTools() const;
     // Tool loop: runs the request, executes read-only tool calls, re-posts up
     // to kMaxToolLoops times; queues any mutating proposals.
-    void runAgentTurn(const QJsonArray& input, bool allowInternet, int loop, qint64 started);
+    void runAgentTurn(const QJsonArray& input, bool allowInternet, int loop, qint64 started,
+                      const QString& chatModel);
     QJsonArray agentTools() const;
     // Anthropic path (streaming; used whenever the Anthropic key exists).
     void postAnthropic(const QString& userMessage, const QVariantList& history,
@@ -163,8 +164,15 @@ private:
     bool resolveInWorkspace(const QString& rel, QString& absOut) const;
 
     QString apiKey() const;
+    QString groqKey() const;
     QVariantMap config() const;
+    QVariantMap cloudUsage() const;
     QString buildContextBlock() const;
+    QString selectOpenAiModel(const QString& message, bool allowInternet,
+                              bool allowAgent) const;
+    bool cloudBudgetAvailable() const;
+    void recordOpenAiUsage(const QJsonObject& payload, const QString& chatModel);
+    void recordCloudCharge(double costUsd, const QString& counter, qint64 units);
     void setBusy(bool busy);
     void probeLocalBackend();
     void classifyLocalContent(const QJsonArray& content, QObject* context,
@@ -208,6 +216,7 @@ private:
     bool m_nativeSpeechPlaying = false;
     int m_nativeSpeechGeneration = 0;
     bool m_localModelsTransitioning = false;
+    QString m_lastProvider;
     QVariantList m_actions; // newest first; each: {id,type,summary,detail,status,verdict,reason,severity}
 };
 

@@ -91,6 +91,23 @@ private slots:
         QVERIFY(ModelResolver::rankModels(foreign, ModelResolver::defaultTierPatterns()).isEmpty());
     }
 
+    void frontierModelCostTable()
+    {
+        double input = 0;
+        double output = 0;
+        ModelResolver::costPerMTok(QStringLiteral("gpt-5.6-terra"), input, output);
+        QCOMPARE(input, 2.0);
+        QCOMPARE(output, 12.0);
+
+        ModelResolver::costPerMTok(QStringLiteral("gpt-5.6-sol"), input, output);
+        QCOMPARE(input, 4.0);
+        QCOMPARE(output, 20.0);
+
+        ModelResolver::costPerMTok(QStringLiteral("gpt-5.6-luna"), input, output);
+        QCOMPARE(input, 0.2);
+        QCOMPARE(output, 1.2);
+    }
+
     // ── Starvis: local motion detection ──────────────────────────────────
     void motionDetectorBaselineThenMotion()
     {

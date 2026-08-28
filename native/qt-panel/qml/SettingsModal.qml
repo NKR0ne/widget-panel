@@ -71,11 +71,17 @@ Item {
         const value = cfg[key]
         return value === undefined || value === null || value === "" ? fallback : String(value)
     }
+    function starvisBool(key, fallback) {
+        const value = starvisConfig()[key]
+        return value === undefined || value === null ? fallback : value === true || value === "true"
+    }
     function setStarvisValue(key, value) {
         const cfg = starvisConfig()
         cfg[key] = value
         if (key === "maxTokens")
             cfg[key] = Math.max(128, Math.min(8192, Number(value) || 1800))
+        if (key === "monthlyBudgetUsd")
+            cfg[key] = Math.max(1, Math.min(10000, Number(value) || 25))
         if (key === "baseUrl") {
             while (value.endsWith("/"))
                 value = value.slice(0, -1)
@@ -103,7 +109,7 @@ Item {
             cfg.localModel = cfg.model || "starvis-local"
             cfg.localBaseUrl = cfg.baseUrl || "http://127.0.0.1:1234/v1"
         } else if (current === "openai") {
-            cfg.openaiModel = cfg.model || "gpt-5.5"
+            cfg.openaiModel = cfg.model || "gpt-5.6-terra"
             cfg.openaiBaseUrl = cfg.baseUrl || "https://api.openai.com/v1"
         }
         cfg.provider = provider
@@ -111,7 +117,7 @@ Item {
             cfg.model = cfg.localModel || "starvis-local"
             cfg.baseUrl = cfg.localBaseUrl || "http://127.0.0.1:1234/v1"
         } else if (provider === "openai") {
-            cfg.model = cfg.openaiModel || "gpt-5.5"
+            cfg.model = cfg.openaiModel || "gpt-5.6-terra"
             cfg.baseUrl = cfg.openaiBaseUrl || "https://api.openai.com/v1"
         }
         Store.set("wp-starvis-config", JSON.stringify(cfg))
@@ -800,7 +806,7 @@ Item {
             Rectangle {
                 id: starvisRuntimeCard
                 width: parent.width
-                height: 148
+                height: 166
                 radius: 6
                 color: Qt.rgba(1, 1, 1, 0.045)
                 border.color: Theme.cardStroke
@@ -827,7 +833,7 @@ Item {
                                     return status.ready ? "Runtime local opérationnel"
                                                         : "Runtime local en démarrage"
                                 const name = status.provider === "anthropic"
-                                           ? "Anthropic" : "OpenAI"
+                                           ? "Anthropic" : "OpenAI Terra / Sol"
                                 return status.reasoningReady ? name + " configuré"
                                                              : name + " requiert une clé"
                             }
@@ -903,6 +909,19 @@ Item {
                         color: Theme.textSecondary
                         font.pixelSize: 8
                         elide: Text.ElideRight
+                    }
+                    Text {
+                        width: parent.width
+                        visible: starvisRuntimeCard.parent.runtimeStatus.provider === "openai"
+                        text: "Budget du mois: $"
+                              + Number(starvisRuntimeCard.parent.runtimeStatus.monthlyCostUsd || 0).toFixed(2)
+                              + " / $"
+                              + Number(starvisRuntimeCard.parent.runtimeStatus.monthlyBudgetUsd || 25).toFixed(0)
+                              + "  ·  Terra " + (starvisRuntimeCard.parent.runtimeStatus.terraRequests || 0)
+                              + "  ·  Sol " + (starvisRuntimeCard.parent.runtimeStatus.solRequests || 0)
+                        color: starvisRuntimeCard.parent.runtimeStatus.budgetAvailable
+                               ? Theme.textSecondary : "#f87171"
+                        font.pixelSize: 8
                     }
                 }
             }
@@ -986,12 +1005,89 @@ Item {
                 width: parent.width
                 spacing: 7
                 visible: starvisRuntimeCard.parent.selectedProvider === "openai"
-                Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "starvis-openai-key"; item.placeholder = "Clé OpenAI (raisonnement)"; item.secret = true } }
-                Text { text: "Modèle"; color: Theme.textSecondary; font.pixelSize: 8 }
-                Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "model"; item.fallback = "gpt-5.5"; item.placeholder = "Modèle OpenAI" } }
+                Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "starvis-openai-key"; item.placeholder = "Clé OpenAI requise (Terra, Sol et TTS)"; item.secret = true } }
+                Text { text: "Routage du raisonnement"; color: Theme.textSecondary; font.pixelSize: 8 }
+                Row {
+                    width: parent.width
+                    spacing: 4
+                    Repeater {
+                        model: [
+                            { label: "Automatique", value: "automatic" },
+                            { label: "Terra", value: "terra" },
+                            { label: "Sol", value: "sol" }
+                        ]
+                        delegate: Rectangle {
+                            required property var modelData
+                            readonly property bool selected:
+                                modal.starvisValue("routingMode", "automatic") === modelData.value
+                            width: (parent.width - 8) / 3
+                            height: 27; radius: 5
+                            color: selected ? Theme.activeFill
+                                            : routingMouse.containsMouse ? Theme.hover : "transparent"
+                            border.color: selected ? Theme.accent : Theme.cardStroke
+                            Text {
+                                anchors.centerIn: parent
+                                text: parent.modelData.label
+                                color: parent.selected ? Theme.textPrimary : Theme.textSecondary
+                                font.pixelSize: 9
+                            }
+                            MouseArea {
+                                id: routingMouse
+                                anchors.fill: parent; hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    modal.setStarvisValue("routingMode", parent.modelData.value)
+                                    modal.starvisRevision++
+                                }
+                            }
+                        }
+                    }
+                }
+                Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "routineModel"; item.fallback = "gpt-5.6-terra"; item.placeholder = "Modèle courant" } }
+                Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "frontierModel"; item.fallback = "gpt-5.6-sol"; item.placeholder = "Modèle d'escalade" } }
+                Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "monthlyBudgetUsd"; item.fallback = "25"; item.placeholder = "Budget mensuel maximal USD" } }
                 Text { text: "Point d'accès"; color: Theme.textSecondary; font.pixelSize: 8 }
                 Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "baseUrl"; item.fallback = "https://api.openai.com/v1"; item.placeholder = "API OpenAI" } }
                 Loader { sourceComponent: starvisField; onLoaded: { item.configKey = "maxTokens"; item.fallback = "1800"; item.placeholder = "Tokens de sortie OpenAI" } }
+                Row {
+                    width: parent.width
+                    spacing: 8
+                    Text {
+                        text: "Autoriser la vision cloud sur demande"
+                        color: Theme.textSecondary; font.pixelSize: 9
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Item { width: parent.width - x - cloudVisionToggle.width; height: 1 }
+                    Rectangle {
+                        id: cloudVisionToggle
+                        readonly property bool active: {
+                            modal.starvisRevision
+                            return modal.starvisBool("allowCloudVision", false)
+                        }
+                        width: 34; height: 18; radius: 9
+                        color: active ? Theme.accent : Qt.rgba(1,1,1,0.12)
+                        Rectangle {
+                            width: 14; height: 14; radius: 7; y: 2
+                            x: parent.active ? parent.width - width - 2 : 2
+                            color: "white"
+                            Behavior on x { NumberAnimation { duration: 130 } }
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                modal.setStarvisValue("allowCloudVision", !parent.active)
+                                modal.starvisRevision++
+                            }
+                        }
+                    }
+                }
+                Text {
+                    width: parent.width
+                    text: "Terra traite les demandes normales. Sol est réservé aux demandes complexes. "
+                          + "La limite mensuelle bloque les nouveaux appels lorsqu'elle est atteinte."
+                    color: Theme.textSecondary; font.pixelSize: 9; wrapMode: Text.WordWrap
+                }
             }
 
             Text {
@@ -1007,7 +1103,9 @@ Item {
                                  : status.speechProvider === "windows" ? "Windows SAPI hors ligne"
                                  : "aucune sortie vocale"
                     const realtime = status.realtimeVoiceReady
-                                   ? "Dialogue " + (status.voiceProvider === "local" ? "local" : "OpenAI") + " prêt."
+                                   ? "Dialogue " + (status.voiceProvider === "local" ? "local"
+                                                    : status.voiceProvider === "groq" ? "Groq Whisper"
+                                                                                       : "OpenAI") + " prêt."
                                    : "Service vocal en démarrage."
                     return "Sortie: " + output + ". " + realtime
                 }
@@ -1041,12 +1139,13 @@ Item {
                     Repeater {
                         model: [
                             { label: "Qwen ASR local", value: "local" },
+                            { label: "Groq Whisper", value: "groq" },
                             { label: "OpenAI temps réel", value: "openai" }
                         ]
                         delegate: Rectangle {
                             required property var modelData
                             readonly property bool selected: voiceSettings.sessionProvider === modelData.value
-                            width: (voiceSettings.width - 4) / 2
+                            width: (voiceSettings.width - 8) / 3
                             height: 27; radius: 5
                             color: selected ? Theme.activeFill
                                             : sessionMouse.containsMouse ? Theme.hover : "transparent"
@@ -1165,6 +1264,23 @@ Item {
                 }
 
                 Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "asrEndpoint"; item.fallback = "http://127.0.0.1:1235/v1"; item.placeholder = "API ASR locale" } }
+
+                Loader {
+                    sourceComponent: keyField
+                    visible: voiceSettings.sessionProvider === "groq"
+                    onLoaded: {
+                        item.vaultKey = "starvis-groq-key"
+                        item.placeholder = "Clé Groq requise pour Whisper Large V3"
+                        item.secret = true
+                    }
+                }
+                Column {
+                    width: parent.width
+                    spacing: 7
+                    visible: voiceSettings.sessionProvider === "groq"
+                    Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "groqModel"; item.fallback = "whisper-large-v3"; item.placeholder = "Modèle Groq ASR" } }
+                    Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "groqLanguage"; item.fallback = "fr"; item.placeholder = "Langue ASR" } }
+                }
 
                 Loader {
                     sourceComponent: keyField

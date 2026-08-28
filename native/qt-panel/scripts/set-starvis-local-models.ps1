@@ -1,7 +1,11 @@
 param(
     [Parameter(Mandatory = $true, Position = 0)]
     [ValidateSet('enable', 'disable')]
-    [string]$Action
+    [string]$Action,
+
+    [Parameter(Position = 1)]
+    [ValidateSet('all', 'hybrid')]
+    [string]$Profile = 'all'
 )
 
 Set-StrictMode -Version Latest
@@ -74,13 +78,28 @@ function Wait-StarvisHealth {
 }
 
 if ($Action -eq 'enable') {
-    & (Join-Path $scriptsRoot 'start-starvis-runtime.ps1')
-    & (Join-Path $scriptsRoot 'start-starvis-voice-runtime.ps1')
+    if ($Profile -eq 'all') {
+        & (Join-Path $scriptsRoot 'start-starvis-runtime.ps1')
+        & (Join-Path $scriptsRoot 'start-starvis-voice-runtime.ps1')
+        Wait-StarvisHealth -Port $asrPort -Capability 'asrReady'
+    } else {
+        Stop-StarvisPythonRuntime -Port $asrPort -ScriptName 'starvis-asr-runtime.py'
+        if (Test-Path -LiteralPath $lms) {
+            $previousErrorAction = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            & $lms unload 'starvis-local' 2>$null
+            $ErrorActionPreference = $previousErrorAction
+        }
+        Stop-StarvisLlamaRuntime -Port $reasoningPort -Alias 'starvis-local'
+    }
     & (Join-Path $scriptsRoot 'start-starvis-vision-runtime.ps1')
     & (Join-Path $scriptsRoot 'start-starvis-tts-runtime.ps1')
-    Wait-StarvisHealth -Port $asrPort -Capability 'asrReady'
     Wait-StarvisHealth -Port $ttsPort -Capability 'ttsReady'
-    Write-Output 'Starvis reasoning, vision, ASR, and TTS runtimes started.'
+    Write-Output $(if ($Profile -eq 'all') {
+        'Starvis reasoning, vision, ASR, and TTS runtimes started.'
+    } else {
+        'Starvis hybrid runtime started: local vision and Piper; reasoning and ASR released.'
+    })
     exit 0
 }
 

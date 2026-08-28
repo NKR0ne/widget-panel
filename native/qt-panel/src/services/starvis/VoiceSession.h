@@ -57,6 +57,7 @@ signals:
     void elapsedChanged();
     void mutedChanged();
     void phaseChanged();
+    void cloudUsageIncurred(double costUsd, const QString& counter, qint64 units);
     // role: "user" | "assistant" | "system"; final transcripts only.
     void transcriptEvent(const QString& role, const QString& text);
 
@@ -82,6 +83,7 @@ private:
     void setStatus(const QString& status);
     QVariantMap voiceConfig() const;
     QString openAiKey() const;
+    QString groqKey() const;
 
     SettingsStore* m_settings = nullptr;
     SecretVault* m_vault = nullptr;

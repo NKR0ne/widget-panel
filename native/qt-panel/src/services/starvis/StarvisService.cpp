@@ -50,7 +50,8 @@ namespace qtpanel {
 
 namespace {
 
-const char kDefaultModel[] = "gpt-5.5";
+const char kDefaultModel[] = "gpt-5.6-terra";
+const char kDefaultFrontierModel[] = "gpt-5.6-sol";
 const char kDefaultBaseUrl[] = "https://api.openai.com/v1";
 
 // STARVIS_SYSTEM_PROMPT from main.js; native agent tools are appended per request.
@@ -202,6 +203,8 @@ StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, Http
     m_modelResolver = new ModelResolver(settings, vault, http, this);
     m_state = new StarvisState(this);
     m_voice = new VoiceSession(settings, vault, this, this);
+    connect(m_voice, &VoiceSession::cloudUsageIncurred, this,
+            &StarvisService::recordCloudCharge);
     connect(m_modelResolver, &ModelResolver::modelChanged,
             this, &StarvisService::configuredChanged);
     connect(this, &StarvisService::busyChanged, m_state,
@@ -213,9 +216,11 @@ StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, Http
     connect(this, &StarvisService::usageUpdated, m_state, &StarvisState::setUsage);
 
     loadActions();
+    m_lastProvider = provider();
     connect(m_vault, &SecretVault::changed, this, [this](const QString& key) {
         if (key == QLatin1String("starvis-openai-key")
-            || key == QLatin1String("starvis-anthropic-key"))
+            || key == QLatin1String("starvis-anthropic-key")
+            || key == QLatin1String("starvis-groq-key"))
             emit configuredChanged();
     });
     connect(m_settings, &SettingsStore::changed, this, [this](const QString& key) {
@@ -223,6 +228,15 @@ StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, Http
             || key == QLatin1String("wp-starvis-provider")) {
             emit configuredChanged();
             probeLocalBackend();
+            const QString selected = provider();
+            if (selected != m_lastProvider) {
+                m_lastProvider = selected;
+                if (localModelsEnabled() && !m_localModelsTransitioning) {
+                    m_localModelsTransitioning = true;
+                    emit localModelsStateChanged();
+                    runLocalRuntimeAction(true);
+                }
+            }
         }
     });
     auto* healthTimer = new QTimer(this);
@@ -230,6 +244,14 @@ StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, Http
     connect(healthTimer, &QTimer::timeout, this, &StarvisService::probeLocalBackend);
     healthTimer->start();
     QTimer::singleShot(0, this, &StarvisService::probeLocalBackend);
+    QTimer::singleShot(1500, this, [this] {
+        if (localModelsEnabled() && provider() != QLatin1String("local")
+            && !m_localModelsTransitioning) {
+            m_localModelsTransitioning = true;
+            emit localModelsStateChanged();
+            runLocalRuntimeAction(true);
+        }
+    });
     qInfo() << "[starvis]" << (configured()
                                    ? QStringLiteral("configured (%1), model: %2")
                                          .arg(provider(), model())
@@ -244,6 +266,11 @@ QString StarvisService::apiKey() const
 QString StarvisService::anthropicKey() const
 {
     return m_vault->get(QStringLiteral("starvis-anthropic-key")).trimmed();
+}
+
+QString StarvisService::groqKey() const
+{
+    return m_vault->get(QStringLiteral("starvis-groq-key")).trimmed();
 }
 
 bool StarvisService::configured() const
@@ -330,11 +357,14 @@ void StarvisService::runLocalRuntimeAction(bool enabled)
         else
             emit configuredChanged();
     });
-    process->start(QStringLiteral("powershell.exe"),
-                   {QStringLiteral("-NoProfile"), QStringLiteral("-WindowStyle"),
-                    QStringLiteral("Hidden"), QStringLiteral("-ExecutionPolicy"),
-                    QStringLiteral("Bypass"), QStringLiteral("-File"), script,
-                    enabled ? QStringLiteral("enable") : QStringLiteral("disable")});
+    QStringList arguments{QStringLiteral("-NoProfile"), QStringLiteral("-WindowStyle"),
+                          QStringLiteral("Hidden"), QStringLiteral("-ExecutionPolicy"),
+                          QStringLiteral("Bypass"), QStringLiteral("-File"), script,
+                          enabled ? QStringLiteral("enable") : QStringLiteral("disable")};
+    if (enabled)
+        arguments << (provider() == QLatin1String("local")
+                          ? QStringLiteral("all") : QStringLiteral("hybrid"));
+    process->start(QStringLiteral("powershell.exe"), arguments);
     if (!process->waitForStarted(3000)) {
         qWarning() << "[starvis] could not start local model runtime action:"
                    << process->errorString();
@@ -371,6 +401,10 @@ QVariantMap StarvisService::providerStatus() const
     const bool reasoningReady = local ? localModelsEnabled() && m_localBackendReady
         : activeProvider == QLatin1String("anthropic") ? !anthropicKey().isEmpty()
                                                         : !apiKey().isEmpty();
+    const QVariantMap usage = cloudUsage();
+    const double budget = qBound(1.0,
+        config().value(QStringLiteral("monthlyBudgetUsd"), 25.0).toDouble(), 10000.0);
+    const QString voiceProvider = m_voice ? m_voice->provider() : QStringLiteral("none");
     return {
         {QStringLiteral("provider"), activeProvider},
         {QStringLiteral("model"), model()},
@@ -379,11 +413,12 @@ QVariantMap StarvisService::providerStatus() const
         {QStringLiteral("localModelsEnabled"), localModelsEnabled()},
         {QStringLiteral("localModelsTransitioning"), m_localModelsTransitioning},
         {QStringLiteral("visionReady"), visionConfigured()},
-        {QStringLiteral("asrReady"), localModelsEnabled() && m_localAsrReady},
+        {QStringLiteral("asrReady"), voiceProvider == QLatin1String("groq")
+             ? !groqKey().isEmpty() : localModelsEnabled() && m_localAsrReady},
         {QStringLiteral("ttsReady"), speechProvider != QLatin1String("local")
              || (localModelsEnabled() && m_localTtsReady)},
         {QStringLiteral("speechProvider"), speechProvider},
-        {QStringLiteral("voiceProvider"), m_voice ? m_voice->provider() : QStringLiteral("none")},
+        {QStringLiteral("voiceProvider"), voiceProvider},
         {QStringLiteral("realtimeVoiceReady"), m_voice && m_voice->available()},
         {QStringLiteral("contextWindow"), local ? 8192 : 0},
         {QStringLiteral("localMultimodal"), false},
@@ -396,6 +431,12 @@ QVariantMap StarvisService::providerStatus() const
              QStringLiteral("http://127.0.0.1:1237/v1"))},
         {QStringLiteral("pinned"), m_modelResolver->pinned()},
         {QStringLiteral("resolvedAt"), m_modelResolver->resolvedAt()},
+        {QStringLiteral("monthlyCostUsd"), usage.value(QStringLiteral("costUsd"), 0.0)},
+        {QStringLiteral("monthlyBudgetUsd"), budget},
+        {QStringLiteral("budgetAvailable"), usage.value(QStringLiteral("costUsd"), 0.0).toDouble()
+             < budget},
+        {QStringLiteral("terraRequests"), usage.value(QStringLiteral("terraRequests"), 0)},
+        {QStringLiteral("solRequests"), usage.value(QStringLiteral("solRequests"), 0)},
     };
 }
 
@@ -422,6 +463,111 @@ QVariantMap StarvisService::config() const
     return {};
 }
 
+QVariantMap StarvisService::cloudUsage() const
+{
+    const QVariant raw = m_settings->get(QStringLiteral("wp-starvis-cloud-usage"));
+    QVariantMap usage;
+    if (raw.metaType().id() == QMetaType::QString)
+        usage = QJsonDocument::fromJson(raw.toString().toUtf8()).object().toVariantMap();
+    else if (raw.canConvert<QVariantMap>())
+        usage = raw.toMap();
+    const QString month = QDate::currentDate().toString(QStringLiteral("yyyy-MM"));
+    if (usage.value(QStringLiteral("month")).toString() != month)
+        return {{QStringLiteral("month"), month}};
+    return usage;
+}
+
+bool StarvisService::cloudBudgetAvailable() const
+{
+    const double limit = qBound(1.0,
+        config().value(QStringLiteral("monthlyBudgetUsd"), 25.0).toDouble(), 10000.0);
+    return cloudUsage().value(QStringLiteral("costUsd"), 0.0).toDouble() < limit;
+}
+
+QString StarvisService::selectOpenAiModel(const QString& message, bool allowInternet,
+                                          bool allowAgent) const
+{
+    const QVariantMap cfg = config();
+    const QString routine = cfg.value(QStringLiteral("routineModel"),
+                                      QStringLiteral("gpt-5.6-terra")).toString().trimmed();
+    const QString frontier = cfg.value(QStringLiteral("frontierModel"),
+                                       QStringLiteral("gpt-5.6-sol")).toString().trimmed();
+    const QString routing = cfg.value(QStringLiteral("routingMode"),
+                                      QStringLiteral("automatic")).toString().trimmed().toLower();
+    if (routing == QLatin1String("sol"))
+        return frontier.isEmpty() ? QLatin1String(kDefaultFrontierModel) : frontier;
+    if (routing == QLatin1String("terra"))
+        return routine.isEmpty() ? QLatin1String(kDefaultModel) : routine;
+
+    const QString lower = message.toLower();
+    static const QStringList difficultSignals{
+        QStringLiteral("analyse approfondie"), QStringLiteral("deep analysis"),
+        QStringLiteral("architecture"), QStringLiteral("diagnosti"),
+        QStringLiteral("sécurité"), QStringLiteral("security"),
+        QStringLiteral("confidentialité"), QStringLiteral("privacy"),
+        QStringLiteral("compare"), QStringLiteral("évalue"), QStringLiteral("evaluate"),
+        QStringLiteral("plan détaillé"), QStringLiteral("detailed plan"),
+    };
+    bool difficult = message.size() >= 1200 || (allowInternet && allowAgent);
+    for (const QString& signal : difficultSignals)
+        difficult = difficult || lower.contains(signal);
+    return difficult
+        ? (frontier.isEmpty() ? QLatin1String(kDefaultFrontierModel) : frontier)
+        : (routine.isEmpty() ? QLatin1String(kDefaultModel) : routine);
+}
+
+void StarvisService::recordOpenAiUsage(const QJsonObject& payload, const QString& chatModel)
+{
+    const QJsonObject tokens = payload.value(QStringLiteral("usage")).toObject();
+    const qint64 input = tokens.value(QStringLiteral("input_tokens")).toInteger();
+    const qint64 output = tokens.value(QStringLiteral("output_tokens")).toInteger();
+    if (input <= 0 && output <= 0)
+        return;
+
+    double inputUsd = 0.0;
+    double outputUsd = 0.0;
+    ModelResolver::costPerMTok(chatModel, inputUsd, outputUsd);
+
+    QVariantMap usage = cloudUsage();
+    usage.insert(QStringLiteral("month"), QDate::currentDate().toString(QStringLiteral("yyyy-MM")));
+    usage.insert(QStringLiteral("inputTokens"),
+                 usage.value(QStringLiteral("inputTokens"), 0).toLongLong() + input);
+    usage.insert(QStringLiteral("outputTokens"),
+                 usage.value(QStringLiteral("outputTokens"), 0).toLongLong() + output);
+    const double cost = usage.value(QStringLiteral("costUsd"), 0.0).toDouble()
+        + input * inputUsd / 1e6 + output * outputUsd / 1e6;
+    usage.insert(QStringLiteral("costUsd"), cost);
+    const QString counter = chatModel.contains(QLatin1String("sol"))
+        ? QStringLiteral("solRequests") : QStringLiteral("terraRequests");
+    usage.insert(counter, usage.value(counter, 0).toInt() + 1);
+    m_settings->set(QStringLiteral("wp-starvis-cloud-usage"),
+                    QString::fromUtf8(QJsonDocument::fromVariant(usage)
+                                          .toJson(QJsonDocument::Compact)));
+    m_settings->flush();
+
+    m_sessionInputTokens += input;
+    m_sessionOutputTokens += output;
+    emit usageUpdated(static_cast<int>(m_sessionInputTokens),
+                      static_cast<int>(m_sessionOutputTokens), cost);
+    emit configuredChanged();
+}
+
+void StarvisService::recordCloudCharge(double costUsd, const QString& counter, qint64 units)
+{
+    if (costUsd <= 0.0 || units <= 0)
+        return;
+    QVariantMap usage = cloudUsage();
+    usage.insert(QStringLiteral("month"), QDate::currentDate().toString(QStringLiteral("yyyy-MM")));
+    usage.insert(QStringLiteral("costUsd"),
+                 usage.value(QStringLiteral("costUsd"), 0.0).toDouble() + costUsd);
+    usage.insert(counter, usage.value(counter, 0).toLongLong() + units);
+    m_settings->set(QStringLiteral("wp-starvis-cloud-usage"),
+                    QString::fromUtf8(QJsonDocument::fromVariant(usage)
+                                          .toJson(QJsonDocument::Compact)));
+    m_settings->flush();
+    emit configuredChanged();
+}
+
 QString StarvisService::model() const
 {
     if (provider() == QLatin1String("anthropic"))
@@ -429,8 +575,9 @@ QString StarvisService::model() const
     const QString stored = config().value(QStringLiteral("model")).toString().trimmed();
     if (!stored.isEmpty())
         return stored;
-    return provider() == QLatin1String("local") ? QStringLiteral("starvis-local")
-                                                 : QLatin1String(kDefaultModel);
+    if (provider() == QLatin1String("local"))
+        return QStringLiteral("starvis-local");
+    return QLatin1String(kDefaultModel);
 }
 
 QString StarvisService::buildContextBlock() const
@@ -680,6 +827,10 @@ void StarvisService::speak(const QString& text)
     }
     if (output == QLatin1String("openai") && key.isEmpty())
         output = QStringLiteral("local");
+    if (output == QLatin1String("openai") && !cloudBudgetAvailable()) {
+        fallbackSpeech(clean, QStringLiteral("budget cloud mensuel atteint"));
+        return;
+    }
 
     QString ttsModel = cfg.value(QStringLiteral("ttsModel")).toString().trimmed();
     if (ttsModel.isEmpty())
@@ -727,6 +878,9 @@ void StarvisService::speak(const QString& text)
             fallbackSpeech(clean, error.isEmpty() ? QStringLiteral("HTTP %1").arg(status) : error);
             return;
         }
+        if (extension == QLatin1String("mp3"))
+            recordCloudCharge(clean.size() * 15.0 / 1e6,
+                              QStringLiteral("ttsCharacters"), clean.size());
         playSpeechBytes(bytes, extension);
     }, output == QLatin1String("local") ? 30000 : 60000);
 }
@@ -750,7 +904,7 @@ void StarvisService::chat(const QString& message, const QVariantList& history,
 
 void StarvisService::probeLocalBackend()
 {
-    if (provider() != QLatin1String("local") || !localModelsEnabled()) {
+    if (!localModelsEnabled()) {
         if (m_localBackendReady || m_localVisionReady || m_localAsrReady || m_localTtsReady) {
             m_localBackendReady = m_localVisionReady = m_localAsrReady = m_localTtsReady = false;
             emit configuredChanged();
@@ -794,7 +948,10 @@ void StarvisService::probeLocalBackend()
                 && body.value(capability).toBool());
         });
     };
-    probeModel(normalizedOpenAiBaseUrl(cfg), model(), &m_localBackendReady);
+    if (provider() == QLatin1String("local"))
+        probeModel(normalizedOpenAiBaseUrl(cfg), model(), &m_localBackendReady);
+    else
+        setReady(m_localBackendReady, false);
     probeModel(cfg.value(QStringLiteral("visionBaseUrl"),
                          QStringLiteral("http://127.0.0.1:1236/v1")).toString(),
                cfg.value(QStringLiteral("visionModel"), QStringLiteral("starvis-vision")).toString(),
@@ -809,14 +966,16 @@ void StarvisService::probeLocalBackend()
 
 bool StarvisService::visionConfigured() const
 {
-    return (provider() == QLatin1String("local") && localModelsEnabled() && m_localVisionReady)
-        || (m_anthropic && m_anthropic->configured());
+    if (localModelsEnabled() && m_localVisionReady)
+        return true;
+    const bool cloudAllowed = config().value(QStringLiteral("allowCloudVision"), false).toBool();
+    return cloudAllowed && m_anthropic && m_anthropic->configured();
 }
 
 void StarvisService::classifyImage(const QImage& image, const QString& prompt,
                                    QObject* context, ClassifyCallback callback)
 {
-    if (provider() == QLatin1String("local") && m_localVisionReady) {
+    if (localModelsEnabled() && m_localVisionReady) {
         QJsonArray content;
         content.append(localImagePart(image));
         content.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
@@ -824,7 +983,8 @@ void StarvisService::classifyImage(const QImage& image, const QString& prompt,
         classifyLocalContent(content, context, std::move(callback));
         return;
     }
-    if (m_anthropic && m_anthropic->configured()) {
+    if (config().value(QStringLiteral("allowCloudVision"), false).toBool()
+        && m_anthropic && m_anthropic->configured()) {
         m_anthropic->classifyImage(image, prompt, m_modelResolver->currentModel(),
                                    context, std::move(callback));
         return;
@@ -836,7 +996,7 @@ void StarvisService::classifyWithGallery(const QVector<QPair<QString, QImage>>& 
                                          const QImage& probe, const QString& prompt,
                                          QObject* context, ClassifyCallback callback)
 {
-    if (provider() == QLatin1String("local") && m_localVisionReady) {
+    if (localModelsEnabled() && m_localVisionReady) {
         QJsonArray content;
         for (const auto& entry : gallery) {
             if (entry.second.isNull())
@@ -857,7 +1017,8 @@ void StarvisService::classifyWithGallery(const QVector<QPair<QString, QImage>>& 
         classifyLocalContent(content, context, std::move(callback));
         return;
     }
-    if (m_anthropic && m_anthropic->configured()) {
+    if (config().value(QStringLiteral("allowCloudVision"), false).toBool()
+        && m_anthropic && m_anthropic->configured()) {
         m_anthropic->classifyWithGallery(gallery, probe, prompt,
                                          m_modelResolver->currentModel(), context,
                                          std::move(callback));
@@ -1118,11 +1279,16 @@ void StarvisService::post(const QString& userMessage, const QVariantList& histor
         emit chatFailed(QStringLiteral("Clé OpenAI absente (wp-starvis-openai-key)."));
         return;
     }
+    if (!cloudBudgetAvailable()) {
+        emit chatFailed(QStringLiteral(
+            "Budget cloud mensuel atteint. Augmentez la limite ou utilisez le mode local."));
+        return;
+    }
     setBusy(true);
     const qint64 started = QDateTime::currentMSecsSinceEpoch();
 
     const QVariantMap cfg = config();
-    const QString chatModel = model();
+    const QString chatModel = selectOpenAiModel(userMessage, allowInternet, allowAgent);
     const QString baseUrl = normalizedOpenAiBaseUrl(cfg);
     const int maxTokens = qBound(128, cfg.value(QStringLiteral("maxTokens"), 1800).toInt(), 8192);
 
@@ -1149,7 +1315,7 @@ void StarvisService::post(const QString& userMessage, const QVariantList& histor
     });
 
     if (allowAgent) {
-        runAgentTurn(input, allowInternet, 0, started);
+        runAgentTurn(input, allowInternet, 0, started, chatModel);
         return;
     }
 
@@ -1183,6 +1349,7 @@ void StarvisService::post(const QString& userMessage, const QVariantList& histor
             emit chatFailed(message);
             return;
         }
+        recordOpenAiUsage(payload, chatModel);
         const QString text = extractResponseText(payload);
         const int latency = static_cast<int>(QDateTime::currentMSecsSinceEpoch() - started);
         qInfo() << "[starvis] reply" << payload.value(QLatin1String("model")).toString()
@@ -1495,11 +1662,10 @@ QJsonArray StarvisService::agentTools() const
 }
 
 void StarvisService::runAgentTurn(const QJsonArray& input, bool allowInternet, int loop,
-                                  qint64 started)
+                                  qint64 started, const QString& chatModel)
 {
     const QString key = apiKey();
     const QVariantMap cfg = config();
-    const QString chatModel = model();
     const QString baseUrl = normalizedOpenAiBaseUrl(cfg);
 
     QJsonArray tools = agentTools();
@@ -1531,6 +1697,7 @@ void StarvisService::runAgentTurn(const QJsonArray& input, bool allowInternet, i
                             : QStringLiteral("Agent request failed (%1)").arg(status));
             return;
         }
+        recordOpenAiUsage(payload, chatModel);
 
         // Collect function calls from the output.
         QJsonArray nextInput = input;
@@ -1565,7 +1732,12 @@ void StarvisService::runAgentTurn(const QJsonArray& input, bool allowInternet, i
                     {QStringLiteral("output"), output.left(8000)},
                 });
             }
-            runAgentTurn(nextInput, allowInternet, loop + 1, started);
+            if (!cloudBudgetAvailable()) {
+                setBusy(false);
+                emit chatFailed(QStringLiteral("Budget cloud mensuel atteint pendant l'action."));
+                return;
+            }
+            runAgentTurn(nextInput, allowInternet, loop + 1, started, chatModel);
             return;
         }
 

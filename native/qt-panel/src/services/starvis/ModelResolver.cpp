@@ -103,6 +103,9 @@ QStringList ModelResolver::defaultTierPatterns()
 void ModelResolver::costPerMTok(const QString& model, double& inputUsd, double& outputUsd)
 {
     // Estimates for the status readout only; not billing data.
+    if (model.startsWith(QLatin1String("gpt-5.6-sol")))  { inputUsd = 4;   outputUsd = 20; return; }
+    if (model.startsWith(QLatin1String("gpt-5.6-terra"))){ inputUsd = 2;   outputUsd = 12; return; }
+    if (model.startsWith(QLatin1String("gpt-5.6-luna"))) { inputUsd = .2;  outputUsd = 1.2; return; }
     if (model.startsWith(QLatin1String("claude-fable"))) { inputUsd = 10;  outputUsd = 50; return; }
     if (model.startsWith(QLatin1String("claude-opus")))  { inputUsd = 5;   outputUsd = 25; return; }
     if (model.startsWith(QLatin1String("claude-sonnet"))){ inputUsd = 3;   outputUsd = 15; return; }

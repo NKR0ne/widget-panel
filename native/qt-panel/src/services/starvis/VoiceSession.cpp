@@ -66,7 +66,8 @@ VoiceSession::VoiceSession(SettingsStore* settings, SecretVault* vault,
             [this] { m_localMode ? stopLocal() : closeSession(QStringLiteral("session cap")); });
 
     connect(m_vault, &SecretVault::changed, this, [this](const QString& key) {
-        if (key == QLatin1String("starvis-openai-key"))
+        if (key == QLatin1String("starvis-openai-key")
+            || key == QLatin1String("starvis-groq-key"))
             emit availableChanged();
     });
     connect(m_settings, &SettingsStore::changed, this, [this](const QString& key) {
@@ -130,6 +131,11 @@ QString VoiceSession::openAiKey() const
     return m_vault->get(QStringLiteral("starvis-openai-key")).trimmed();
 }
 
+QString VoiceSession::groqKey() const
+{
+    return m_vault->get(QStringLiteral("starvis-groq-key")).trimmed();
+}
+
 QVariantMap VoiceSession::voiceConfig() const
 {
     const QVariant raw = m_settings->get(QStringLiteral("wp-starvis-voice"));
@@ -146,9 +152,11 @@ QVariantMap VoiceSession::voiceConfig() const
 bool VoiceSession::available() const
 {
     const bool microphone = !QMediaDevices::defaultAudioInput().isNull();
-    return microphone && (provider() == QLatin1String("local")
-                              ? m_starvis->localModelsEnabled() && m_localRuntimeReady
-                              : !openAiKey().isEmpty());
+    const QString selected = provider();
+    return microphone && (selected == QLatin1String("local")
+        ? m_starvis->localModelsEnabled() && m_localRuntimeReady
+        : selected == QLatin1String("groq") ? !groqKey().isEmpty()
+                                             : !openAiKey().isEmpty());
 }
 
 QString VoiceSession::unavailableReason() const
@@ -159,7 +167,9 @@ QString VoiceSession::unavailableReason() const
         return QStringLiteral("Modèles locaux désactivés");
     if (provider() == QLatin1String("local") && !m_localRuntimeReady)
         return QStringLiteral("Service vocal local en démarrage");
-    if (provider() != QLatin1String("local") && openAiKey().isEmpty())
+    if (provider() == QLatin1String("groq") && groqKey().isEmpty())
+        return QStringLiteral("Clé Groq absente");
+    if (provider() == QLatin1String("openai") && openAiKey().isEmpty())
         return QStringLiteral("Clé OpenAI absente");
     return {};
 }
@@ -169,12 +179,17 @@ QString VoiceSession::provider() const
     const QString selected = voiceConfig().value(QStringLiteral("sessionProvider"),
                                                   QStringLiteral("local"))
                                  .toString().trimmed().toLower();
-    return selected == QLatin1String("openai") ? QStringLiteral("openai")
-                                                : QStringLiteral("local");
+    if (selected == QLatin1String("openai"))
+        return QStringLiteral("openai");
+    if (selected == QLatin1String("groq"))
+        return QStringLiteral("groq");
+    return QStringLiteral("local");
 }
 
 QString VoiceSession::localEndpoint() const
 {
+    if (provider() == QLatin1String("groq"))
+        return QStringLiteral("https://api.groq.com/openai/v1");
     QString endpoint = voiceConfig().value(QStringLiteral("asrEndpoint"),
                                             QStringLiteral("http://127.0.0.1:1235/v1"))
                            .toString().trimmed();
@@ -239,7 +254,7 @@ void VoiceSession::start()
         return;
     }
 
-    if (provider() == QLatin1String("local")) {
+    if (provider() == QLatin1String("local") || provider() == QLatin1String("groq")) {
         startLocal();
         return;
     }
@@ -563,6 +578,10 @@ QByteArray VoiceSession::pcmToWav(const QByteArray& pcm)
 
 void VoiceSession::transcribeLocal(const QByteArray& pcm)
 {
+    const bool groq = provider() == QLatin1String("groq");
+    const qint64 billedSeconds = groq
+        ? qMax<qint64>(10, static_cast<qint64>(
+              std::ceil(double(pcm.size()) / (kSampleRate * 2)))) : 0;
     auto* multipart = new QHttpMultiPart(QHttpMultiPart::FormDataType);
     QHttpPart audioPart;
     audioPart.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("audio/wav"));
@@ -575,23 +594,37 @@ void VoiceSession::transcribeLocal(const QByteArray& pcm)
     QHttpPart languagePart;
     languagePart.setHeader(QNetworkRequest::ContentDispositionHeader,
                            QStringLiteral("form-data; name=\"language\""));
-    languagePart.setBody(cfg.value(QStringLiteral("language"),
-                                   QStringLiteral("French")).toString().toUtf8());
+    languagePart.setBody(provider() == QLatin1String("groq")
+        ? cfg.value(QStringLiteral("groqLanguage"), QStringLiteral("fr")).toString().toUtf8()
+        : cfg.value(QStringLiteral("language"), QStringLiteral("French")).toString().toUtf8());
     multipart->append(languagePart);
+
+    if (groq) {
+        QHttpPart modelPart;
+        modelPart.setHeader(QNetworkRequest::ContentDispositionHeader,
+                            QStringLiteral("form-data; name=\"model\""));
+        modelPart.setBody(cfg.value(QStringLiteral("groqModel"),
+                                    QStringLiteral("whisper-large-v3")).toString().toUtf8());
+        multipart->append(modelPart);
+    }
 
     QNetworkRequest request(QUrl(localEndpoint() + QStringLiteral("/audio/transcriptions")));
     request.setTransferTimeout(300000);
+    if (groq)
+        request.setRawHeader("Authorization", "Bearer " + groqKey().toUtf8());
     QNetworkReply* reply = m_localNetwork.post(request, multipart);
     multipart->setParent(reply);
-    connect(reply, &QNetworkReply::finished, this, [this, reply] {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, groq, billedSeconds] {
         const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         const QJsonObject body = QJsonDocument::fromJson(reply->readAll()).object();
         const QString transportError = reply->error() == QNetworkReply::NoError
             ? QString() : reply->errorString();
         reply->deleteLater();
         if (status < 200 || status >= 300 || !transportError.isEmpty()) {
-            qWarning() << "[starvis.voice] local ASR failed" << status << transportError
-                       << body.value(QStringLiteral("detail")).toString();
+            const QString detail = body.value(QStringLiteral("error")).toObject()
+                                       .value(QStringLiteral("message")).toString();
+            qWarning() << "[starvis.voice] ASR failed" << provider() << status
+                       << transportError << detail;
             resumeLocalListening();
             return;
         }
@@ -600,7 +633,10 @@ void VoiceSession::transcribeLocal(const QByteArray& pcm)
             resumeLocalListening();
             return;
         }
-        qInfo() << "[starvis.voice] local transcript:" << transcript;
+        if (groq)
+            emit cloudUsageIncurred(billedSeconds * 0.111 / 3600.0,
+                                    QStringLiteral("groqAsrSeconds"), billedSeconds);
+        qInfo() << "[starvis.voice] transcript" << provider() << transcript;
         emit transcriptEvent(QStringLiteral("user"), transcript);
         setPhase(QStringLiteral("reasoning"));
         m_waitingLocalReply = true;
