@@ -958,6 +958,7 @@ Item {
                         MouseArea {
                             id: providerMouse
                             anchors.fill: parent; hoverEnabled: true
+                            preventStealing: true
                             cursorShape: Qt.PointingHandCursor
                             onClicked: modal.selectStarvisProvider(parent.modelData.value)
                         }
@@ -991,6 +992,7 @@ Item {
                 width: parent.width
                 spacing: 7
                 visible: starvisRuntimeCard.parent.selectedProvider === "anthropic"
+                Text { text: "Clé API Anthropic"; color: Theme.textSecondary; font.pixelSize: 8 }
                 Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "starvis-anthropic-key"; item.placeholder = "Clé Anthropic (raisonnement + vision)"; item.secret = true } }
                 Loader { sourceComponent: providerField; onLoaded: { item.configKey = "modelPin"; item.fallback = ""; item.placeholder = "Modèle épinglé (vide = résolution automatique)" } }
                 Loader { sourceComponent: providerField; onLoaded: { item.configKey = "maxTokens"; item.fallback = "8192"; item.placeholder = "Tokens de sortie Anthropic" } }
@@ -1005,6 +1007,7 @@ Item {
                 width: parent.width
                 spacing: 7
                 visible: starvisRuntimeCard.parent.selectedProvider === "openai"
+                Text { text: "Clé API OpenAI"; color: Theme.textSecondary; font.pixelSize: 8 }
                 Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "starvis-openai-key"; item.placeholder = "Clé OpenAI requise (Terra, Sol et TTS)"; item.secret = true } }
                 Text { text: "Routage du raisonnement"; color: Theme.textSecondary; font.pixelSize: 8 }
                 Row {
@@ -1034,6 +1037,7 @@ Item {
                             MouseArea {
                                 id: routingMouse
                                 anchors.fill: parent; hoverEnabled: true
+                                preventStealing: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: {
                                     modal.setStarvisValue("routingMode", parent.modelData.value)
@@ -1160,6 +1164,7 @@ Item {
                             MouseArea {
                                 id: sessionMouse
                                 anchors.fill: parent; hoverEnabled: true
+                                preventStealing: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: modal.setBlobValue("wp-starvis-voice", "sessionProvider",
                                                               parent.modelData.value)
@@ -1196,6 +1201,7 @@ Item {
                             MouseArea {
                                 id: outputMouse
                                 anchors.fill: parent; hoverEnabled: true
+                                preventStealing: true
                                 cursorShape: Qt.PointingHandCursor
                                 onClicked: modal.setBlobValue("wp-starvis-voice", "speechProvider",
                                                               parent.modelData.value)
@@ -1265,6 +1271,12 @@ Item {
 
                 Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "asrEndpoint"; item.fallback = "http://127.0.0.1:1235/v1"; item.placeholder = "API ASR locale" } }
 
+                Text {
+                    text: "Clé API Groq"
+                    color: Theme.textSecondary
+                    font.pixelSize: 8
+                    visible: voiceSettings.sessionProvider === "groq"
+                }
                 Loader {
                     sourceComponent: keyField
                     visible: voiceSettings.sessionProvider === "groq"
@@ -1282,6 +1294,13 @@ Item {
                     Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "groqLanguage"; item.fallback = "fr"; item.placeholder = "Langue ASR" } }
                 }
 
+                Text {
+                    text: "Clé API OpenAI (voix)"
+                    color: Theme.textSecondary
+                    font.pixelSize: 8
+                    visible: voiceSettings.sessionProvider === "openai"
+                             || voiceSettings.speechProvider === "openai"
+                }
                 Loader {
                     sourceComponent: keyField
                     visible: voiceSettings.sessionProvider === "openai"
