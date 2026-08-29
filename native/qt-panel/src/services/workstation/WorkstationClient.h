@@ -19,6 +19,7 @@ class WorkstationClient : public QObject {
 
 public:
     explicit WorkstationClient(QObject* parent = nullptr);
+    WorkstationClient(QObject* parent, const QString& pipeName, int staleTimeoutMs);
     ~WorkstationClient() override;
 
     bool connected() const { return m_registered; }
@@ -36,6 +37,8 @@ signals:
 private:
     void connectPipe();
     void disconnectPipe();
+    void handleTransportFailure();
+    void scheduleReconnect(int delayMs = 3000);
     void onReadyRead();
     void handleLine(const QByteArray& line);
     void requestSnapshot();
@@ -47,12 +50,15 @@ private:
     QTimer m_pollTimer;       // 1s snapshot cadence
     QTimer m_heartbeatTimer;  // 2s keep-alive
     QTimer m_reconnectTimer;  // 3s retry while active
+    QTimer m_connectTimer;    // bounds connect and registration handshakes
     QTimer m_staleTimer;      // marks data stale when snapshots stop arriving
+    QString m_pipeName;
     QVariantMap m_snapshot;
     bool m_active = false;
     bool m_registered = false;
     bool m_awaitingSnapshot = false;
     bool m_stale = false;
+    bool m_resetting = false;
 };
 
 } // namespace qtpanel

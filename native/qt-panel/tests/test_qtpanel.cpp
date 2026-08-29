@@ -7,6 +7,7 @@
 #include "services/reader/ReaderService.h"
 #include "services/live/LiveFeedService.h"
 #include "services/pressreader/PressReaderService.h"
+#include "services/workstation/WorkstationClient.h"
 #include "shell/FocusPolicy.h"
 #include "shell/SystemTheme.h"
 #include "services/starvis/ModelResolver.h"
@@ -14,6 +15,8 @@
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QLocalServer>
+#include <QLocalSocket>
 #include <QPainter>
 #include <QTemporaryDir>
 
@@ -25,6 +28,56 @@ class TestQtPanel : public QObject {
     Q_OBJECT
 
 private slots:
+    void workstationReconnectsWhenSnapshotsStop()
+    {
+        const QString pipeName = QStringLiteral("qt-panel-workstation-test-%1")
+                                     .arg(QCoreApplication::applicationPid());
+        QLocalServer::removeServer(pipeName);
+        QLocalServer server;
+        QVERIFY(server.listen(pipeName));
+
+        int registrations = 0;
+        bool replyToSnapshots = true;
+        QList<QLocalSocket*> sockets;
+        connect(&server, &QLocalServer::newConnection, this, [&] {
+            while (QLocalSocket* socket = server.nextPendingConnection()) {
+                sockets.append(socket);
+                connect(socket, &QLocalSocket::readyRead, this, [&, socket] {
+                    const QList<QByteArray> lines = socket->readAll().split('\n');
+                    for (const QByteArray& line : lines) {
+                        const QJsonObject request = QJsonDocument::fromJson(line.trimmed()).object();
+                        const QString type = request.value(QStringLiteral("type")).toString();
+                        if (type == QStringLiteral("register")) {
+                            ++registrations;
+                            socket->write("{\"type\":\"registered\"}\n");
+                        } else if (type == QStringLiteral("snapshot") && replyToSnapshots) {
+                            socket->write("{\"stale\":false,\"cpu\":{\"usagePct\":42}}\n");
+                        }
+                    }
+                    socket->flush();
+                });
+            }
+        });
+
+        WorkstationClient client(nullptr, pipeName, 1200);
+        client.setActive(true);
+        QTRY_VERIFY_WITH_TIMEOUT(client.connected(), 1000);
+        QTRY_COMPARE_WITH_TIMEOUT(
+            client.snapshot().value(QStringLiteral("cpu")).toMap()
+                .value(QStringLiteral("usagePct")).toInt(),
+            42, 1000);
+
+        replyToSnapshots = false;
+        QTRY_VERIFY_WITH_TIMEOUT(registrations >= 2, 2800);
+
+        replyToSnapshots = true;
+        QTRY_VERIFY_WITH_TIMEOUT(client.connected(), 1000);
+        QTRY_VERIFY_WITH_TIMEOUT(!client.stale(), 1500);
+        client.setActive(false);
+        qDeleteAll(sockets);
+        QLocalServer::removeServer(pipeName);
+    }
+
     void mojibakeRepair()
     {
         // "Québec" whose é (UTF-8 C3 A9) was decoded as cp1252 → "QuÃ©bec".

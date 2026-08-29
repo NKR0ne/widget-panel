@@ -356,7 +356,7 @@ const QCommandLineOption diagPressReaderOption(
 
     HttpClient http;
     WeatherService weather(&settings, &http);
-    WorkstationClient workstation;
+    WorkstationClient workstation(nullptr);
     StocksModel stocks(&settings, &vault, &http);
     NewsService news(&settings, &http);
     MsGraphService msGraph(&settings, &http);

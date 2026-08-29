@@ -12,6 +12,7 @@ qt_add_executable(qt-panel-tests
     ${CMAKE_SOURCE_DIR}/src/services/reader/ReaderService.cpp
     ${CMAKE_SOURCE_DIR}/src/services/live/LiveFeedService.cpp
     ${CMAKE_SOURCE_DIR}/src/services/pressreader/PressReaderService.cpp
+    ${CMAKE_SOURCE_DIR}/src/services/workstation/WorkstationClient.cpp
     ${CMAKE_SOURCE_DIR}/src/services/starvis/MotionDetector.cpp
     ${CMAKE_SOURCE_DIR}/src/services/starvis/ModelResolver.cpp
 )

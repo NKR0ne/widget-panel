@@ -7,16 +7,22 @@
 namespace qtpanel {
 
 namespace {
-const char kPipeName[] = "WorkstationMonitorTelemetry";
 constexpr int kPollMs = 1000;
 constexpr int kHeartbeatMs = 2000;
 constexpr int kReconnectMs = 3000;
-constexpr int kStaleMs = 3500;
 constexpr int kConnectTimeoutMs = 1200;
+constexpr int kRegistrationTimeoutMs = 1600;
 } // namespace
 
 WorkstationClient::WorkstationClient(QObject* parent)
+    : WorkstationClient(parent, QStringLiteral("WorkstationMonitorTelemetry"), 3500)
+{
+}
+
+WorkstationClient::WorkstationClient(QObject* parent, const QString& pipeName,
+                                     int staleTimeoutMs)
     : QObject(parent)
+    , m_pipeName(pipeName)
 {
     m_pollTimer.setInterval(kPollMs);
     connect(&m_pollTimer, &QTimer::timeout, this, &WorkstationClient::requestSnapshot);
@@ -30,25 +36,29 @@ WorkstationClient::WorkstationClient(QObject* parent)
     m_reconnectTimer.setSingleShot(true);
     connect(&m_reconnectTimer, &QTimer::timeout, this, &WorkstationClient::connectPipe);
 
-    m_staleTimer.setInterval(kStaleMs);
+    m_connectTimer.setSingleShot(true);
+    connect(&m_connectTimer, &QTimer::timeout, this, [this] {
+        qWarning() << "[workstation] connection handshake timed out; reconnecting";
+        disconnectPipe();
+        scheduleReconnect();
+    });
+
+    m_staleTimer.setInterval(qMax(100, staleTimeoutMs));
     m_staleTimer.setSingleShot(true);
     connect(&m_staleTimer, &QTimer::timeout, this, &WorkstationClient::markStale);
 
     connect(&m_socket, &QLocalSocket::readyRead, this, &WorkstationClient::onReadyRead);
     connect(&m_socket, &QLocalSocket::connected, this, [this] {
+        m_connectTimer.start(kRegistrationTimeoutMs);
         m_buffer.clear();
         sendJson({{QStringLiteral("type"), QStringLiteral("register")},
                   {QStringLiteral("clientName"), QStringLiteral("qt-panel")}});
     });
     connect(&m_socket, &QLocalSocket::errorOccurred, this, [this](QLocalSocket::LocalSocketError) {
-        disconnectPipe();
-        if (m_active)
-            m_reconnectTimer.start();
+        handleTransportFailure();
     });
     connect(&m_socket, &QLocalSocket::disconnected, this, [this] {
-        disconnectPipe();
-        if (m_active)
-            m_reconnectTimer.start();
+        handleTransportFailure();
     });
 }
 
@@ -61,6 +71,7 @@ WorkstationClient::~WorkstationClient()
     m_pollTimer.stop();
     m_heartbeatTimer.stop();
     m_reconnectTimer.stop();
+    m_connectTimer.stop();
     m_staleTimer.stop();
     if (m_socket.state() != QLocalSocket::UnconnectedState)
         m_socket.abort();
@@ -68,8 +79,13 @@ WorkstationClient::~WorkstationClient()
 
 void WorkstationClient::setActive(bool active)
 {
-    if (m_active == active)
+    if (m_active == active) {
+        if (active && (!m_registered || m_stale)) {
+            disconnectPipe();
+            scheduleReconnect(0);
+        }
         return;
+    }
     m_active = active;
     if (active) {
         connectPipe();
@@ -84,28 +100,50 @@ void WorkstationClient::connectPipe()
 {
     if (!m_active || m_socket.state() != QLocalSocket::UnconnectedState)
         return;
-    m_socket.connectToServer(QLatin1String(kPipeName));
-    if (!m_socket.waitForConnected(kConnectTimeoutMs)) {
-        m_socket.abort();
-        if (m_active)
-            m_reconnectTimer.start();
-    }
+    m_connectTimer.start(kConnectTimeoutMs);
+    m_socket.connectToServer(m_pipeName);
 }
 
 void WorkstationClient::disconnectPipe()
 {
+    if (m_resetting)
+        return;
+    m_resetting = true;
     const bool wasRegistered = m_registered;
     m_registered = false;
     m_awaitingSnapshot = false;
     m_pollTimer.stop();
     m_heartbeatTimer.stop();
+    m_connectTimer.stop();
     m_staleTimer.stop();
     if (m_socket.state() != QLocalSocket::UnconnectedState)
         m_socket.abort();
+    m_buffer.clear();
+    if (!m_stale) {
+        m_stale = true;
+        emit snapshotChanged();
+    }
     if (wasRegistered) {
-        markStale();
         emit connectedChanged();
     }
+    m_resetting = false;
+}
+
+void WorkstationClient::handleTransportFailure()
+{
+    if (m_resetting)
+        return;
+    disconnectPipe();
+    scheduleReconnect();
+}
+
+void WorkstationClient::scheduleReconnect(int delayMs)
+{
+    if (!m_active)
+        return;
+    if (m_reconnectTimer.isActive() && m_reconnectTimer.remainingTime() <= delayMs)
+        return;
+    m_reconnectTimer.start(qMax(0, delayMs));
 }
 
 void WorkstationClient::onReadyRead()
@@ -130,11 +168,17 @@ void WorkstationClient::handleLine(const QByteArray& line)
 
     if (type == QLatin1String("registered")) {
         qInfo() << "[workstation] registered with telemetry service";
+        m_connectTimer.stop();
         m_registered = true;
         m_heartbeatTimer.start();
         m_pollTimer.start();
         emit connectedChanged();
         requestSnapshot();
+        return;
+    }
+
+    if (!type.isEmpty()) {
+        qWarning() << "[workstation] unexpected telemetry message" << type;
         return;
     }
 
@@ -167,10 +211,20 @@ void WorkstationClient::sendJson(const QVariantMap& message)
 
 void WorkstationClient::markStale()
 {
-    if (m_stale)
+    if (!m_stale) {
+        m_stale = true;
+        emit snapshotChanged();
+    }
+    if (!m_active)
         return;
-    m_stale = true;
-    emit snapshotChanged();
+
+    // A Windows named pipe can remain nominally connected after its server is
+    // restarted. Writes then appear to succeed, but no snapshots arrive and
+    // QLocalSocket emits neither errorOccurred nor disconnected. Treat the
+    // stale watchdog as a transport failure so the subscription heals itself.
+    qWarning() << "[workstation] telemetry stopped responding; reconnecting";
+    disconnectPipe();
+    scheduleReconnect(0);
 }
 
 } // namespace qtpanel
