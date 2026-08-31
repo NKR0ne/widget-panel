@@ -21,6 +21,7 @@ class HttpClient;
 class ModelResolver;
 class OpenAiCompatibleLLMBackend;
 class OpenAiCompatibleTTSBackend;
+class OpenAiCompatibleVisionBackend;
 class BackendOperation;
 class SentryService;
 class SpeechService;
@@ -179,8 +180,9 @@ private:
     void recordCloudCharge(double costUsd, const QString& counter, qint64 units);
     void setBusy(bool busy);
     void probeLocalBackend();
-    void classifyLocalContent(const QJsonArray& content, QObject* context,
-                              ClassifyCallback callback);
+    void classifyLocal(const QVector<QImage>& images, const QVector<QString>& labels,
+                       const QString& prompt, QObject* context,
+                       ClassifyCallback callback);
     QVariantMap voiceConfig() const;
     void playSpeechBytes(const QByteArray& bytes, const QString& extension);
     void fallbackSpeech(const QString& text, const QString& error);
@@ -199,6 +201,7 @@ private:
     AnthropicClient* m_anthropic = nullptr;
     ModelResolver* m_modelResolver = nullptr;
     OpenAiCompatibleLLMBackend* m_localLlmBackend = nullptr;
+    OpenAiCompatibleVisionBackend* m_localVisionBackend = nullptr;
     OpenAiCompatibleTTSBackend* m_ttsBackend = nullptr;
     StarvisState* m_state = nullptr;
     VoiceSession* m_voice = nullptr;

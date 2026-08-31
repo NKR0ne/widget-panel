@@ -14,6 +14,7 @@
 #include "services/starvis/MotionDetector.h"
 #include "services/starvis/backends/BackendOperation.h"
 #include "services/starvis/backends/OpenAiCompatibleLLMBackend.h"
+#include "services/starvis/backends/OpenAiCompatibleVisionBackend.h"
 #include "services/starvis/backends/OpenAiCompatibleSTTBackend.h"
 #include "services/starvis/backends/OpenAiCompatibleTTSBackend.h"
 #include "services/starvis/backends/StreamingTextSegmenter.h"
@@ -177,6 +178,93 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(server.hasPendingConnections()
                                     || operation->state() == BackendOperation::State::Running,
                                 500);
+        operation->cancel();
+        QTRY_COMPARE_WITH_TIMEOUT(cancelledSpy.count(), 1, 2000);
+        QCOMPARE(operation->state(), BackendOperation::State::Cancelled);
+    }
+
+    void openAiCompatibleVisionSendsImagesAndReturnsJson()
+    {
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        QByteArray requestBytes;
+        connect(&server, &QTcpServer::newConnection, this, [&] {
+            QTcpSocket* socket = server.nextPendingConnection();
+            connect(socket, &QTcpSocket::readyRead, this, [&, socket] {
+                requestBytes += socket->readAll();
+                const int headerEnd = requestBytes.indexOf("\r\n\r\n");
+                if (headerEnd < 0 || socket->property("answered").toBool())
+                    return;
+                const QRegularExpression lengthPattern(
+                    QStringLiteral("content-length:\\s*(\\d+)"),
+                    QRegularExpression::CaseInsensitiveOption);
+                const auto match = lengthPattern.match(
+                    QString::fromLatin1(requestBytes.left(headerEnd)));
+                if (!match.hasMatch()
+                    || requestBytes.size() - headerEnd - 4 < match.captured(1).toInt()) {
+                    return;
+                }
+                socket->setProperty("answered", true);
+                const QByteArray responseBody =
+                    "{\"choices\":[{\"message\":{\"content\":"
+                    "\"Analyse: {\\\"classification\\\":\\\"person\\\","
+                    "\\\"confidence\\\":0.94}\"}}]}";
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                              "Content-Length: " + QByteArray::number(responseBody.size())
+                              + "\r\nConnection: close\r\n\r\n" + responseBody);
+                socket->disconnectFromHost();
+            });
+        });
+
+        OpenAiCompatibleVisionBackend backend;
+        backend.configure(QStringLiteral("http://127.0.0.1:%1/v1")
+                              .arg(server.serverPort()),
+                          QStringLiteral("qwen-vl-test"));
+        VisionRequest request;
+        request.images = {QImage(4, 4, QImage::Format_RGB32)};
+        request.images[0].fill(Qt::red);
+        request.imageLabels = {QStringLiteral("Image à analyser :")};
+        request.prompt = QStringLiteral("Réponds en JSON.");
+        BackendOperation* operation = backend.analyze(request, this);
+        QSignalSpy finishedSpy(operation, &BackendOperation::succeeded);
+
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 2000);
+        QCOMPARE(operation->result().value(QStringLiteral("json")).toMap()
+                     .value(QStringLiteral("classification")).toString(),
+                 QStringLiteral("person"));
+        const int bodyStart = requestBytes.indexOf("\r\n\r\n") + 4;
+        const QJsonObject body = QJsonDocument::fromJson(requestBytes.mid(bodyStart)).object();
+        QCOMPARE(body.value(QStringLiteral("model")).toString(), QStringLiteral("qwen-vl-test"));
+        QVERIFY(!body.value(QStringLiteral("stream")).toBool());
+        const QJsonArray content = body.value(QStringLiteral("messages")).toArray().first()
+                                       .toObject().value(QStringLiteral("content")).toArray();
+        QCOMPARE(content.first().toObject().value(QStringLiteral("text")).toString(),
+                 QStringLiteral("Image à analyser :"));
+        QVERIFY(content.at(1).toObject().value(QStringLiteral("image_url")).toObject()
+                    .value(QStringLiteral("url")).toString()
+                    .startsWith(QStringLiteral("data:image/jpeg;base64,")));
+        QCOMPARE(content.last().toObject().value(QStringLiteral("text")).toString(),
+                 QStringLiteral("Réponds en JSON."));
+    }
+
+    void openAiCompatibleVisionCancelsTransport()
+    {
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        connect(&server, &QTcpServer::newConnection, this, [&] {
+            QTcpSocket* socket = server.nextPendingConnection();
+            connect(socket, &QTcpSocket::readyRead, socket, [socket] { socket->readAll(); });
+        });
+
+        OpenAiCompatibleVisionBackend backend;
+        backend.configure(QStringLiteral("http://127.0.0.1:%1/v1")
+                              .arg(server.serverPort()),
+                          QStringLiteral("qwen-vl-test"));
+        VisionRequest request;
+        request.images = {QImage(4, 4, QImage::Format_RGB32)};
+        request.prompt = QStringLiteral("Attends");
+        BackendOperation* operation = backend.analyze(request, this);
+        QSignalSpy cancelledSpy(operation, &BackendOperation::cancelled);
         operation->cancel();
         QTRY_COMPARE_WITH_TIMEOUT(cancelledSpy.count(), 1, 2000);
         QCOMPARE(operation->state(), BackendOperation::State::Cancelled);

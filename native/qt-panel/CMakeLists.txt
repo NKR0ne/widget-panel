@@ -46,6 +46,7 @@ qt_add_executable(qt-panel WIN32
     src/services/starvis/backends/BackendInterfaces.h
     src/services/starvis/backends/BackendOperation.h src/services/starvis/backends/BackendOperation.cpp
     src/services/starvis/backends/OpenAiCompatibleLLMBackend.h src/services/starvis/backends/OpenAiCompatibleLLMBackend.cpp
+    src/services/starvis/backends/OpenAiCompatibleVisionBackend.h src/services/starvis/backends/OpenAiCompatibleVisionBackend.cpp
     src/services/starvis/backends/OpenAiCompatibleSTTBackend.h src/services/starvis/backends/OpenAiCompatibleSTTBackend.cpp
     src/services/starvis/backends/OpenAiCompatibleTTSBackend.h src/services/starvis/backends/OpenAiCompatibleTTSBackend.cpp
     src/services/starvis/backends/StreamingTextSegmenter.h src/services/starvis/backends/StreamingTextSegmenter.cpp

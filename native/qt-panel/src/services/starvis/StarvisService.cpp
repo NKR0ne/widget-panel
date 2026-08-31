@@ -5,6 +5,7 @@
 #include "backends/BackendOperation.h"
 #include "backends/OpenAiCompatibleLLMBackend.h"
 #include "backends/OpenAiCompatibleTTSBackend.h"
+#include "backends/OpenAiCompatibleVisionBackend.h"
 #include "SentryService.h"
 #include "StarvisState.h"
 #include "VoiceSession.h"
@@ -19,7 +20,6 @@
 
 #include <QAudioOutput>
 #include <QAudioDevice>
-#include <QBuffer>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDebug>
@@ -120,24 +120,13 @@ QString normalizedOpenAiBaseUrl(const QVariantMap& cfg)
     return url;
 }
 
-QJsonObject localImagePart(const QImage& source, int maxDim = 1280, int jpegQuality = 72)
+QImage scaledVisionImage(const QImage& source, int maxDim = 1280)
 {
     if (source.isNull())
         return {};
-    QImage image = source;
-    if (image.width() > maxDim || image.height() > maxDim)
-        image = image.scaled(maxDim, maxDim, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    QByteArray bytes;
-    QBuffer buffer(&bytes);
-    buffer.open(QIODevice::WriteOnly);
-    image.save(&buffer, "JPEG", jpegQuality);
-    return QJsonObject{
-        {QStringLiteral("type"), QStringLiteral("image_url")},
-        {QStringLiteral("image_url"), QJsonObject{
-            {QStringLiteral("url"), QStringLiteral("data:image/jpeg;base64,")
-                 + QString::fromLatin1(bytes.toBase64())},
-        }},
-    };
+    if (source.width() <= maxDim && source.height() <= maxDim)
+        return source;
+    return source.scaled(maxDim, maxDim, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 }
 
 QString textForSpeech(QString text)
@@ -205,6 +194,7 @@ StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, Http
     m_anthropic = new AnthropicClient(settings, vault, http, this);
     m_modelResolver = new ModelResolver(settings, vault, http, this);
     m_localLlmBackend = new OpenAiCompatibleLLMBackend(http, this);
+    m_localVisionBackend = new OpenAiCompatibleVisionBackend(this);
     m_ttsBackend = new OpenAiCompatibleTTSBackend(this);
     m_state = new StarvisState(this);
     m_voice = new VoiceSession(settings, vault, this, this);
@@ -1007,11 +997,7 @@ void StarvisService::classifyImage(const QImage& image, const QString& prompt,
                                    QObject* context, ClassifyCallback callback)
 {
     if (localModelsEnabled() && m_localVisionReady) {
-        QJsonArray content;
-        content.append(localImagePart(image));
-        content.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
-                                   {QStringLiteral("text"), prompt}});
-        classifyLocalContent(content, context, std::move(callback));
+        classifyLocal({scaledVisionImage(image)}, {}, prompt, context, std::move(callback));
         return;
     }
     if (config().value(QStringLiteral("allowCloudVision"), false).toBool()
@@ -1028,24 +1014,17 @@ void StarvisService::classifyWithGallery(const QVector<QPair<QString, QImage>>& 
                                          QObject* context, ClassifyCallback callback)
 {
     if (localModelsEnabled() && m_localVisionReady) {
-        QJsonArray content;
+        QVector<QImage> images;
+        QVector<QString> labels;
         for (const auto& entry : gallery) {
             if (entry.second.isNull())
                 continue;
-            content.append(QJsonObject{
-                {QStringLiteral("type"), QStringLiteral("text")},
-                {QStringLiteral("text"), QStringLiteral("Référence — ") + entry.first},
-            });
-            content.append(localImagePart(entry.second, 400, 70));
+            images.append(scaledVisionImage(entry.second, 400));
+            labels.append(QStringLiteral("Référence — ") + entry.first);
         }
-        content.append(QJsonObject{
-            {QStringLiteral("type"), QStringLiteral("text")},
-            {QStringLiteral("text"), QStringLiteral("Image à analyser :")},
-        });
-        content.append(localImagePart(probe));
-        content.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("text")},
-                                   {QStringLiteral("text"), prompt}});
-        classifyLocalContent(content, context, std::move(callback));
+        images.append(scaledVisionImage(probe));
+        labels.append(QStringLiteral("Image à analyser :"));
+        classifyLocal(images, labels, prompt, context, std::move(callback));
         return;
     }
     if (config().value(QStringLiteral("allowCloudVision"), false).toBool()
@@ -1058,48 +1037,44 @@ void StarvisService::classifyWithGallery(const QVector<QPair<QString, QImage>>& 
     callback({}, {}, QStringLiteral("vision provider unavailable"));
 }
 
-void StarvisService::classifyLocalContent(const QJsonArray& content, QObject* context,
-                                          ClassifyCallback callback)
+void StarvisService::classifyLocal(const QVector<QImage>& images,
+                                   const QVector<QString>& labels,
+                                   const QString& prompt, QObject* context,
+                                   ClassifyCallback callback)
 {
-    QString visionBaseUrl = config().value(QStringLiteral("visionBaseUrl"),
-                                            QStringLiteral("http://127.0.0.1:1236/v1"))
-                                .toString();
-    while (visionBaseUrl.endsWith(QLatin1Char('/')))
-        visionBaseUrl.chop(1);
-    const QJsonObject body{
-        {QStringLiteral("model"), config().value(QStringLiteral("visionModel"),
-                                                   QStringLiteral("starvis-vision")).toString()},
-        {QStringLiteral("messages"), QJsonArray{QJsonObject{
-            {QStringLiteral("role"), QStringLiteral("user")},
-            {QStringLiteral("content"), content},
-        }}},
-        {QStringLiteral("max_tokens"), 768},
-        {QStringLiteral("temperature"), 0.1},
-        {QStringLiteral("stream"), false},
-    };
-    m_http->requestJsonAuth(
-        "POST", QUrl(visionBaseUrl + QStringLiteral("/chat/completions")),
-        QString(), QJsonDocument(body).toJson(QJsonDocument::Compact), context,
-        [callback = std::move(callback)](const QJsonDocument& doc, int status,
-                                         const QString& error) {
-        const QJsonObject payload = doc.object();
-        if (status < 200 || status >= 300) {
-            const QString detail = payload.value(QStringLiteral("error")).toObject()
-                                       .value(QStringLiteral("message")).toString();
-            callback({}, {}, !detail.isEmpty() ? detail : !error.isEmpty() ? error
-                : QStringLiteral("Local vision request failed (%1)").arg(status));
-            return;
-        }
-        const QJsonArray choices = payload.value(QStringLiteral("choices")).toArray();
-        const QString raw = choices.isEmpty() ? QString()
-            : choices.first().toObject().value(QStringLiteral("message")).toObject()
-                  .value(QStringLiteral("content")).toString().trimmed();
-        const int start = raw.indexOf(QLatin1Char('{'));
-        const int end = raw.lastIndexOf(QLatin1Char('}'));
-        QJsonObject parsed;
-        if (start >= 0 && end > start)
-            parsed = QJsonDocument::fromJson(raw.mid(start, end - start + 1).toUtf8()).object();
-        callback(parsed, raw, QString());
+    const QVariantMap cfg = config();
+    const QString endpoint = cfg.value(QStringLiteral("visionBaseUrl"),
+                                       QStringLiteral("http://127.0.0.1:1236/v1")).toString();
+    const QString selectedModel = cfg.value(QStringLiteral("visionModel"),
+                                            QStringLiteral("starvis-vision")).toString();
+    m_localVisionBackend->configure(endpoint, selectedModel);
+    m_localVisionBackend->setAvailable(m_localVisionReady);
+
+    VisionRequest request;
+    request.images = images;
+    request.imageLabels = labels;
+    request.prompt = prompt;
+    request.model = selectedModel;
+    request.maxTokens = 768;
+    BackendOperation* operation = m_localVisionBackend->analyze(request,
+                                                               context ? context : this);
+    QObject* callbackContext = context ? context : this;
+    auto sharedCallback = std::make_shared<ClassifyCallback>(std::move(callback));
+    connect(operation, &BackendOperation::succeeded, callbackContext,
+            [operation, sharedCallback](const QVariantMap& result) {
+        const QString raw = result.value(QStringLiteral("text")).toString();
+        (*sharedCallback)(
+            QJsonObject::fromVariantMap(result.value(QStringLiteral("json")).toMap()),
+            raw, QString());
+        operation->deleteLater();
+    });
+    connect(operation, &BackendOperation::failed, callbackContext,
+            [operation, sharedCallback](const QString& error) {
+        (*sharedCallback)({}, {}, error);
+        operation->deleteLater();
+    });
+    connect(operation, &BackendOperation::cancelled, callbackContext, [operation] {
+        operation->deleteLater();
     });
 }
 

@@ -16,6 +16,7 @@ qt_add_executable(qt-panel-tests
     ${CMAKE_SOURCE_DIR}/src/services/starvis/backends/BackendInterfaces.h
     ${CMAKE_SOURCE_DIR}/src/services/starvis/backends/BackendOperation.cpp
     ${CMAKE_SOURCE_DIR}/src/services/starvis/backends/OpenAiCompatibleLLMBackend.cpp
+    ${CMAKE_SOURCE_DIR}/src/services/starvis/backends/OpenAiCompatibleVisionBackend.cpp
     ${CMAKE_SOURCE_DIR}/src/services/starvis/backends/OpenAiCompatibleSTTBackend.cpp
     ${CMAKE_SOURCE_DIR}/src/services/starvis/backends/OpenAiCompatibleTTSBackend.cpp
     ${CMAKE_SOURCE_DIR}/src/services/starvis/backends/StreamingTextSegmenter.cpp

@@ -34,6 +34,7 @@ struct LlmRequest {
 
 struct VisionRequest {
     QVector<QImage> images;
+    QVector<QString> imageLabels;
     QString prompt;
     QString model;
     int maxTokens = 800;
