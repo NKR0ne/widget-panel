@@ -2,6 +2,8 @@
 
 #include "AnthropicClient.h"
 #include "ModelResolver.h"
+#include "backends/BackendOperation.h"
+#include "backends/OpenAiCompatibleLLMBackend.h"
 #include "SentryService.h"
 #include "StarvisState.h"
 #include "VoiceSession.h"
@@ -201,6 +203,7 @@ StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, Http
 {
     m_anthropic = new AnthropicClient(settings, vault, http, this);
     m_modelResolver = new ModelResolver(settings, vault, http, this);
+    m_localLlmBackend = new OpenAiCompatibleLLMBackend(http, this);
     m_state = new StarvisState(this);
     m_voice = new VoiceSession(settings, vault, this, this);
     connect(m_voice, &VoiceSession::cloudUsageIncurred, this,
@@ -1100,7 +1103,66 @@ void StarvisService::postLocal(const QString& userMessage, const QVariantList& h
     messages.append(QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
                                 {QStringLiteral("content"), userMessage}});
 
-    runLocalTurn(messages, allowAgent, 0, started);
+    if (allowAgent)
+        runLocalTurn(messages, true, 0, started);
+    else
+        runLocalSimpleTurn(messages, started);
+}
+
+void StarvisService::runLocalSimpleTurn(const QJsonArray& messages, qint64 started)
+{
+    const QVariantMap cfg = config();
+    const QString chatModel = model();
+    m_localLlmBackend->configure(normalizedOpenAiBaseUrl(cfg), chatModel);
+
+    LlmRequest request;
+    request.messages = messages;
+    request.model = chatModel;
+    request.maxTokens = qBound(128, cfg.value(QStringLiteral("maxTokens"), 1800).toInt(), 8192);
+    request.temperature = cfg.value(QStringLiteral("temperature"), 0.0).toDouble();
+    request.reasoning = cfg.value(QStringLiteral("reasoningEnabled"), false).toBool();
+
+    m_pendingText.clear();
+    emit replyStarted();
+    BackendOperation* operation = m_localLlmBackend->generate(request, this);
+    m_activeBackendOperation = operation;
+    connect(operation, &BackendOperation::textDelta, this, [this](const QString& delta) {
+        m_pendingText += delta;
+        emit replyDelta(delta);
+    });
+    connect(operation, &BackendOperation::thinkingDelta,
+            this, &StarvisService::thinkingDelta);
+    connect(operation, &BackendOperation::succeeded, this,
+            [this, operation, chatModel, started](const QVariantMap& result) {
+        if (m_activeBackendOperation == operation)
+            m_activeBackendOperation = nullptr;
+        setBusy(false);
+        m_turnInputTokens = result.value(QStringLiteral("promptTokens")).toInt();
+        m_turnOutputTokens = result.value(QStringLiteral("completionTokens")).toInt();
+        m_sessionInputTokens += m_turnInputTokens;
+        m_sessionOutputTokens += m_turnOutputTokens;
+        emit usageUpdated(static_cast<int>(m_sessionInputTokens),
+                          static_cast<int>(m_sessionOutputTokens), 0.0);
+        const int latency = static_cast<int>(QDateTime::currentMSecsSinceEpoch() - started);
+        emit replyReceived(m_pendingText.isEmpty() ? QStringLiteral("Command acknowledged.")
+                                                   : m_pendingText,
+                           chatModel, latency);
+        operation->deleteLater();
+    });
+    connect(operation, &BackendOperation::failed, this,
+            [this, operation](const QString& error) {
+        if (m_activeBackendOperation == operation)
+            m_activeBackendOperation = nullptr;
+        setBusy(false);
+        emit chatFailed(error);
+        operation->deleteLater();
+    });
+    connect(operation, &BackendOperation::cancelled, this, [this, operation] {
+        if (m_activeBackendOperation == operation)
+            m_activeBackendOperation = nullptr;
+        setBusy(false);
+        operation->deleteLater();
+    });
 }
 
 QJsonArray StarvisService::localTools() const
@@ -1265,6 +1327,8 @@ void StarvisService::briefing()
 
 void StarvisService::cancelChat()
 {
+    if (m_activeBackendOperation)
+        m_activeBackendOperation->cancel();
     if (m_activeStream) {
         m_activeStream->abort();
         m_activeStream = nullptr;

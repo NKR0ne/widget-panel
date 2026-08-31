@@ -19,6 +19,8 @@ namespace qtpanel {
 class AnthropicClient;
 class HttpClient;
 class ModelResolver;
+class OpenAiCompatibleLLMBackend;
+class BackendOperation;
 class SentryService;
 class SpeechService;
 class StarvisState;
@@ -140,6 +142,7 @@ private:
               bool allowInternet, bool allowAgent);
     void postLocal(const QString& userMessage, const QVariantList& history,
                    bool allowAgent);
+    void runLocalSimpleTurn(const QJsonArray& messages, qint64 started);
     void runLocalTurn(const QJsonArray& messages, bool allowAgent,
                       int loop, qint64 started);
     QJsonArray localTools() const;
@@ -194,11 +197,13 @@ private:
     WorkstationClient* m_workstation = nullptr;
     AnthropicClient* m_anthropic = nullptr;
     ModelResolver* m_modelResolver = nullptr;
+    OpenAiCompatibleLLMBackend* m_localLlmBackend = nullptr;
     StarvisState* m_state = nullptr;
     VoiceSession* m_voice = nullptr;
     SentryService* m_sentry = nullptr;
     SpeechService* m_speech = nullptr;
     QNetworkReply* m_activeStream = nullptr;
+    QPointer<BackendOperation> m_activeBackendOperation;
     QString m_pendingText;      // streamed text of the in-flight turn
     int m_turnInputTokens = 0;  // usage of the current message, folded into…
     int m_turnOutputTokens = 0;

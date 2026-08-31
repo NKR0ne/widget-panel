@@ -13,6 +13,7 @@
 #include "services/starvis/ModelResolver.h"
 #include "services/starvis/MotionDetector.h"
 #include "services/starvis/backends/BackendOperation.h"
+#include "services/starvis/backends/OpenAiCompatibleLLMBackend.h"
 #include "services/starvis/backends/StreamingTextSegmenter.h"
 
 #include <QJsonArray>
@@ -21,6 +22,8 @@
 #include <QLocalSocket>
 #include <QPainter>
 #include <QTemporaryDir>
+#include <QTcpServer>
+#include <QTcpSocket>
 
 using namespace qtpanel;
 
@@ -73,6 +76,108 @@ private slots:
         QCOMPARE(cancelledSpy.count(), 1);
         QCOMPARE(operation.state(), BackendOperation::State::Cancelled);
         QVERIFY(!operation.active());
+    }
+
+    void openAiCompatibleBackendStreamsAndReportsUsage()
+    {
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        QByteArray requestBytes;
+        connect(&server, &QTcpServer::newConnection, this, [&] {
+            QTcpSocket* socket = server.nextPendingConnection();
+            connect(socket, &QTcpSocket::readyRead, this, [&, socket] {
+                requestBytes += socket->readAll();
+                const int headerEnd = requestBytes.indexOf("\r\n\r\n");
+                if (headerEnd < 0 || socket->property("answered").toBool())
+                    return;
+                const QByteArray headers = requestBytes.left(headerEnd);
+                const QRegularExpression lengthPattern(
+                    QStringLiteral("content-length:\\s*(\\d+)"),
+                    QRegularExpression::CaseInsensitiveOption);
+                const QRegularExpressionMatch match = lengthPattern.match(
+                    QString::fromLatin1(headers));
+                if (!match.hasMatch())
+                    return;
+                const int contentLength = match.captured(1).toInt();
+                if (requestBytes.size() - headerEnd - 4 < contentLength)
+                    return;
+
+                socket->setProperty("answered", true);
+                const QByteArray response =
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+                    "Connection: close\r\n\r\n"
+                    "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"analyse \"}}]}\n\n"
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"Bonjour\"}}]}\n\n"
+                    "data: {\"choices\":[{\"delta\":{\"content\":\" local.\"}}]}\n\n"
+                    "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,"
+                    "\"completion_tokens\":3}}\n\n"
+                    "data: [DONE]\n\n";
+                socket->write(response);
+                socket->disconnectFromHost();
+            });
+        });
+
+        HttpClient http;
+        OpenAiCompatibleLLMBackend backend(&http);
+        backend.configure(QStringLiteral("http://127.0.0.1:%1/v1")
+                              .arg(server.serverPort()),
+                          QStringLiteral("qwen-test"));
+        LlmRequest request;
+        request.messages = QJsonArray{
+            QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
+                        {QStringLiteral("content"), QStringLiteral("Bonjour")}},
+        };
+        request.reasoning = true;
+        BackendOperation* operation = backend.generate(request, this);
+        QSignalSpy textSpy(operation, &BackendOperation::textDelta);
+        QSignalSpy thinkingSpy(operation, &BackendOperation::thinkingDelta);
+        QSignalSpy finishedSpy(operation, &BackendOperation::succeeded);
+
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 2000);
+        QCOMPARE(operation->text(), QStringLiteral("Bonjour local."));
+        QCOMPARE(operation->thinking(), QStringLiteral("analyse "));
+        QCOMPARE(operation->result().value(QStringLiteral("promptTokens")).toInt(), 12);
+        QCOMPARE(operation->result().value(QStringLiteral("completionTokens")).toInt(), 3);
+        QCOMPARE(textSpy.count(), 2);
+        QCOMPARE(thinkingSpy.count(), 1);
+
+        const int bodyStart = requestBytes.indexOf("\r\n\r\n") + 4;
+        const QJsonObject sent = QJsonDocument::fromJson(requestBytes.mid(bodyStart)).object();
+        QCOMPARE(sent.value(QStringLiteral("model")).toString(), QStringLiteral("qwen-test"));
+        QVERIFY(sent.value(QStringLiteral("stream")).toBool());
+        QVERIFY(sent.value(QStringLiteral("chat_template_kwargs")).toObject()
+                    .value(QStringLiteral("enable_thinking")).toBool());
+    }
+
+    void openAiCompatibleBackendCancelsTransport()
+    {
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        connect(&server, &QTcpServer::newConnection, this, [&] {
+            QTcpSocket* socket = server.nextPendingConnection();
+            socket->write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+                          "Connection: close\r\n\r\n");
+            socket->flush();
+        });
+
+        HttpClient http;
+        OpenAiCompatibleLLMBackend backend(&http);
+        backend.configure(QStringLiteral("http://127.0.0.1:%1/v1")
+                              .arg(server.serverPort()),
+                          QStringLiteral("qwen-test"));
+        LlmRequest request;
+        request.messages = QJsonArray{
+            QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
+                        {QStringLiteral("content"), QStringLiteral("Attends")}},
+        };
+        BackendOperation* operation = backend.generate(request, this);
+        QSignalSpy cancelledSpy(operation, &BackendOperation::cancelled);
+        QTRY_VERIFY_WITH_TIMEOUT(server.hasPendingConnections()
+                                    || operation->state() == BackendOperation::State::Running,
+                                500);
+        operation->cancel();
+        QTRY_COMPARE_WITH_TIMEOUT(cancelledSpy.count(), 1, 2000);
+        QCOMPARE(operation->state(), BackendOperation::State::Cancelled);
     }
 
     void streamingTextProducesSentenceSizedChunks()
