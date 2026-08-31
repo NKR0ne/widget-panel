@@ -946,9 +946,12 @@ void StarvisService::probeLocalBackend()
                         [setReady, capability, target](const QJsonDocument& doc,
                                                        const QString& error) {
             const QJsonObject body = doc.object();
-            setReady(*target, error.isEmpty()
-                && body.value(QStringLiteral("status")).toString() == QLatin1String("ok")
-                && body.value(capability).toBool());
+            const bool healthy = error.isEmpty()
+                && body.value(QStringLiteral("status")).toString() == QLatin1String("ok");
+            const bool capabilityReady = body.contains(capability)
+                ? body.value(capability).toBool()
+                : capability == QLatin1String("asrReady");
+            setReady(*target, healthy && capabilityReady);
         });
     };
     if (provider() == QLatin1String("local"))

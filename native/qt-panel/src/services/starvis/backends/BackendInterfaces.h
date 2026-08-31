@@ -44,6 +44,7 @@ struct SttRequest {
     QByteArray pcm;
     int sampleRate = 16000;
     int channels = 1;
+    QString model;
     QString language;
     bool detectLanguage = true;
     bool partialTranscripts = false;

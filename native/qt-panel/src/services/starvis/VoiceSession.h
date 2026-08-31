@@ -3,6 +3,7 @@
 #include <QAudioFormat>
 #include <QNetworkAccessManager>
 #include <QObject>
+#include <QPointer>
 #include <QTimer>
 
 class QAudioSink;
@@ -15,6 +16,8 @@ namespace qtpanel {
 class SecretVault;
 class SettingsStore;
 class StarvisService;
+class BackendOperation;
+class OpenAiCompatibleSTTBackend;
 
 // Full-duplex realtime voice over the OpenAI Realtime API (QWebSocket).
 // Mic: QAudioSource 24 kHz mono pcm16 → input_audio_buffer.append.
@@ -78,7 +81,6 @@ private:
     void resumeLocalListening();
     void setPhase(const QString& phase);
     QString localEndpoint() const;
-    static QByteArray pcmToWav(const QByteArray& pcm);
     void closeSession(const QString& reason);
     void setStatus(const QString& status);
     QVariantMap voiceConfig() const;
@@ -88,6 +90,8 @@ private:
     SettingsStore* m_settings = nullptr;
     SecretVault* m_vault = nullptr;
     StarvisService* m_starvis = nullptr;
+    OpenAiCompatibleSTTBackend* m_sttBackend = nullptr;
+    QPointer<BackendOperation> m_sttOperation;
     QWebSocket* m_socket = nullptr;
     QAudioSource* m_micSource = nullptr;
     QIODevice* m_micDevice = nullptr;

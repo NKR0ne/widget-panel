@@ -46,6 +46,24 @@ function Stop-StarvisPythonRuntime {
     Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
 }
 
+function Stop-StarvisAsrRuntime {
+    $process = Get-ListeningProcess -Port $asrPort
+    if ($null -eq $process) {
+        return
+    }
+    $command = [string]$process.CommandLine
+    $pythonRuntime = $process.Name -match '^python(?:w)?\.exe$' `
+        -and ($command -like '*starvis-asr-runtime.py*' `
+             -or $command -like '*starvis-voice-runtime.py*')
+    $nemoRuntime = $process.Name -eq 'nemo-speech.exe' `
+        -and $command -like '*serve*' `
+        -and $command -like '*parakeet-tdt-0.6b-v3*'
+    if (!$pythonRuntime -and !$nemoRuntime) {
+        throw "Port $asrPort is not owned by an expected Starvis ASR runtime."
+    }
+    Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+}
+
 function Stop-StarvisLlamaRuntime {
     param([int]$Port, [string]$Alias)
     $process = Get-ListeningProcess -Port $Port
@@ -65,6 +83,16 @@ function Wait-StarvisHealth {
     param([int]$Port, [string]$Capability)
     $deadline = (Get-Date).AddSeconds(60)
     while ((Get-Date) -lt $deadline) {
+        if ($Capability -eq 'asrReady') {
+            try {
+                $ready = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/ready" `
+                    -TimeoutSec 2
+                if ($ready.ready -eq $true `
+                        -or $ready.status -in @('ok', 'ready')) {
+                    return
+                }
+            } catch { }
+        }
         try {
             $health = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/health" `
                 -TimeoutSec 2
@@ -83,7 +111,7 @@ if ($Action -eq 'enable') {
         & (Join-Path $scriptsRoot 'start-starvis-voice-runtime.ps1')
         Wait-StarvisHealth -Port $asrPort -Capability 'asrReady'
     } else {
-        Stop-StarvisPythonRuntime -Port $asrPort -ScriptName 'starvis-asr-runtime.py'
+        Stop-StarvisAsrRuntime
         if (Test-Path -LiteralPath $lms) {
             $previousErrorAction = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
@@ -103,7 +131,7 @@ if ($Action -eq 'enable') {
     exit 0
 }
 
-Stop-StarvisPythonRuntime -Port $asrPort -ScriptName 'starvis-asr-runtime.py'
+Stop-StarvisAsrRuntime
 Stop-StarvisPythonRuntime -Port $ttsPort -ScriptName 'starvis-fast-tts-runtime.py'
 if (Test-Path -LiteralPath $lms) {
     $previousErrorAction = $ErrorActionPreference

@@ -1142,7 +1142,7 @@ Item {
                     spacing: 4
                     Repeater {
                         model: [
-                            { label: "Qwen ASR local", value: "local" },
+                            { label: "Parakeet local", value: "local" },
                             { label: "Groq Whisper", value: "groq" },
                             { label: "OpenAI temps réel", value: "openai" }
                         ]
@@ -1269,7 +1269,20 @@ Item {
                     Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "ttsEndpoint"; item.fallback = "http://127.0.0.1:1237/v1"; item.placeholder = "API Piper locale" } }
                 }
 
-                Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "asrEndpoint"; item.fallback = "http://127.0.0.1:1235/v1"; item.placeholder = "API ASR locale" } }
+                Column {
+                    width: parent.width
+                    spacing: 7
+                    visible: voiceSettings.sessionProvider === "local"
+                    Text {
+                        text: "Reconnaissance locale · Parakeet TDT"
+                        color: Theme.textSecondary
+                        font.pixelSize: 8
+                    }
+                    Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "asrModel"; item.fallback = "parakeet-tdt-0.6b-v3"; item.placeholder = "Modèle ASR" } }
+                    Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "asrEndpoint"; item.fallback = "http://127.0.0.1:1235/v1"; item.placeholder = "API NeMo Speech locale" } }
+                    Loader { sourceComponent: blobToggle; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "autoLanguage"; item.fallback = true; item.label = "Détection automatique français / anglais" } }
+                    Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "language"; item.fallback = "fr"; item.placeholder = "Langue forcée si détection désactivée" } }
+                }
 
                 Text {
                     text: "Clé API Groq"

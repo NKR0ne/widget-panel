@@ -14,6 +14,7 @@
 #include "services/starvis/MotionDetector.h"
 #include "services/starvis/backends/BackendOperation.h"
 #include "services/starvis/backends/OpenAiCompatibleLLMBackend.h"
+#include "services/starvis/backends/OpenAiCompatibleSTTBackend.h"
 #include "services/starvis/backends/StreamingTextSegmenter.h"
 
 #include <QJsonArray>
@@ -175,6 +176,96 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(server.hasPendingConnections()
                                     || operation->state() == BackendOperation::State::Running,
                                 500);
+        operation->cancel();
+        QTRY_COMPARE_WITH_TIMEOUT(cancelledSpy.count(), 1, 2000);
+        QCOMPARE(operation->state(), BackendOperation::State::Cancelled);
+    }
+
+    void openAiCompatibleSttTranscribesPcmAndDetectsLanguage()
+    {
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        QByteArray requestBytes;
+        connect(&server, &QTcpServer::newConnection, this, [&] {
+            QTcpSocket* socket = server.nextPendingConnection();
+            connect(socket, &QTcpSocket::readyRead, this, [&, socket] {
+                requestBytes += socket->readAll();
+                const int headerEnd = requestBytes.indexOf("\r\n\r\n");
+                if (headerEnd < 0 || socket->property("answered").toBool())
+                    return;
+                const QRegularExpression lengthPattern(
+                    QStringLiteral("content-length:\\s*(\\d+)"),
+                    QRegularExpression::CaseInsensitiveOption);
+                const QRegularExpressionMatch match = lengthPattern.match(
+                    QString::fromLatin1(requestBytes.left(headerEnd)));
+                if (!match.hasMatch())
+                    return;
+                const int contentLength = match.captured(1).toInt();
+                if (requestBytes.size() - headerEnd - 4 < contentLength)
+                    return;
+
+                socket->setProperty("answered", true);
+                const QByteArray responseBody =
+                    "{\"text\":\"Bonjour Starvis\",\"language\":\"fr\","
+                    "\"model\":\"parakeet-tdt-0.6b-v3\"}";
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                              "Content-Length: " + QByteArray::number(responseBody.size())
+                              + "\r\nConnection: close\r\n\r\n" + responseBody);
+                socket->disconnectFromHost();
+            });
+        });
+
+        OpenAiCompatibleSTTBackend backend;
+        backend.configure(QStringLiteral("http://127.0.0.1:%1/v1")
+                              .arg(server.serverPort()),
+                          QStringLiteral("parakeet-tdt-0.6b-v3"));
+        SttRequest request;
+        request.pcm = QByteArray(3200, '\0');
+        request.sampleRate = 16000;
+        request.channels = 1;
+        request.detectLanguage = true;
+        request.language = QStringLiteral("fr");
+        BackendOperation* operation = backend.transcribe(request, this);
+        QSignalSpy transcriptSpy(operation, &BackendOperation::transcriptDelta);
+        QSignalSpy finishedSpy(operation, &BackendOperation::succeeded);
+
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 2000);
+        QCOMPARE(operation->result().value(QStringLiteral("text")).toString(),
+                 QStringLiteral("Bonjour Starvis"));
+        QCOMPARE(operation->result().value(QStringLiteral("language")).toString(),
+                 QStringLiteral("fr"));
+        QCOMPARE(transcriptSpy.count(), 1);
+        QCOMPARE(transcriptSpy.first().at(0).toString(), QStringLiteral("Bonjour Starvis"));
+        QVERIFY(transcriptSpy.first().at(1).toBool());
+
+        const int bodyStart = requestBytes.indexOf("\r\n\r\n") + 4;
+        const QByteArray multipartBody = requestBytes.mid(bodyStart);
+        QVERIFY(multipartBody.contains("name=\"file\""));
+        QVERIFY(multipartBody.contains("RIFF"));
+        QVERIFY(multipartBody.contains("name=\"model\""));
+        QVERIFY(multipartBody.contains("parakeet-tdt-0.6b-v3"));
+        QVERIFY(!multipartBody.contains("name=\"language\""));
+    }
+
+    void openAiCompatibleSttCancelsTransport()
+    {
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        connect(&server, &QTcpServer::newConnection, this, [&] {
+            QTcpSocket* socket = server.nextPendingConnection();
+            connect(socket, &QTcpSocket::readyRead, socket, [socket] {
+                socket->readAll();
+            });
+        });
+
+        OpenAiCompatibleSTTBackend backend;
+        backend.configure(QStringLiteral("http://127.0.0.1:%1/v1")
+                              .arg(server.serverPort()),
+                          QStringLiteral("parakeet-tdt-0.6b-v3"));
+        SttRequest request;
+        request.pcm = QByteArray(3200, '\0');
+        BackendOperation* operation = backend.transcribe(request, this);
+        QSignalSpy cancelledSpy(operation, &BackendOperation::cancelled);
         operation->cancel();
         QTRY_COMPARE_WITH_TIMEOUT(cancelledSpy.count(), 1, 2000);
         QCOMPARE(operation->state(), BackendOperation::State::Cancelled);
