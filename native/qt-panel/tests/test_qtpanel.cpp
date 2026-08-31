@@ -15,6 +15,7 @@
 #include "services/starvis/backends/BackendOperation.h"
 #include "services/starvis/backends/OpenAiCompatibleLLMBackend.h"
 #include "services/starvis/backends/OpenAiCompatibleSTTBackend.h"
+#include "services/starvis/backends/OpenAiCompatibleTTSBackend.h"
 #include "services/starvis/backends/StreamingTextSegmenter.h"
 
 #include <QJsonArray>
@@ -265,6 +266,92 @@ private slots:
         SttRequest request;
         request.pcm = QByteArray(3200, '\0');
         BackendOperation* operation = backend.transcribe(request, this);
+        QSignalSpy cancelledSpy(operation, &BackendOperation::cancelled);
+        operation->cancel();
+        QTRY_COMPARE_WITH_TIMEOUT(cancelledSpy.count(), 1, 2000);
+        QCOMPARE(operation->state(), BackendOperation::State::Cancelled);
+    }
+
+    void openAiCompatibleTtsReturnsEncodedAudio()
+    {
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        QByteArray requestBytes;
+        connect(&server, &QTcpServer::newConnection, this, [&] {
+            QTcpSocket* socket = server.nextPendingConnection();
+            connect(socket, &QTcpSocket::readyRead, this, [&, socket] {
+                requestBytes += socket->readAll();
+                const int headerEnd = requestBytes.indexOf("\r\n\r\n");
+                if (headerEnd < 0 || socket->property("answered").toBool())
+                    return;
+                const QRegularExpression lengthPattern(
+                    QStringLiteral("content-length:\\s*(\\d+)"),
+                    QRegularExpression::CaseInsensitiveOption);
+                const QRegularExpressionMatch match = lengthPattern.match(
+                    QString::fromLatin1(requestBytes.left(headerEnd)));
+                if (!match.hasMatch())
+                    return;
+                const int contentLength = match.captured(1).toInt();
+                if (requestBytes.size() - headerEnd - 4 < contentLength)
+                    return;
+
+                socket->setProperty("answered", true);
+                const QByteArray responseBody("RIFF-local-audio");
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: audio/wav\r\n"
+                              "Content-Length: " + QByteArray::number(responseBody.size())
+                              + "\r\nConnection: close\r\n\r\n" + responseBody);
+                socket->disconnectFromHost();
+            });
+        });
+
+        OpenAiCompatibleTTSBackend backend;
+        backend.configure(QStringLiteral("http://127.0.0.1:%1/v1")
+                              .arg(server.serverPort()),
+                          QStringLiteral("piper-fr"), QStringLiteral("test-key"),
+                          QStringLiteral("wav"));
+        TtsRequest request;
+        request.text = QStringLiteral("Bonjour Starvis");
+        request.voice = QStringLiteral("Tom");
+        request.language = QStringLiteral("fr");
+        request.stream = false;
+        BackendOperation* operation = backend.synthesize(request, this);
+        QSignalSpy finishedSpy(operation, &BackendOperation::succeeded);
+
+        QTRY_COMPARE_WITH_TIMEOUT(finishedSpy.count(), 1, 2000);
+        QCOMPARE(operation->result().value(QStringLiteral("audio")).toByteArray(),
+                 QByteArray("RIFF-local-audio"));
+        QCOMPARE(operation->result().value(QStringLiteral("format")).toString(),
+                 QStringLiteral("wav"));
+        QVERIFY(requestBytes.contains("Authorization: Bearer test-key"));
+        const int bodyStart = requestBytes.indexOf("\r\n\r\n") + 4;
+        const QJsonObject body = QJsonDocument::fromJson(requestBytes.mid(bodyStart)).object();
+        QCOMPARE(body.value(QStringLiteral("model")).toString(), QStringLiteral("piper-fr"));
+        QCOMPARE(body.value(QStringLiteral("voice")).toString(), QStringLiteral("Tom"));
+        QCOMPARE(body.value(QStringLiteral("input")).toString(),
+                 QStringLiteral("Bonjour Starvis"));
+        QCOMPARE(body.value(QStringLiteral("response_format")).toString(),
+                 QStringLiteral("wav"));
+    }
+
+    void openAiCompatibleTtsCancelsTransport()
+    {
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        connect(&server, &QTcpServer::newConnection, this, [&] {
+            QTcpSocket* socket = server.nextPendingConnection();
+            connect(socket, &QTcpSocket::readyRead, socket, [socket] {
+                socket->readAll();
+            });
+        });
+
+        OpenAiCompatibleTTSBackend backend;
+        backend.configure(QStringLiteral("http://127.0.0.1:%1/v1")
+                              .arg(server.serverPort()),
+                          QStringLiteral("piper-fr"));
+        TtsRequest request;
+        request.text = QStringLiteral("Bonjour Starvis");
+        request.voice = QStringLiteral("Tom");
+        BackendOperation* operation = backend.synthesize(request, this);
         QSignalSpy cancelledSpy(operation, &BackendOperation::cancelled);
         operation->cancel();
         QTRY_COMPARE_WITH_TIMEOUT(cancelledSpy.count(), 1, 2000);

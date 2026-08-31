@@ -20,6 +20,7 @@ class AnthropicClient;
 class HttpClient;
 class ModelResolver;
 class OpenAiCompatibleLLMBackend;
+class OpenAiCompatibleTTSBackend;
 class BackendOperation;
 class SentryService;
 class SpeechService;
@@ -198,6 +199,7 @@ private:
     AnthropicClient* m_anthropic = nullptr;
     ModelResolver* m_modelResolver = nullptr;
     OpenAiCompatibleLLMBackend* m_localLlmBackend = nullptr;
+    OpenAiCompatibleTTSBackend* m_ttsBackend = nullptr;
     StarvisState* m_state = nullptr;
     VoiceSession* m_voice = nullptr;
     SentryService* m_sentry = nullptr;
@@ -216,7 +218,7 @@ private:
     bool m_localTtsReady = false;
     QMediaPlayer* m_ttsPlayer = nullptr;
     QAudioOutput* m_ttsAudio = nullptr;
-    QPointer<QNetworkReply> m_ttsReply;
+    QPointer<BackendOperation> m_ttsOperation;
     bool m_ttsPending = false;
     bool m_nativeSpeechPlaying = false;
     int m_nativeSpeechGeneration = 0;

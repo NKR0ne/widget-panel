@@ -4,6 +4,7 @@
 #include "ModelResolver.h"
 #include "backends/BackendOperation.h"
 #include "backends/OpenAiCompatibleLLMBackend.h"
+#include "backends/OpenAiCompatibleTTSBackend.h"
 #include "SentryService.h"
 #include "StarvisState.h"
 #include "VoiceSession.h"
@@ -204,6 +205,7 @@ StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, Http
     m_anthropic = new AnthropicClient(settings, vault, http, this);
     m_modelResolver = new ModelResolver(settings, vault, http, this);
     m_localLlmBackend = new OpenAiCompatibleLLMBackend(http, this);
+    m_ttsBackend = new OpenAiCompatibleTTSBackend(this);
     m_state = new StarvisState(this);
     m_voice = new VoiceSession(settings, vault, this, this);
     connect(m_voice, &VoiceSession::cloudUsageIncurred, this,
@@ -666,12 +668,8 @@ bool StarvisService::speaking() const
 
 void StarvisService::stopSpeaking()
 {
-    if (m_ttsReply) {
-        QObject::disconnect(m_ttsReply, nullptr, this, nullptr);
-        m_ttsReply->abort();
-        m_ttsReply->deleteLater();
-        m_ttsReply = nullptr;
-    }
+    if (m_ttsOperation)
+        m_ttsOperation->cancel();
     if (m_ttsPending) {
         m_ttsPending = false;
         emit speakingChanged();
@@ -824,12 +822,12 @@ void StarvisService::speak(const QString& text)
             m_speech->say(clean);
         return;
     }
+    if (output == QLatin1String("openai") && key.isEmpty())
+        output = QStringLiteral("local");
     if (output == QLatin1String("local") && !localModelsEnabled()) {
         fallbackSpeech(clean, QStringLiteral("modèles locaux désactivés"));
         return;
     }
-    if (output == QLatin1String("openai") && key.isEmpty())
-        output = QStringLiteral("local");
     if (output == QLatin1String("openai") && !cloudBudgetAvailable()) {
         fallbackSpeech(clean, QStringLiteral("budget cloud mensuel atteint"));
         return;
@@ -843,14 +841,6 @@ void StarvisService::speak(const QString& text)
         voice = output == QLatin1String("local") ? QStringLiteral("Tom")
                                                    : QStringLiteral("alloy");
 
-    QJsonObject body{
-        {QStringLiteral("model"), ttsModel},
-        {QStringLiteral("voice"), voice},
-        {QStringLiteral("input"), clean.left(3600)},
-        {QStringLiteral("response_format"), output == QLatin1String("local")
-                                                    ? QStringLiteral("wav")
-                                                    : QStringLiteral("mp3")},
-    };
     QString baseUrl;
     QString bearer;
     QString extension;
@@ -869,23 +859,58 @@ void StarvisService::speak(const QString& text)
     m_ttsPending = true;
     emit speakingChanged();
 
-    m_ttsReply = m_http->postForBytes(
-        QUrl(baseUrl + QStringLiteral("/audio/speech")), bearer,
-        QJsonDocument(body).toJson(QJsonDocument::Compact), this,
-        [this, clean, extension](const QByteArray& bytes, int status,
-                                 const QString& error) {
-        m_ttsReply = nullptr;
-        if (status < 200 || status >= 300 || bytes.isEmpty()) {
+    m_ttsBackend->configure(baseUrl, ttsModel, bearer, extension);
+    TtsRequest request;
+    request.text = clean.left(3600);
+    request.voice = voice;
+    request.language = cfg.value(QStringLiteral("language"), QStringLiteral("fr")).toString();
+    request.stream = false;
+    request.options.insert(QStringLiteral("model"), ttsModel);
+    request.options.insert(QStringLiteral("responseFormat"), extension);
+    request.options.insert(QStringLiteral("timeoutMs"),
+                           output == QLatin1String("local") ? 30000 : 60000);
+    const QString instructions = cfg.value(QStringLiteral("ttsInstructions")).toString();
+    if (!instructions.isEmpty())
+        request.options.insert(QStringLiteral("instructions"), instructions);
+
+    BackendOperation* operation = m_ttsBackend->synthesize(request, this);
+    m_ttsOperation = operation;
+    connect(operation, &BackendOperation::succeeded, this,
+            [this, operation, clean, extension](const QVariantMap& result) {
+        if (m_ttsOperation == operation)
+            m_ttsOperation = nullptr;
+        operation->deleteLater();
+        const QByteArray bytes = result.value(QStringLiteral("audio")).toByteArray();
+        if (bytes.isEmpty()) {
             m_ttsPending = false;
             emit speakingChanged();
-            fallbackSpeech(clean, error.isEmpty() ? QStringLiteral("HTTP %1").arg(status) : error);
+            fallbackSpeech(clean, QStringLiteral("empty synthesized audio"));
             return;
         }
         if (extension == QLatin1String("mp3"))
             recordCloudCharge(clean.size() * 15.0 / 1e6,
                               QStringLiteral("ttsCharacters"), clean.size());
         playSpeechBytes(bytes, extension);
-    }, output == QLatin1String("local") ? 30000 : 60000);
+    });
+    connect(operation, &BackendOperation::failed, this,
+            [this, operation, clean](const QString& error) {
+        if (m_ttsOperation == operation)
+            m_ttsOperation = nullptr;
+        operation->deleteLater();
+        m_ttsPending = false;
+        emit speakingChanged();
+        fallbackSpeech(clean, error);
+    });
+    connect(operation, &BackendOperation::cancelled, this, [this, operation] {
+        if (m_ttsOperation == operation)
+            m_ttsOperation = nullptr;
+        operation->deleteLater();
+        if (m_ttsPending) {
+            m_ttsPending = false;
+            emit speakingChanged();
+            emit speechOutputFinished(false, QStringLiteral("cancelled"));
+        }
+    });
 }
 
 void StarvisService::chat(const QString& message, const QVariantList& history,
