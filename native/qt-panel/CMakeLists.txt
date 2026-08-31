@@ -43,6 +43,9 @@ qt_add_executable(qt-panel WIN32
     src/services/starvis/ModelResolver.h src/services/starvis/ModelResolver.cpp
     src/services/starvis/StarvisState.h src/services/starvis/StarvisState.cpp
     src/services/starvis/VoiceSession.h src/services/starvis/VoiceSession.cpp
+    src/services/starvis/backends/BackendInterfaces.h
+    src/services/starvis/backends/BackendOperation.h src/services/starvis/backends/BackendOperation.cpp
+    src/services/starvis/backends/StreamingTextSegmenter.h src/services/starvis/backends/StreamingTextSegmenter.cpp
     src/services/starvis/MotionDetector.h src/services/starvis/MotionDetector.cpp
     src/services/starvis/WebcamCapture.h src/services/starvis/WebcamCapture.cpp
     src/services/starvis/SentryService.h src/services/starvis/SentryService.cpp

@@ -12,6 +12,8 @@
 #include "shell/SystemTheme.h"
 #include "services/starvis/ModelResolver.h"
 #include "services/starvis/MotionDetector.h"
+#include "services/starvis/backends/BackendOperation.h"
+#include "services/starvis/backends/StreamingTextSegmenter.h"
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -28,6 +30,67 @@ class TestQtPanel : public QObject {
     Q_OBJECT
 
 private slots:
+    void backendOperationStreamsAndCompletes()
+    {
+        BackendOperation operation(QStringLiteral("llm"), QStringLiteral("lm-studio"));
+        QSignalSpy textSpy(&operation, &BackendOperation::textDelta);
+        QSignalSpy finishedSpy(&operation, &BackendOperation::succeeded);
+
+        operation.start();
+        operation.appendThinking(QStringLiteral("plan"));
+        operation.appendText(QStringLiteral("Bonjour"));
+        operation.appendText(QStringLiteral(" le monde."));
+        operation.complete({{QStringLiteral("tokens"), 4}});
+
+        QCOMPARE(operation.state(), BackendOperation::State::Completed);
+        QCOMPARE(operation.text(), QStringLiteral("Bonjour le monde."));
+        QCOMPARE(operation.thinking(), QStringLiteral("plan"));
+        QCOMPARE(operation.result().value(QStringLiteral("tokens")).toInt(), 4);
+        QCOMPARE(textSpy.count(), 2);
+        QCOMPARE(finishedSpy.count(), 1);
+
+        operation.appendText(QStringLiteral("ignored"));
+        operation.fail(QStringLiteral("ignored"));
+        QCOMPARE(operation.text(), QStringLiteral("Bonjour le monde."));
+        QCOMPARE(operation.state(), BackendOperation::State::Completed);
+    }
+
+    void backendOperationCancellationPropagatesOnce()
+    {
+        BackendOperation operation(QStringLiteral("tts"), QStringLiteral("chatterbox"));
+        QSignalSpy cancelledSpy(&operation, &BackendOperation::cancelled);
+        int abortCount = 0;
+        operation.addCancellationHandler([&] {
+            ++abortCount;
+            operation.acknowledgeCancelled();
+        });
+
+        operation.start();
+        operation.cancel();
+        operation.cancel();
+
+        QCOMPARE(abortCount, 1);
+        QCOMPARE(cancelledSpy.count(), 1);
+        QCOMPARE(operation.state(), BackendOperation::State::Cancelled);
+        QVERIFY(!operation.active());
+    }
+
+    void streamingTextProducesSentenceSizedChunks()
+    {
+        StreamingTextSegmenter segmenter(12, 40);
+        QVERIFY(segmenter.push(QStringLiteral("Bonjour, voici une ")).isEmpty());
+        const QStringList first = segmenter.push(
+            QStringLiteral("première phrase. Voici la suite"));
+        QCOMPARE(first, QStringList{QStringLiteral("Bonjour, voici une première phrase.")});
+        QCOMPARE(segmenter.flush(), QStringLiteral("Voici la suite"));
+
+        const QStringList bounded = segmenter.push(
+            QStringLiteral("Une très longue sortie sans ponctuation qui doit être découpée proprement"));
+        QCOMPARE(bounded.size(), 1);
+        QVERIFY(bounded.first().size() <= 40);
+        QVERIFY(!segmenter.flush().isEmpty());
+    }
+
     void workstationReconnectsWhenSnapshotsStop()
     {
         const QString pipeName = QStringLiteral("qt-panel-workstation-test-%1")
