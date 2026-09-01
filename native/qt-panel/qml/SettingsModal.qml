@@ -1639,12 +1639,33 @@ Item {
                             }
                         }
                     }
+                    Rectangle {
+                        width: testAlertLabel.implicitWidth + 14
+                        height: 22
+                        radius: 5
+                        color: testAlertMouse.containsMouse ? Theme.hover : "transparent"
+                        border.color: Theme.cardStroke
+                        Text {
+                            id: testAlertLabel
+                            anchors.centerIn: parent
+                            text: "Tester"
+                            color: Theme.textPrimary
+                            font.pixelSize: 9
+                        }
+                        MouseArea {
+                            id: testAlertMouse
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: Sentry.testVoiceAlert()
+                        }
+                    }
                 }
             }
             Text {
                 width: parent.width
                 text: Starvis.canSpeak()
-                      ? "Voix hors ligne de Windows si aucune clé OpenAI n'est configurée."
+                      ? "Le bouton Tester vérifie la synthèse, la sortie audio et le volume d'alerte."
                       : "Aucune voix disponible sur ce poste."
                 color: Theme.textSecondary
                 font.pixelSize: 9

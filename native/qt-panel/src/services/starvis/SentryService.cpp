@@ -19,6 +19,8 @@
 #include <QTime>
 #include <QUuid>
 
+#include <utility>
+
 namespace qtpanel {
 
 namespace {
@@ -37,7 +39,10 @@ const QString kClassifyPrompt = QStringLiteral(
     "la caméra a signalé un événement de périmètre. Réponds uniquement avec ce "
     "JSON strict, sans prose : {\"person\": bool, \"at_door\": bool, "
     "\"description\": \"une courte phrase entièrement en français\", "
-    "\"threat\": \"none|notice|alert\"}. Tous les champs lisibles doivent être "
+    "\"threat\": \"none|notice|alert\", \"routine_key\": \"clé stable et concise\"}. "
+    "routine_key doit décrire uniquement l'état visuel stable, par exemple "
+    "vehicles:2:parked, afin que deux formulations du même état produisent la même clé. "
+    "Tous les champs lisibles doivent être "
     "en français. Évalue le périmètre et non le simple mouvement : utilise alert "
     "pour une personne inconnue dans le périmètre privé ou à la porte, notice "
     "pour une personne en bordure ou une silhouette incertaine, et none pour les "
@@ -112,6 +117,48 @@ QString frenchClassificationFallback(bool person, bool atDoor, const QString& th
     if (threat == QLatin1String("alert"))
         return QStringLiteral("Une présence inconnue a été détectée dans le périmètre.");
     return QStringLiteral("Un mouvement sans menace apparente a été détecté.");
+}
+
+QString routineSignature(const QJsonObject& classification, const QString& description)
+{
+    QString key = classification.value(QLatin1String("routine_key")).toString()
+                      .trimmed().toLower();
+    if (!key.isEmpty())
+        return key.left(96);
+
+    QString normalized = description.normalized(QString::NormalizationForm_D).toLower();
+    normalized.remove(QRegularExpression(QStringLiteral("[\\x{0300}-\\x{036f}]")));
+    normalized.replace(QRegularExpression(QStringLiteral("[^a-z0-9 ]+")), QStringLiteral(" "));
+    normalized = normalized.simplified();
+
+    const bool parked = normalized.contains(QLatin1String("stationn"))
+        || normalized.contains(QLatin1String("parked"));
+    const bool vehicle = normalized.contains(QLatin1String("vehicule"))
+        || normalized.contains(QLatin1String("voiture"))
+        || normalized.contains(QLatin1String("vehicle"))
+        || normalized.contains(QLatin1String(" car "));
+    if (parked && vehicle) {
+        QString count = QStringLiteral("unknown");
+        const QList<QPair<QString, QString>> counts{
+            {QStringLiteral(" trois "), QStringLiteral("3")},
+            {QStringLiteral(" deux "), QStringLiteral("2")},
+            {QStringLiteral(" une "), QStringLiteral("1")},
+            {QStringLiteral(" un "), QStringLiteral("1")},
+        };
+        const QString padded = QLatin1Char(' ') + normalized + QLatin1Char(' ');
+        for (const auto& pair : counts) {
+            if (padded.contains(pair.first)) {
+                count = pair.second;
+                break;
+            }
+        }
+        const QRegularExpressionMatch number = QRegularExpression(
+            QStringLiteral("(?:^| )(\\d+)(?: |$)")).match(normalized);
+        if (number.hasMatch())
+            count = number.captured(1);
+        return QStringLiteral("vehicles:%1:parked").arg(count);
+    }
+    return normalized.left(96);
 }
 
 } // namespace
@@ -294,6 +341,29 @@ void SentryService::applyConfig()
         qBound(0.005, cfg.value(QStringLiteral("diffThreshold"), 0.045).toDouble(), 0.5));
     m_detector.setCooldownMs(
         qBound(5, cfg.value(QStringLiteral("cooldownSec"), 30).toInt(), 3600) * 1000);
+    m_knownRoutineStates.clear();
+    const QVariantMap routineStates = cfg.value(QStringLiteral("routineStates")).toMap();
+    for (auto it = routineStates.constBegin(); it != routineStates.constEnd(); ++it)
+        m_knownRoutineStates.insert(it.key(), it.value().toStringList());
+    // Preserve continuity when upgrading from versions that recorded harmless
+    // analyses but did not yet persist semantic routine-state keys.
+    for (const QVariant& value : std::as_const(m_activity)) {
+        const QVariantMap entry = value.toMap();
+        const QString prefix = QStringLiteral("Sans suite : ");
+        const QString activityText = entry.value(QStringLiteral("text")).toString();
+        if (!activityText.startsWith(prefix))
+            continue;
+        const QString cameraId = entry.value(QStringLiteral("cameraId")).toString();
+        const QString signature = routineSignature({}, activityText.mid(prefix.size()));
+        if (cameraId.isEmpty() || signature.isEmpty())
+            continue;
+        QStringList known = m_knownRoutineStates.value(cameraId);
+        if (!known.contains(signature))
+            known.append(signature);
+        while (known.size() > 8)
+            known.removeFirst();
+        m_knownRoutineStates.insert(cameraId, known);
+    }
     // Zones: {camId: [{x,y,w,h}...]} normalized.
     const QVariantMap zones = cfg.value(QStringLiteral("zones")).toMap();
     for (auto it = zones.constBegin(); it != zones.constEnd(); ++it) {
@@ -613,7 +683,7 @@ QString SentryService::voiceAlertMode() const
     if (stored == QLatin1String("off") || stored == QLatin1String("alerts")
         || stored == QLatin1String("all"))
         return stored;
-    return QStringLiteral("all"); // every perimeter event is announced
+    return QStringLiteral("alerts");
 }
 
 void SentryService::setVoiceAlertMode(const QString& mode)
@@ -627,6 +697,20 @@ void SentryService::setVoiceAlertMode(const QString& mode)
     emit configChanged();
     if (mode != QLatin1String("off") && m_starvis && m_starvis->canSpeak())
         m_starvis->speak(QStringLiteral("Alertes vocales activées."));
+}
+
+void SentryService::testVoiceAlert()
+{
+    if (!m_starvis || !m_starvis->canSpeak()) {
+        logActivity(QStringLiteral("direct"), QStringLiteral("alert"),
+                    QStringLiteral("Test vocal impossible : aucune voix disponible"));
+        return;
+    }
+    const QString text = QStringLiteral(
+        "Test d'alerte périmètre. La sortie vocale de Starvis fonctionne.");
+    logActivity(QStringLiteral("direct"), QStringLiteral("alert"),
+                QStringLiteral("Test d'annonce vocale demandé"));
+    m_starvis->speakAlert(text);
 }
 
 QString SentryService::eventScope() const
@@ -874,6 +958,31 @@ void SentryService::recordEvent(const QString& cameraId, const QImage& frame,
         description = QStringLiteral("%1 — %2").arg(knownName, description);
         if (threat == QLatin1String("alert"))
             threat = QStringLiteral("notice");
+    }
+
+    if (!person && !atDoor && threat == QLatin1String("none")) {
+        const QString signature = routineSignature(classification, description);
+        QStringList known = m_knownRoutineStates.value(cameraId);
+        if (!signature.isEmpty() && known.contains(signature)) {
+            qInfo() << "[starvis.sentry] unchanged routine state suppressed:"
+                    << cameraId << signature << description;
+            logActivity(cameraId, QStringLiteral("ignored"),
+                        QStringLiteral("État normal inchangé : ") + description);
+            return;
+        }
+        if (!signature.isEmpty()) {
+            known.prepend(signature);
+            while (known.size() > 8)
+                known.removeLast();
+            m_knownRoutineStates.insert(cameraId, known);
+            QVariantMap cfg = sentryConfig();
+            QVariantMap routineStates = cfg.value(QStringLiteral("routineStates")).toMap();
+            routineStates.insert(cameraId, known);
+            cfg.insert(QStringLiteral("routineStates"), routineStates);
+            m_settings->set(QStringLiteral("wp-starvis-sentry"),
+                            QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(cfg))
+                                                  .toJson(QJsonDocument::Compact)));
+        }
     }
 
     QVariantMap event{

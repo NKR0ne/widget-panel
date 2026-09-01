@@ -191,7 +191,8 @@ private:
                        const QString& prompt, QObject* context,
                        ClassifyCallback callback, bool reasoning = false);
     QVariantMap voiceConfig() const;
-    void playSpeechBytes(const QByteArray& bytes, const QString& extension);
+    void playSpeechBytes(const QByteArray& bytes, const QString& extension,
+                         const QString& fallbackText);
     void fallbackSpeech(const QString& text, const QString& error);
     void speakInternal(const QString& text, bool alert);
     void beginAlertPlayback();
@@ -232,6 +233,9 @@ private:
     bool m_localTtsReady = false;
     QMediaPlayer* m_ttsPlayer = nullptr;
     QAudioOutput* m_ttsAudio = nullptr;
+    QString m_ttsPlaybackFallbackText;
+    bool m_ttsPlaybackStarted = false;
+    int m_ttsPlaybackGeneration = 0;
     QPointer<BackendOperation> m_ttsOperation;
     bool m_ttsPending = false;
     bool m_nativeSpeechPlaying = false;

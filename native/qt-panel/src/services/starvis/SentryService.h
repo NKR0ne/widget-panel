@@ -74,6 +74,7 @@ public:
     // Spoken announcements: "off" | "alerts" (threats only) | "all" events.
     Q_INVOKABLE QString voiceAlertMode() const;
     Q_INVOKABLE void setVoiceAlertMode(const QString& mode);
+    Q_INVOKABLE void testVoiceAlert();
     // Writes the per-rule enable flag the camera's web UI never sets.
     Q_INVOKABLE void enableCameraPerimeterRules();
     Q_INVOKABLE void useSingleCameraRule(const QString& keep);
@@ -165,6 +166,7 @@ private:
     QHash<QString, qint64> m_lastFrameMs;  // per-camera analysis throttle
     QHash<QString, QImage> m_lastFrames;   // fallback evidence for camera events
     QHash<QString, qint64> m_lastCameraEventMs; // cooldown for device events
+    QHash<QString, QStringList> m_knownRoutineStates; // stable harmless scene signatures
     int m_filteredMotionCount = 0; // movement ignored under the intrusion scope
     QVariantList m_activity;       // newest first, 24 h retention
     QVariantList m_people;         // {id, name, file} — reference snapshots

@@ -54,8 +54,18 @@ bool WindowsAudioFocus::engage()
     HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL,
                                   __uuidof(IMMDeviceEnumerator),
                                   reinterpret_cast<void**>(&deviceEnumerator));
-    if (SUCCEEDED(hr))
-        hr = deviceEnumerator->GetDefaultAudioEndpoint(eRender, eMultimedia, &device);
+    if (SUCCEEDED(hr)) {
+        constexpr ERole roles[] = {eMultimedia, eConsole, eCommunications};
+        for (ERole role : roles) {
+            hr = deviceEnumerator->GetDefaultAudioEndpoint(eRender, role, &device);
+            if (SUCCEEDED(hr) && device) {
+                if (role != eMultimedia)
+                    qWarning() << "[audio-focus] multimedia endpoint unavailable; using role"
+                               << int(role);
+                break;
+            }
+        }
+    }
     if (SUCCEEDED(hr))
         hr = device->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
                               reinterpret_cast<void**>(&sessionManager));

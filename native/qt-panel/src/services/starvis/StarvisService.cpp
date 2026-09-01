@@ -796,7 +796,8 @@ void StarvisService::finishAlertPlayback()
     m_speechIsAlert = false;
 }
 
-void StarvisService::playSpeechBytes(const QByteArray& bytes, const QString& extension)
+void StarvisService::playSpeechBytes(const QByteArray& bytes, const QString& extension,
+                                    const QString& fallbackText)
 {
     const QString path = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
         + QStringLiteral("/qt-panel-tts.") + extension;
@@ -811,9 +812,29 @@ void StarvisService::playSpeechBytes(const QByteArray& bytes, const QString& ext
     file.write(bytes);
     file.close();
 
+    const QList<QAudioDevice> audioOutputs = QMediaDevices::audioOutputs();
+    const QAudioDevice defaultOutput = QMediaDevices::defaultAudioOutput();
+    qInfo() << "[starvis.audio] outputs=" << audioOutputs.size()
+            << "default=" << (defaultOutput.isNull()
+                                  ? QStringLiteral("<none>")
+                                  : defaultOutput.description());
+
 #ifdef Q_OS_WIN
     if (extension.compare(QStringLiteral("wav"), Qt::CaseInsensitive) == 0
-        && QMediaDevices::defaultAudioOutput().isNull()) {
+        && audioOutputs.isEmpty()) {
+        // A generated alert must never disappear behind a missing Qt audio
+        // endpoint. SAPI uses the Windows speech route and gives the safety
+        // announcement a second independent playback path.
+        if (m_speechIsAlert && m_speech && m_speech->available()) {
+            m_ttsPending = false;
+            emit speakingChanged();
+            beginAlertPlayback();
+            if (m_speech->sayAtVolume(fallbackText, 50)) {
+                qWarning() << "[starvis.audio] no Qt output; alert routed through Windows speech";
+                return;
+            }
+            finishAlertPlayback();
+        }
         const std::wstring nativePath = QDir::toNativeSeparators(path).toStdWString();
         beginAlertPlayback();
         if (!PlaySoundW(nativePath.c_str(), nullptr,
@@ -851,30 +872,66 @@ void StarvisService::playSpeechBytes(const QByteArray& bytes, const QString& ext
     if (!m_ttsPlayer) {
         m_ttsPlayer = new QMediaPlayer(this);
         m_ttsAudio = new QAudioOutput(this);
+        if (!defaultOutput.isNull())
+            m_ttsAudio->setDevice(defaultOutput);
+        else if (!audioOutputs.isEmpty()) {
+            m_ttsAudio->setDevice(audioOutputs.first());
+            qWarning() << "[starvis.audio] no default output; using"
+                       << audioOutputs.first().description();
+        }
         m_ttsAudio->setVolume(0.85f);
         m_ttsPlayer->setAudioOutput(m_ttsAudio);
         connect(m_ttsPlayer, &QMediaPlayer::playbackStateChanged, this,
                 [this](QMediaPlayer::PlaybackState state) {
+            qInfo() << "[starvis.audio] playback state ->" << state;
+            if (state == QMediaPlayer::PlayingState)
+                m_ttsPlaybackStarted = true;
             emit speakingChanged();
-            if (state == QMediaPlayer::StoppedState && !m_ttsPending) {
+            if (state == QMediaPlayer::StoppedState && !m_ttsPending
+                && m_ttsPlaybackStarted) {
+                m_ttsPlaybackStarted = false;
+                m_ttsPlaybackFallbackText.clear();
                 finishAlertPlayback();
                 emit speechOutputFinished(true, QString());
             }
         });
         connect(m_ttsPlayer, &QMediaPlayer::errorOccurred, this,
                 [this](QMediaPlayer::Error, const QString& error) {
-            finishAlertPlayback();
-            emit speechOutputFinished(false, error);
+            qWarning() << "[starvis.audio] playback error:" << error;
+            const QString fallback = m_ttsPlaybackFallbackText;
+            m_ttsPlaybackFallbackText.clear();
+            m_ttsPlaybackStarted = false;
+            if (!fallback.isEmpty())
+                fallbackSpeech(fallback, error);
+            else {
+                finishAlertPlayback();
+                emit speechOutputFinished(false, error);
+            }
         });
     }
     m_ttsPlayer->setSource(QUrl());
     m_ttsPlayer->setSource(QUrl::fromLocalFile(path));
     m_ttsPending = false;
+    m_ttsPlaybackFallbackText = fallbackText;
+    m_ttsPlaybackStarted = false;
+    const int playbackGeneration = ++m_ttsPlaybackGeneration;
     emit speakingChanged();
     beginAlertPlayback();
     m_ttsAudio->setVolume(m_speechIsAlert ? 0.5f : 0.85f);
     m_ttsPlayer->play();
-    qInfo() << "[starvis] TTS playing," << bytes.size() << "bytes";
+    qInfo() << "[starvis] TTS playback requested," << bytes.size() << "bytes on"
+            << m_ttsAudio->device().description();
+    QTimer::singleShot(2000, this, [this, playbackGeneration] {
+        if (playbackGeneration != m_ttsPlaybackGeneration || m_ttsPlaybackStarted)
+            return;
+        const QString fallback = m_ttsPlaybackFallbackText;
+        m_ttsPlaybackFallbackText.clear();
+        qWarning() << "[starvis.audio] playback did not enter PlayingState";
+        if (m_ttsPlayer)
+            m_ttsPlayer->stop();
+        if (!fallback.isEmpty())
+            fallbackSpeech(fallback, QStringLiteral("audio playback did not start"));
+    });
 }
 
 void StarvisService::previewVoice(const QString& voice)
@@ -1009,7 +1066,7 @@ void StarvisService::speakInternal(const QString& text, bool alert)
         if (extension == QLatin1String("mp3"))
             recordCloudCharge(clean.size() * 15.0 / 1e6,
                               QStringLiteral("ttsCharacters"), clean.size());
-        playSpeechBytes(bytes, extension);
+        playSpeechBytes(bytes, extension, clean);
     });
     connect(operation, &BackendOperation::failed, this,
             [this, operation, clean](const QString& error) {

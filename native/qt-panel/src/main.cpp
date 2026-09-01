@@ -113,9 +113,12 @@ int main(int argc, char* argv[])
         QStringLiteral("no-composition"),
         QStringLiteral("Force the windowed DWM backdrop and stop remembering "
                        "the composition backdrop."));
-const QCommandLineOption diagPressReaderOption(
+    const QCommandLineOption diagPressReaderOption(
         QStringLiteral("diag-pressreader"),
         QStringLiteral("Open the dedicated PressReader spotlight without automatic login."));
+    const QCommandLineOption diagSentryVoiceOption(
+        QStringLiteral("diag-sentry-voice"),
+        QStringLiteral("Play one Sentry alert through the configured voice and audio route."));
     const QCommandLineOption fixCameraRulesOption(
         QStringLiteral("fix-camera-rules"),
         QStringLiteral("Enable the camera's own perimeter rules (line crossing / zone "
@@ -137,6 +140,7 @@ const QCommandLineOption diagPressReaderOption(
     parser.addOption(loginStartupOption);
     parser.addOption(diagIslandUrlOption);
     parser.addOption(diagPressReaderOption);
+    parser.addOption(diagSentryVoiceOption);
     parser.addOption(compositionOption);
     parser.addOption(noCompositionOption);
     parser.process(app);
@@ -720,6 +724,8 @@ const QCommandLineOption diagPressReaderOption(
         // After the event client has had a moment to resolve its endpoint.
         QTimer::singleShot(2500, &sentry, &SentryService::enableCameraPerimeterRules);
     }
+    if (parser.isSet(diagSentryVoiceOption))
+        QTimer::singleShot(2500, &sentry, &SentryService::testVoiceAlert);
     if (parser.isSet(cameraSingleRuleOption)) {
         const QString keep = parser.value(cameraSingleRuleOption);
         QTimer::singleShot(2500, &sentry, [&sentry, keep] {
