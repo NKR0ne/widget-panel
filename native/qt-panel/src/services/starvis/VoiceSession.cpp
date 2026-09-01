@@ -129,28 +129,69 @@ VoiceSession::VoiceSession(SettingsStore* settings, SecretVault* vault,
         localHealthTimer->start();
     });
 
+    connect(m_starvis, &StarvisService::replyStarted, this, [this] {
+        if (!m_localMode || !m_waitingLocalReply)
+            return;
+        resetLocalSpeechQueue();
+    });
+    connect(m_starvis, &StarvisService::replyDelta, this, [this](const QString& delta) {
+        if (!m_localMode || !m_waitingLocalReply || m_localSpeechFailed)
+            return;
+        m_localReceivedDelta = true;
+        for (const QString& chunk : m_localSpeechSegmenter.push(delta))
+            enqueueLocalSpeech(chunk);
+    });
     connect(m_starvis, &StarvisService::replyReceived, this,
             [this](const QString& text, const QString&, int) {
         if (!m_localMode || !m_waitingLocalReply)
             return;
         m_waitingLocalReply = false;
-        setPhase(QStringLiteral("speaking"));
-        m_starvis->speak(text);
+        m_localReplyComplete = true;
+        emit transcriptEvent(QStringLiteral("assistant"), text.trimmed());
+        if (m_localSpeechFailed) {
+            if (!m_localSpeechActive)
+                resumeLocalListening();
+            return;
+        }
+        if (m_localReceivedDelta) {
+            const QString tail = m_localSpeechSegmenter.flush();
+            if (!tail.isEmpty())
+                enqueueLocalSpeech(tail);
+        } else {
+            enqueueLocalSpeech(text);
+        }
+        playNextLocalSpeech();
     });
     connect(m_starvis, &StarvisService::chatFailed, this, [this](const QString&) {
         if (m_localMode && m_waitingLocalReply) {
             m_waitingLocalReply = false;
-            resumeLocalListening();
+            m_localReplyComplete = true;
+            m_localSpeechSegmenter.clear();
+            m_localSpeechQueue.clear();
+            if (!m_localSpeechActive)
+                resumeLocalListening();
         }
     });
     connect(m_starvis, &StarvisService::speechOutputFinished, this,
             [this](bool success, const QString&) {
-        if (!m_localMode || !m_localProcessing)
+        if (!m_localMode || !m_localProcessing || !m_localSpeechActive)
+            return;
+        m_localSpeechActive = false;
+        if (!success) {
+            m_localSpeechFailed = true;
+            m_localSpeechQueue.clear();
+            m_localSpeechSegmenter.clear();
+        }
+        if (success && !m_localSpeechQueue.isEmpty()) {
+            playNextLocalSpeech();
+            return;
+        }
+        if (!m_localReplyComplete)
             return;
         if (success)
             resumeLocalListening();
         else
-            QTimer::singleShot(3500, this, &VoiceSession::resumeLocalListening);
+            QTimer::singleShot(1200, this, &VoiceSession::resumeLocalListening);
     });
 }
 
@@ -522,6 +563,7 @@ void VoiceSession::stopAudio()
 
 void VoiceSession::startLocal()
 {
+    resetLocalSpeechQueue();
     m_localMode = true;
     m_localProcessing = false;
     m_waitingLocalReply = false;
@@ -549,11 +591,15 @@ void VoiceSession::stopLocal()
     m_capTimer.stop();
     if (m_sttOperation)
         m_sttOperation->cancel();
+    if (m_waitingLocalReply)
+        m_starvis->cancelChat();
     stopAudio();
     m_localMode = false;
     m_localProcessing = false;
     m_localHeardSpeech = false;
     m_waitingLocalReply = false;
+    resetLocalSpeechQueue();
+    m_starvis->stopSpeaking();
     if (m_starvis && m_starvis->state()) {
         m_starvis->state()->setListening(false);
         m_starvis->state()->setAudioLevel(0);
@@ -693,12 +739,49 @@ void VoiceSession::resumeLocalListening()
         return;
     m_localProcessing = false;
     m_waitingLocalReply = false;
+    resetLocalSpeechQueue();
     m_localHeardSpeech = false;
     m_localRecording.clear();
     m_preRoll.clear();
     setPhase(QStringLiteral("listening"));
     if (m_starvis && m_starvis->state())
         m_starvis->state()->setListening(true);
+}
+
+void VoiceSession::resetLocalSpeechQueue()
+{
+    m_localSpeechSegmenter.clear();
+    m_localSpeechQueue.clear();
+    m_localReplyComplete = false;
+    m_localReceivedDelta = false;
+    m_localSpeechActive = false;
+    m_localSpeechFailed = false;
+}
+
+void VoiceSession::enqueueLocalSpeech(const QString& text)
+{
+    const QString chunk = text.trimmed();
+    if (chunk.isEmpty() || m_localSpeechFailed)
+        return;
+    m_localSpeechQueue.append(chunk);
+    playNextLocalSpeech();
+}
+
+void VoiceSession::playNextLocalSpeech()
+{
+    if (!m_localMode || !m_localProcessing || m_localSpeechActive
+        || m_localSpeechFailed) {
+        return;
+    }
+    if (m_localSpeechQueue.isEmpty()) {
+        if (m_localReplyComplete)
+            resumeLocalListening();
+        return;
+    }
+    const QString chunk = m_localSpeechQueue.takeFirst();
+    m_localSpeechActive = true;
+    setPhase(QStringLiteral("speaking"));
+    m_starvis->speak(chunk);
 }
 
 void VoiceSession::handleMessage(const QString& message)

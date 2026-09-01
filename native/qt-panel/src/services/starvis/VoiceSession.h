@@ -1,5 +1,7 @@
 #pragma once
 
+#include "backends/StreamingTextSegmenter.h"
+
 #include <QAudioFormat>
 #include <QNetworkAccessManager>
 #include <QObject>
@@ -79,6 +81,9 @@ private:
     void transcribeLocal(const QByteArray& pcm);
     void probeLocalRuntime();
     void resumeLocalListening();
+    void resetLocalSpeechQueue();
+    void enqueueLocalSpeech(const QString& text);
+    void playNextLocalSpeech();
     void setPhase(const QString& phase);
     QString localEndpoint() const;
     void closeSession(const QString& reason);
@@ -111,7 +116,13 @@ private:
     bool m_localProcessing = false;
     bool m_localHeardSpeech = false;
     bool m_waitingLocalReply = false;
+    bool m_localReplyComplete = false;
+    bool m_localReceivedDelta = false;
+    bool m_localSpeechActive = false;
+    bool m_localSpeechFailed = false;
     int m_localSilenceMs = 0;
+    StreamingTextSegmenter m_localSpeechSegmenter{48, 220};
+    QStringList m_localSpeechQueue;
     QNetworkAccessManager m_localNetwork;
     int m_elapsedSec = 0;
     QTimer m_elapsedTimer;  // 1 s UI tick
