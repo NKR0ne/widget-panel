@@ -33,6 +33,7 @@ class SettingsStore;
 class StocksModel;
 class WeatherService;
 class WorkstationClient;
+class WindowsAudioFocus;
 
 // Native Starvis chat, briefing, speech, context injection, vision, and gated
 // agent actions. Local reasoning, vision, ASR, and TTS use independent
@@ -88,6 +89,7 @@ public:
     // Cloud TTS when an OpenAI key is stored, otherwise the offline Windows
     // voice — spoken alerts must not depend on a cloud key being present.
     Q_INVOKABLE void speak(const QString& text);
+    void speakAlert(const QString& text);
     Q_INVOKABLE void previewVoice(const QString& voice);
     Q_INVOKABLE void stopSpeaking();
     // True when speech can be produced by either path.
@@ -191,6 +193,9 @@ private:
     QVariantMap voiceConfig() const;
     void playSpeechBytes(const QByteArray& bytes, const QString& extension);
     void fallbackSpeech(const QString& text, const QString& error);
+    void speakInternal(const QString& text, bool alert);
+    void beginAlertPlayback();
+    void finishAlertPlayback();
     QString localRuntimeScriptPath() const;
     void runLocalRuntimeAction(bool enabled);
 
@@ -212,6 +217,7 @@ private:
     VoiceSession* m_voice = nullptr;
     SentryService* m_sentry = nullptr;
     SpeechService* m_speech = nullptr;
+    WindowsAudioFocus* m_alertAudioFocus = nullptr;
     QNetworkReply* m_activeStream = nullptr;
     QPointer<BackendOperation> m_activeBackendOperation;
     QString m_pendingText;      // streamed text of the in-flight turn
@@ -229,6 +235,7 @@ private:
     QPointer<BackendOperation> m_ttsOperation;
     bool m_ttsPending = false;
     bool m_nativeSpeechPlaying = false;
+    bool m_speechIsAlert = false;
     int m_nativeSpeechGeneration = 0;
     bool m_localModelsTransitioning = false;
     QString m_lastProvider;

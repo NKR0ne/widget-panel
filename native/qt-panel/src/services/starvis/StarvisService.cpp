@@ -13,6 +13,7 @@
 #include "core/SecretVault.h"
 #include "core/SettingsStore.h"
 #include "core/SpeechService.h"
+#include "core/WindowsAudioFocus.h"
 #include "services/news/NewsService.h"
 #include "services/stocks/StocksModel.h"
 #include "services/weather/WeatherService.h"
@@ -210,6 +211,14 @@ StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, Http
             [this] { m_state->setReasoning(m_busy); });
     connect(this, &StarvisService::speakingChanged, m_state,
             [this] { m_state->setSpeaking(speaking()); });
+    if (m_speech) {
+        connect(m_speech, &SpeechService::speakingChanged,
+                this, &StarvisService::speakingChanged);
+        connect(m_speech, &SpeechService::finished, this, [this] {
+            if (m_speechIsAlert)
+                finishAlertPlayback();
+        });
+    }
     connect(this, &StarvisService::replyDelta, m_state,
             [this](const QString& text) { m_state->noteTextDelta(text.size()); });
     connect(this, &StarvisService::usageUpdated, m_state, &StarvisState::setUsage);
@@ -697,7 +706,8 @@ void StarvisService::setBusy(bool busy)
 bool StarvisService::speaking() const
 {
     return m_nativeSpeechPlaying
-        || (m_ttsPlayer && m_ttsPlayer->playbackState() == QMediaPlayer::PlayingState);
+        || (m_ttsPlayer && m_ttsPlayer->playbackState() == QMediaPlayer::PlayingState)
+        || (m_speech && m_speech->speaking());
 }
 
 void StarvisService::stopSpeaking()
@@ -721,6 +731,7 @@ void StarvisService::stopSpeaking()
 #endif
     if (m_speech)
         m_speech->stop();
+    finishAlertPlayback();
 }
 
 bool StarvisService::canSpeak() const
@@ -750,10 +761,39 @@ void StarvisService::fallbackSpeech(const QString& text, const QString& error)
     const bool allowWindowsFallback = voiceConfig().value(
         QStringLiteral("windowsFallback"), false).toBool();
     if (allowWindowsFallback && m_speech && m_speech->available()) {
-        m_speech->say(text);
+        if (m_speechIsAlert) {
+            beginAlertPlayback();
+            if (!m_speech->sayAtVolume(text, 50))
+                finishAlertPlayback();
+        } else {
+            m_speech->say(text);
+        }
         qInfo() << "[starvis] spoken with Windows fallback," << text.size() << "chars";
+    } else {
+        finishAlertPlayback();
     }
     emit speechOutputFinished(false, error);
+}
+
+void StarvisService::beginAlertPlayback()
+{
+    if (!m_speechIsAlert)
+        return;
+    if (!m_alertAudioFocus)
+        m_alertAudioFocus = new WindowsAudioFocus(this);
+    if (m_alertAudioFocus)
+        m_alertAudioFocus->engage();
+    if (m_ttsAudio)
+        m_ttsAudio->setVolume(0.5f);
+}
+
+void StarvisService::finishAlertPlayback()
+{
+    if (m_alertAudioFocus)
+        m_alertAudioFocus->restore();
+    if (m_ttsAudio)
+        m_ttsAudio->setVolume(0.85f);
+    m_speechIsAlert = false;
 }
 
 void StarvisService::playSpeechBytes(const QByteArray& bytes, const QString& extension)
@@ -764,6 +804,7 @@ void StarvisService::playSpeechBytes(const QByteArray& bytes, const QString& ext
     if (!file.open(QIODevice::WriteOnly)) {
         m_ttsPending = false;
         emit speakingChanged();
+        finishAlertPlayback();
         emit speechOutputFinished(false, QStringLiteral("temporary audio file unavailable"));
         return;
     }
@@ -774,10 +815,12 @@ void StarvisService::playSpeechBytes(const QByteArray& bytes, const QString& ext
     if (extension.compare(QStringLiteral("wav"), Qt::CaseInsensitive) == 0
         && QMediaDevices::defaultAudioOutput().isNull()) {
         const std::wstring nativePath = QDir::toNativeSeparators(path).toStdWString();
+        beginAlertPlayback();
         if (!PlaySoundW(nativePath.c_str(), nullptr,
                         SND_FILENAME | SND_ASYNC | SND_NODEFAULT)) {
             m_ttsPending = false;
             emit speakingChanged();
+            finishAlertPlayback();
             emit speechOutputFinished(false, QStringLiteral("native audio playback failed"));
             return;
         }
@@ -796,6 +839,7 @@ void StarvisService::playSpeechBytes(const QByteArray& bytes, const QString& ext
                 return;
             m_nativeSpeechPlaying = false;
             emit speakingChanged();
+            finishAlertPlayback();
             emit speechOutputFinished(true, QString());
         });
         qInfo() << "[starvis] TTS playing through native WAV fallback,"
@@ -812,11 +856,14 @@ void StarvisService::playSpeechBytes(const QByteArray& bytes, const QString& ext
         connect(m_ttsPlayer, &QMediaPlayer::playbackStateChanged, this,
                 [this](QMediaPlayer::PlaybackState state) {
             emit speakingChanged();
-            if (state == QMediaPlayer::StoppedState && !m_ttsPending)
+            if (state == QMediaPlayer::StoppedState && !m_ttsPending) {
+                finishAlertPlayback();
                 emit speechOutputFinished(true, QString());
+            }
         });
         connect(m_ttsPlayer, &QMediaPlayer::errorOccurred, this,
                 [this](QMediaPlayer::Error, const QString& error) {
+            finishAlertPlayback();
             emit speechOutputFinished(false, error);
         });
     }
@@ -824,6 +871,8 @@ void StarvisService::playSpeechBytes(const QByteArray& bytes, const QString& ext
     m_ttsPlayer->setSource(QUrl::fromLocalFile(path));
     m_ttsPending = false;
     emit speakingChanged();
+    beginAlertPlayback();
+    m_ttsAudio->setVolume(m_speechIsAlert ? 0.5f : 0.85f);
     m_ttsPlayer->play();
     qInfo() << "[starvis] TTS playing," << bytes.size() << "bytes";
 }
@@ -839,21 +888,42 @@ void StarvisService::previewVoice(const QString& voice)
 
 void StarvisService::speak(const QString& text)
 {
+    speakInternal(text, false);
+}
+
+void StarvisService::speakAlert(const QString& text)
+{
+    speakInternal(text, true);
+}
+
+void StarvisService::speakInternal(const QString& text, bool alert)
+{
     const QString clean = textForSpeech(text);
     if (clean.isEmpty())
         return;
     if (m_ttsPending || speaking()) {
         stopSpeaking();
-        return;
+        if (!alert)
+            return;
     }
+    m_speechIsAlert = alert;
 
     const QVariantMap cfg = voiceConfig();
     QString output = cfg.value(QStringLiteral("speechProvider"),
                                QStringLiteral("local")).toString().trimmed().toLower();
     const QString key = apiKey();
     if (output == QLatin1String("windows")) {
-        if (m_speech && m_speech->available())
-            m_speech->say(clean);
+        if (m_speech && m_speech->available()) {
+            if (m_speechIsAlert) {
+                beginAlertPlayback();
+                if (!m_speech->sayAtVolume(clean, 50))
+                    finishAlertPlayback();
+            } else {
+                m_speech->say(clean);
+            }
+        } else {
+            finishAlertPlayback();
+        }
         return;
     }
     if (output == QLatin1String("openai") && key.isEmpty())
@@ -951,14 +1021,17 @@ void StarvisService::speak(const QString& text)
         fallbackSpeech(clean, error);
     });
     connect(operation, &BackendOperation::cancelled, this, [this, operation] {
-        if (m_ttsOperation == operation)
+        const bool currentOperation = m_ttsOperation == operation;
+        if (currentOperation)
             m_ttsOperation = nullptr;
         operation->deleteLater();
-        if (m_ttsPending) {
+        if (currentOperation && m_ttsPending) {
             m_ttsPending = false;
             emit speakingChanged();
             emit speechOutputFinished(false, QStringLiteral("cancelled"));
         }
+        if (currentOperation)
+            finishAlertPlayback();
     });
 }
 

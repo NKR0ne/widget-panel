@@ -20,11 +20,17 @@ public:
     ~SpeechService() override;
 
     bool available() const;
+    bool speaking() const;
     QString voiceName() const;
 
     // Speaks asynchronously, replacing anything currently being said.
     Q_INVOKABLE void say(const QString& text);
+    bool sayAtVolume(const QString& text, int volumePercent);
     Q_INVOKABLE void stop();
+
+signals:
+    void speakingChanged();
+    void finished();
 
 private:
     struct Private;
