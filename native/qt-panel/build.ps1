@@ -304,6 +304,19 @@ if ($Deploy -or $runtimeMissing) {
     Invoke-NativeCommand -FilePath "$QtDir\bin\windeployqt.exe" -Arguments @('--qmldir', (Join-Path $root 'qml'), $exe) -WorkingDirectory $root -TimeoutSeconds 120
 }
 
+# The direct camera decoder runs FFmpeg out of process so RTSP transport can be
+# forced to TCP without relying on Qt Multimedia's private backend internals.
+# install-ffmpeg.ps1 provisions the pinned binary once; every build stages it
+# beside qt-panel.exe so startup does not depend on PATH.
+$ffmpegSource = Join-Path $root 'runtime\ffmpeg\ffmpeg.exe'
+$ffmpegDestination = Join-Path $build 'ffmpeg.exe'
+if (Test-Path $ffmpegSource) {
+    Copy-Item $ffmpegSource $ffmpegDestination -Force
+    Write-Host 'FFmpeg RTSP runtime staged.' -ForegroundColor DarkGray
+} elseif (-not (Test-Path $ffmpegDestination)) {
+    Write-Warning 'FFmpeg runtime is missing. Run install-ffmpeg.ps1 before using the direct camera.'
+}
+
 # WindowsAppSDK runtime for --composition. Without both halves of this the
 # composition path dies with REGDB_E_CLASSNOTREG (0x80040154) the moment it
 # activates a Compositor: the DLLs alone are not enough, because unpackaged

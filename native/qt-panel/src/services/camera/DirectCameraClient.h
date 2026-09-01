@@ -1,10 +1,10 @@
 #pragma once
 
 #include <QImage>
-#include <QMediaPlayer>
 #include <QJsonObject>
 #include <QObject>
 #include <QPointer>
+#include <QProcess>
 #include <QTimer>
 #include <QVideoSink>
 
@@ -61,6 +61,9 @@ signals:
 private:
     static constexpr int kProtectedAttemptLimit = 2;
     static constexpr qint64 kAnalysisIntervalMs = 500;
+    static constexpr int kOutputWidth = 640;
+    static constexpr int kOutputHeight = 360;
+    static constexpr int kOutputFrameBytes = kOutputWidth * kOutputHeight * 4;
 
     QUrl resolvedEndpoint() const;
     QUrl normalizeEndpoint(const QString& value) const;
@@ -71,8 +74,12 @@ private:
     void writeProtectedAttempts(int attempts);
     void migrateLegacyAttemptState();
     void handleConfigurationChange();
+    void handleDecoderOutput();
+    void handleDecoderErrorOutput();
+    void handleDecoderFinished(int exitCode, QProcess::ExitStatus exitStatus);
     void handleFrame(const QVideoFrame& frame);
-    void handlePlayerError(QMediaPlayer::Error error, const QString& detail);
+    QString ffmpegExecutable() const;
+    QString decoderFailureDetail() const;
     void setStatus(const QString& status, const QString& error = {});
     void setVerificationState(bool verified, int attempts);
     void fail(const QString& detail, bool authenticationRejected = false);
@@ -81,8 +88,7 @@ private:
 
     SettingsStore* m_settings = nullptr;
     SecretVault* m_vault = nullptr;
-    QMediaPlayer m_player;
-    QVideoSink m_decodeSink;
+    QProcess m_decoder;
     QPointer<QVideoSink> m_renderSink;
     QTimer m_firstFrameTimer;
     QTimer m_staleFrameTimer;
@@ -90,13 +96,15 @@ private:
     QByteArray m_configFingerprint;
     QString m_status = QStringLiteral("setup");
     QString m_error;
+    QByteArray m_decoderOutput;
+    QByteArray m_decoderErrors;
     qint64 m_lastFrameAtMs = 0;
     qint64 m_lastAnalysisMs = 0;
     bool m_analysisEnabled = false;
     bool m_attemptActive = false;
     bool m_attemptWasVerified = false;
     bool m_receivedFrame = false;
-    bool m_ignorePlayerSignals = false;
+    bool m_ignoreDecoderSignals = false;
     bool m_suppressConfigurationChange = false;
     int m_reconnectDelayMs = 2000;
 };

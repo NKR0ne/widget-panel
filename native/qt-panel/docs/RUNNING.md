@@ -13,6 +13,7 @@
 
 ## Build
 ```powershell
+powershell -ExecutionPolicy Bypass -File install-ffmpeg.ps1      # one-time camera runtime
 powershell -ExecutionPolicy Bypass -File build.ps1               # release
 powershell -ExecutionPolicy Bypass -File build.ps1 -Config debug
 powershell -ExecutionPolicy Bypass -File build.ps1 -Deploy -Run  # + windeployqt + launch
@@ -61,8 +62,12 @@ pointer events cannot immediately dismiss an otherwise healthy startup.
 - Authenticated and site-dependent pages use an embedded Qt WebEngine surface
   with persistent cookies/cache, native navigation chrome, forced dark mode,
   same-view popups, bounded renderer recovery, and explicit external-open.
-- The separate direct-camera card decodes RTSP natively instead of opening the
-  vendor preview page. Its default endpoint is the Hikvision channel-1
+- The separate direct-camera card uses a bundled FFmpeg worker with RTSP forced
+  over TCP instead of opening the vendor preview page. The worker discards
+  corrupt packets, applies a bounded socket timeout, and feeds fixed-size BGRA
+  frames to Qt without blocking the UI thread. `install-ffmpeg.ps1` downloads a
+  pinned, checksum-verified runtime; `build.ps1` stages it beside the panel exe.
+  Its default endpoint is the Hikvision channel-1
   substream at `rtsp://ipcam1.local:554/ISAPI/Streaming/channels/102`; the
   endpoint remains editable. Direct-camera credentials are distinct from
   XProtect and the password is stored in Windows Credential Manager. New

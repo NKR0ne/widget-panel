@@ -1,15 +1,17 @@
 #include "DirectCameraClient.h"
 
-#include "core/Log.h"
 #include "core/SecretVault.h"
 #include "core/SettingsStore.h"
 
+#include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QDebug>
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonDocument>
-#include <QPlaybackOptions>
 #include <QRegularExpression>
+#include <QStandardPaths>
 #include <QUrl>
 #include <QVideoFrame>
 
@@ -42,17 +44,25 @@ DirectCameraClient::DirectCameraClient(SettingsStore* settings, SecretVault* vau
     : QObject(parent)
     , m_settings(settings)
     , m_vault(vault)
-    , m_player(this)
-    , m_decodeSink(this)
+    , m_decoder(this)
 {
-    m_player.setVideoSink(&m_decodeSink);
-    QPlaybackOptions options;
-    // Camera integrity matters more than shaving a fraction of a second from
-    // live latency. Qt's low-latency intent reduces FFmpeg buffering and can
-    // expose damaged H.264 frames when RTSP packets arrive late or reordered.
-    options.setPlaybackIntent(QPlaybackOptions::PlaybackIntent::Playback);
-    options.setNetworkTimeout(std::chrono::seconds(20));
-    m_player.setPlaybackOptions(options);
+    m_decoder.setProcessChannelMode(QProcess::SeparateChannels);
+    connect(&m_decoder, &QProcess::readyReadStandardOutput,
+            this, &DirectCameraClient::handleDecoderOutput);
+    connect(&m_decoder, &QProcess::readyReadStandardError,
+            this, &DirectCameraClient::handleDecoderErrorOutput);
+    connect(&m_decoder, &QProcess::errorOccurred, this,
+            [this](QProcess::ProcessError processError) {
+        if (m_ignoreDecoderSignals || !m_attemptActive)
+            return;
+        if (processError == QProcess::FailedToStart) {
+            clearPlayer();
+            setStatus(QStringLiteral("error"),
+                      QStringLiteral("The bundled FFmpeg decoder could not be started."));
+        }
+    });
+    connect(&m_decoder, qOverload<int, QProcess::ExitStatus>(&QProcess::finished),
+            this, &DirectCameraClient::handleDecoderFinished);
 
     m_firstFrameTimer.setSingleShot(true);
     m_firstFrameTimer.setInterval(25000);
@@ -76,11 +86,6 @@ DirectCameraClient::DirectCameraClient(SettingsStore* settings, SecretVault* vau
             start();
         }
     });
-
-    connect(&m_decodeSink, &QVideoSink::videoFrameChanged,
-            this, &DirectCameraClient::handleFrame);
-    connect(&m_player, &QMediaPlayer::errorOccurred,
-            this, &DirectCameraClient::handlePlayerError);
 
     if (m_settings) {
         connect(m_settings, &SettingsStore::changed, this, [this](const QString& key) {
@@ -114,7 +119,7 @@ DirectCameraClient::DirectCameraClient(SettingsStore* settings, SecretVault* vau
 
     qInfo() << "[camera-direct] endpoint" << endpoint()
             << "configured" << configured() << "verified" << verified()
-            << "robust playback buffering enabled";
+            << "FFmpeg RTSP-over-TCP decoder";
 }
 
 DirectCameraClient::~DirectCameraClient()
@@ -335,6 +340,14 @@ void DirectCameraClient::start()
         return;
     }
 
+    const QString decoderPath = ffmpegExecutable();
+    if (decoderPath.isEmpty()) {
+        clearPlayer();
+        setStatus(QStringLiteral("error"),
+                  QStringLiteral("FFmpeg is not installed for QtPanel. Run install-ffmpeg.ps1, then rebuild or relaunch."));
+        return;
+    }
+
     clearPlayer();
     m_attemptWasVerified = verified();
     m_receivedFrame = false;
@@ -349,10 +362,34 @@ void DirectCameraClient::start()
     source.setPassword(m_vault->get(QLatin1String(kPasswordKey)));
 
     setStatus(QStringLiteral("connecting"));
-    qInfo() << "[camera-direct] explicit stream connection to" << endpoint()
+    qInfo() << "[camera-direct] FFmpeg TCP stream connection to" << endpoint()
             << "remaining protected attempts" << authAttemptsRemaining();
-    m_player.setSource(source);
-    m_player.play();
+
+    const QString videoFilter = QStringLiteral(
+        "fps=15,scale=%1:%2:force_original_aspect_ratio=decrease,"
+        "pad=%1:%2:(ow-iw)/2:(oh-ih)/2:black")
+        .arg(kOutputWidth).arg(kOutputHeight);
+    const QStringList arguments = {
+        QStringLiteral("-hide_banner"),
+        QStringLiteral("-loglevel"), QStringLiteral("warning"),
+        QStringLiteral("-nostdin"),
+        QStringLiteral("-rtsp_transport"), QStringLiteral("tcp"),
+        QStringLiteral("-rtsp_flags"), QStringLiteral("prefer_tcp"),
+        QStringLiteral("-timeout"), QStringLiteral("20000000"),
+        QStringLiteral("-fflags"), QStringLiteral("+discardcorrupt"),
+        QStringLiteral("-threads"), QStringLiteral("2"),
+        QStringLiteral("-i"), source.toString(QUrl::FullyEncoded),
+        QStringLiteral("-map"), QStringLiteral("0:v:0"),
+        QStringLiteral("-an"), QStringLiteral("-sn"), QStringLiteral("-dn"),
+        QStringLiteral("-vf"), videoFilter,
+        QStringLiteral("-c:v"), QStringLiteral("rawvideo"),
+        QStringLiteral("-pix_fmt"), QStringLiteral("bgra"),
+        QStringLiteral("-f"), QStringLiteral("rawvideo"),
+        QStringLiteral("pipe:1")
+    };
+    m_decoder.setProgram(decoderPath);
+    m_decoder.setArguments(arguments);
+    m_decoder.start(QIODevice::ReadOnly);
     m_firstFrameTimer.start();
 }
 
@@ -397,7 +434,7 @@ void DirectCameraClient::attachVideoSink(QVideoSink* sink)
         m_renderSink->setVideoFrame({});
     m_renderSink = sink;
     if (m_renderSink)
-        m_renderSink->setVideoFrame(m_decodeSink.videoFrame());
+        m_renderSink->setVideoFrame({});
 }
 
 void DirectCameraClient::detachVideoSink(QVideoSink* sink)
@@ -423,6 +460,52 @@ void DirectCameraClient::handleConfigurationChange()
     setStatus(configured() ? QStringLiteral("ready") : QStringLiteral("setup"));
     emit configurationChanged();
     emit connectionConfigurationChanged();
+}
+
+void DirectCameraClient::handleDecoderOutput()
+{
+    if (m_ignoreDecoderSignals || !m_attemptActive)
+        return;
+
+    m_decoderOutput.append(m_decoder.readAllStandardOutput());
+    qsizetype consumed = 0;
+    while (m_decoderOutput.size() - consumed >= kOutputFrameBytes) {
+        const uchar* pixels = reinterpret_cast<const uchar*>(m_decoderOutput.constData() + consumed);
+        const QImage view(pixels, kOutputWidth, kOutputHeight,
+                          kOutputWidth * 4, QImage::Format_ARGB32);
+        handleFrame(QVideoFrame(view.copy()));
+        consumed += kOutputFrameBytes;
+    }
+    if (consumed > 0)
+        m_decoderOutput.remove(0, consumed);
+}
+
+void DirectCameraClient::handleDecoderErrorOutput()
+{
+    if (m_ignoreDecoderSignals)
+        return;
+    m_decoderErrors.append(m_decoder.readAllStandardError());
+    constexpr qsizetype kMaximumErrorBytes = 16 * 1024;
+    if (m_decoderErrors.size() > kMaximumErrorBytes)
+        m_decoderErrors = m_decoderErrors.right(kMaximumErrorBytes);
+}
+
+void DirectCameraClient::handleDecoderFinished(int exitCode, QProcess::ExitStatus exitStatus)
+{
+    if (m_ignoreDecoderSignals || !m_attemptActive)
+        return;
+    handleDecoderErrorOutput();
+    const QString detail = decoderFailureDetail();
+    const bool authenticationRejected = detail.contains(
+        QLatin1String("401 Unauthorized"), Qt::CaseInsensitive)
+        || detail.contains(QLatin1String("authentication failed"), Qt::CaseInsensitive)
+        || detail.contains(QLatin1String("authorization failed"), Qt::CaseInsensitive);
+    qWarning() << "[camera-direct] FFmpeg exited" << exitCode << exitStatus
+               << sanitizedError(detail);
+    fail(authenticationRejected
+             ? QStringLiteral("Camera authentication rejected (401 Unauthorized). Verify the direct-camera username and password before rearming.")
+             : detail,
+         authenticationRejected);
 }
 
 void DirectCameraClient::handleFrame(const QVideoFrame& frame)
@@ -457,31 +540,21 @@ void DirectCameraClient::handleFrame(const QVideoFrame& frame)
     qInfo() << "[camera-direct] first frame received; configuration verified";
 }
 
-void DirectCameraClient::handlePlayerError(QMediaPlayer::Error error, const QString& detail)
+QString DirectCameraClient::ffmpegExecutable() const
 {
-    if (m_ignorePlayerSignals || !m_attemptActive || error == QMediaPlayer::NoError)
-        return;
-    const QString backendDetail = recentFfmpegError();
-    const QString combined = detail + QLatin1Char(' ') + backendDetail;
-    const bool authenticationRejected = error == QMediaPlayer::AccessDeniedError
-        || combined.contains(QLatin1String("401 Unauthorized"), Qt::CaseInsensitive)
-        || combined.contains(QLatin1String("authorization failed"), Qt::CaseInsensitive);
-    qWarning() << "[camera-direct] player error" << error
-               << "backend detail" << sanitizedError(backendDetail);
-    if (authenticationRejected) {
-        fail(QStringLiteral("Camera authentication rejected (401 Unauthorized). Verify the direct-camera username and password before rearming."),
-             true);
-        return;
-    }
-    if (!backendDetail.isEmpty()) {
-        QString backendError = backendDetail;
-        const qsizetype separator = backendError.indexOf(QLatin1String("FFmpeg error description:"));
-        if (separator >= 0)
-            backendError = backendError.mid(separator + 25).trimmed();
-        fail(sanitizedError(backendError));
-        return;
-    }
-    fail(sanitizedError(detail));
+    const QString adjacent = QDir(QCoreApplication::applicationDirPath())
+        .filePath(QStringLiteral("ffmpeg.exe"));
+    if (QFileInfo::exists(adjacent))
+        return adjacent;
+    return QStandardPaths::findExecutable(QStringLiteral("ffmpeg.exe"));
+}
+
+QString DirectCameraClient::decoderFailureDetail() const
+{
+    const QString detail = QString::fromUtf8(m_decoderErrors).trimmed();
+    if (!detail.isEmpty())
+        return sanitizedError(detail);
+    return QStringLiteral("The FFmpeg RTSP-over-TCP decoder stopped unexpectedly.");
 }
 
 void DirectCameraClient::setStatus(const QString& status, const QString& error)
@@ -535,13 +608,19 @@ void DirectCameraClient::clearPlayer()
     m_firstFrameTimer.stop();
     m_staleFrameTimer.stop();
     m_reconnectTimer.stop();
-    m_ignorePlayerSignals = true;
-    m_player.stop();
-    m_player.setSource({});
-    m_decodeSink.setVideoFrame({});
+    m_ignoreDecoderSignals = true;
+    if (m_decoder.state() != QProcess::NotRunning) {
+        m_decoder.kill();
+        m_decoder.waitForFinished(1000);
+    }
+    m_decoder.close();
+    m_decoder.setProgram({});
+    m_decoder.setArguments({});
+    m_decoderOutput.clear();
+    m_decoderErrors.clear();
     if (m_renderSink)
         m_renderSink->setVideoFrame({});
-    m_ignorePlayerSignals = false;
+    m_ignoreDecoderSignals = false;
     m_lastFrameAtMs = 0;
 }
 

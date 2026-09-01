@@ -91,7 +91,9 @@ mail links, and explicit web detail views. The isolated
 Both profiles are disk-backed and share the panel's spotlight geometry in QML.
 Native content stays native: article reading uses QML, traffic uses an
 interactive map, live streams use Qt Multimedia where possible, and the direct
-camera keeps a decoded RTSP stream warm even while its card is hidden.
+camera keeps a dedicated FFmpeg RTSP-over-TCP decoder warm even while its card
+is hidden. Raw fixed-size frames cross the child-process boundary into a
+`QVideoSink`, isolating network/demux failures from the Qt UI process.
 
 ### Starvis local AI architecture
 

@@ -32,7 +32,7 @@ GlassCard {
 
     function statusMessage() {
         if (DirectCamera.error !== "") return DirectCamera.error
-        if (live) return "Flux RTSP direct"
+        if (live) return "Flux RTSP/TCP direct"
         if (busy) return "Ouverture du flux RTSP\u2026"
         if (DirectCamera.status === "blocked")
             return "Protection active. V\u00e9rifiez ou modifiez les identifiants avant un nouvel essai."
@@ -278,7 +278,7 @@ GlassCard {
 
             Text {
                 width: parent.width
-                text: "Le sous-flux 102 est utilis\u00e9 par d\u00e9faut. Aucun repli vers une autre URL ni nouvel essai automatique."
+                text: "Le sous-flux 102 est utilis\u00e9 par d\u00e9faut via RTSP/TCP. Aucun repli vers une autre URL ni nouvel essai automatique."
                 color: Theme.textSecondary
                 font.pixelSize: 8
                 wrapMode: Text.WordWrap

@@ -15,3 +15,4 @@ error.txt
 native/bin/*.log
 native/bin/panel.path
 native/qt-panel/build/
+native/qt-panel/runtime/ffmpeg/
