@@ -14,6 +14,8 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
+#include <QSet>
 #include <QTime>
 #include <QUuid>
 
@@ -30,15 +32,16 @@ constexpr int kMaxEvents = 8;
 constexpr qint64 kActivityRetentionMs = 24 * 60 * 60 * 1000;
 constexpr int kMaxActivityEntries = 400;
 
-const char kClassifyPrompt[] =
-    "You are a perimeter security analyst. This snapshot was taken the moment "
-    "the camera's own analytics raised a perimeter event. Reply with STRICT "
-    "JSON only, no prose: {\"person\": bool, \"at_door\": bool, "
-    "\"description\": \"one short French sentence\", "
-    "\"threat\": \"none|notice|alert\"}. Judge the perimeter, not movement: "
-    "threat=alert for an unknown person inside the private perimeter or at the "
-    "door; notice for a person passing at the edge or an unclear figure; none "
-    "for animals, vehicles on the street, foliage, weather or light changes.";
+const QString kClassifyPrompt = QStringLiteral(
+    "Tu es analyste de sécurité périmétrique. Cette image a été capturée quand "
+    "la caméra a signalé un événement de périmètre. Réponds uniquement avec ce "
+    "JSON strict, sans prose : {\"person\": bool, \"at_door\": bool, "
+    "\"description\": \"une courte phrase entièrement en français\", "
+    "\"threat\": \"none|notice|alert\"}. Tous les champs lisibles doivent être "
+    "en français. Évalue le périmètre et non le simple mouvement : utilise alert "
+    "pour une personne inconnue dans le périmètre privé ou à la porte, notice "
+    "pour une personne en bordure ou une silhouette incertaine, et none pour les "
+    "animaux, les véhicules dans la rue, le feuillage, la météo ou la lumière.");
 
 // Second pass: only runs when a person is in frame and references exist.
 const char kIdentifyPrompt[] =
@@ -64,6 +67,51 @@ QString cameraLabel(const QString& cameraId)
     if (cameraId == QLatin1String("webcam"))
         return QStringLiteral("Webcam");
     return cameraId;
+}
+
+bool looksEnglish(const QString& text)
+{
+    QString normalized = text.toLower();
+    normalized.replace(QRegularExpression(QStringLiteral("[^a-zàâçéèêëîïôûùüÿœ]+")),
+                       QStringLiteral(" "));
+    const QStringList words = normalized.split(QLatin1Char(' '), Qt::SkipEmptyParts);
+    static const QSet<QString> english{
+        QStringLiteral("a"), QStringLiteral("an"), QStringLiteral("the"),
+        QStringLiteral("is"), QStringLiteral("are"), QStringLiteral("in"),
+        QStringLiteral("near"), QStringLiteral("at"), QStringLiteral("person"),
+        QStringLiteral("animal"), QStringLiteral("cat"), QStringLiteral("dog"),
+        QStringLiteral("car"), QStringLiteral("cars"), QStringLiteral("driveway"),
+        QStringLiteral("walking"), QStringLiteral("standing"), QStringLiteral("detected"),
+        QStringLiteral("white"), QStringLiteral("black"), QStringLiteral("outside"),
+    };
+    static const QSet<QString> french{
+        QStringLiteral("un"), QStringLiteral("une"), QStringLiteral("le"),
+        QStringLiteral("la"), QStringLiteral("les"), QStringLiteral("dans"),
+        QStringLiteral("près"), QStringLiteral("personne"), QStringLiteral("animal"),
+        QStringLiteral("chat"), QStringLiteral("chien"), QStringLiteral("voiture"),
+        QStringLiteral("véhicule"), QStringLiteral("allée"), QStringLiteral("porte"),
+        QStringLiteral("détecté"), QStringLiteral("détectée"), QStringLiteral("trouve"),
+    };
+    int englishScore = 0;
+    int frenchScore = 0;
+    for (const QString& word : words) {
+        englishScore += english.contains(word) ? 1 : 0;
+        frenchScore += french.contains(word) ? 1 : 0;
+    }
+    return englishScore >= 2 && englishScore > frenchScore;
+}
+
+QString frenchClassificationFallback(bool person, bool atDoor, const QString& threat)
+{
+    if (atDoor)
+        return QStringLiteral("Une personne a été détectée à la porte.");
+    if (person && threat == QLatin1String("alert"))
+        return QStringLiteral("Une personne inconnue a été détectée dans le périmètre.");
+    if (person)
+        return QStringLiteral("Une personne a été détectée près du périmètre.");
+    if (threat == QLatin1String("alert"))
+        return QStringLiteral("Une présence inconnue a été détectée dans le périmètre.");
+    return QStringLiteral("Un mouvement sans menace apparente a été détecté.");
 }
 
 } // namespace
@@ -715,7 +763,7 @@ void SentryService::escalate(const QString& cameraId, const QImage& frame, doubl
     }
     if (m_starvis->state())
         m_starvis->state()->setAnalyzing(true);
-    QString prompt = QLatin1String(kClassifyPrompt);
+    QString prompt = kClassifyPrompt;
     if (!hint.isEmpty()) {
         // What the camera itself decided, so the model adjudicates rather than
         // re-detects — this is the whole point of using the device's analytics.
@@ -816,6 +864,10 @@ void SentryService::recordEvent(const QString& cameraId, const QImage& frame,
             : hint.left(1).toUpper() + hint.mid(1);
         if (unjudged)
             description += QStringLiteral(" — analyse indisponible");
+    } else if (looksEnglish(description)) {
+        qWarning() << "[starvis.sentry] English classification replaced before alert:"
+                   << description;
+        description = frenchClassificationFallback(person, atDoor, threat);
     }
     // A recognised resident is named and never treated as an intrusion.
     if (!knownName.isEmpty()) {
