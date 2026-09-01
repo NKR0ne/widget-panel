@@ -1,4 +1,6 @@
 import QtQuick
+import QtQuick.Controls
+import QtQuick.Dialogs
 import QtPanel.Native
 
 // Starvis chat card: transcript + input against the OpenAI Responses API,
@@ -13,12 +15,15 @@ GlassCard {
     property bool allowInternet: false
     property string lastUserMessage: ""
     property string pendingInternetRequest: ""
+    property string pendingImageUrl: ""
+    property string pendingImageName: ""
     // True while a streamed assistant bubble is open at the end of the
     // transcript (Anthropic path); replyReceived finalizes it in place.
     property bool streamOpen: false
 
     function send(text, forceInternet, appendUser) {
-        const message = text.trim()
+        const hasImage = pendingImageUrl !== ""
+        const message = text.trim() || (hasImage ? "Analyse cette image." : "")
         if (message === "" || Starvis.busy)
             return
         const history = []
@@ -27,10 +32,20 @@ GlassCard {
             history.push({ role: turn.role, text: turn.text })
         }
         if (appendUser !== false) {
-            transcript.append({ role: "user", text: message })
+            transcript.append({
+                role: "user",
+                text: message + (hasImage ? "\nImage · " + pendingImageName : "")
+            })
             lastUserMessage = message
         }
         input.text = ""
+        if (hasImage) {
+            const imageUrl = pendingImageUrl
+            pendingImageUrl = ""
+            pendingImageName = ""
+            Starvis.analyzeImageFile(imageUrl, message)
+            return
+        }
         Starvis.chat(message, history,
             forceInternet === true || card.allowInternet || card.agentMode,
             card.agentMode)
@@ -114,7 +129,8 @@ GlassCard {
             }
             Item {
                 width: Math.max(0, parent.width - x - webBtn.width
-                    - agentBtn.width - briefingBtn.width - 12)
+                    - agentBtn.width - reasoningBtn.width - briefingBtn.width
+                    - stopBtn.width - 24)
                 height: 1
             }
             Rectangle {
@@ -169,6 +185,32 @@ GlassCard {
                 }
             }
             Rectangle {
+                id: reasoningBtn
+                width: reasoningLabel.implicitWidth + 14
+                height: 20
+                radius: 5
+                anchors.verticalCenter: parent.verticalCenter
+                color: Starvis.reasoningEnabled ? Theme.activeFill
+                    : reasoningMouse.containsMouse ? Theme.hover : Theme.cardFill
+                border.color: Starvis.reasoningEnabled ? Theme.accent : Theme.cardStroke
+                Text {
+                    id: reasoningLabel
+                    anchors.centerIn: parent
+                    text: "Pensée"
+                    color: Starvis.reasoningEnabled ? Theme.accent : Theme.textSecondary
+                    font.pixelSize: 9
+                }
+                MouseArea {
+                    id: reasoningMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: Starvis.reasoningEnabled = !Starvis.reasoningEnabled
+                }
+                ToolTip.visible: reasoningMouse.containsMouse
+                ToolTip.text: "Raisonnement approfondi local"
+            }
+            Rectangle {
                 id: briefingBtn
                 width: briefingLabel.implicitWidth + 16
                 height: 20
@@ -197,6 +239,33 @@ GlassCard {
                         Starvis.briefing()
                     }
                 }
+            }
+            Rectangle {
+                id: stopBtn
+                visible: Starvis.busy
+                width: visible ? 20 : 0
+                height: 20
+                radius: 5
+                anchors.verticalCenter: parent.verticalCenter
+                color: stopMouse.containsMouse ? Qt.rgba(0.97, 0.45, 0.45, 0.25)
+                                               : Qt.rgba(0.97, 0.45, 0.45, 0.12)
+                border.color: Qt.rgba(0.97, 0.45, 0.45, 0.5)
+                Text {
+                    anchors.centerIn: parent
+                    text: "\uE71A"
+                    font.family: "Segoe Fluent Icons"
+                    font.pixelSize: 10
+                    color: "#f87171"
+                }
+                MouseArea {
+                    id: stopMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: Starvis.cancelChat()
+                }
+                ToolTip.visible: stopMouse.containsMouse
+                ToolTip.text: "Annuler la génération"
             }
         }
 
@@ -513,18 +582,65 @@ GlassCard {
             }
         }
 
-        // Input
         Rectangle {
+            visible: card.pendingImageUrl !== ""
             width: parent.width
-            height: 30
+            height: visible ? 28 : 0
+            radius: 6
+            color: Qt.rgba(0.31, 0.56, 0.97, 0.10)
+            border.color: Qt.rgba(0.31, 0.56, 0.97, 0.30)
+
+            Text {
+                anchors.left: parent.left
+                anchors.right: clearImage.left
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.leftMargin: 8
+                anchors.rightMargin: 6
+                text: "Image · " + card.pendingImageName
+                color: Theme.textSecondary
+                font.pixelSize: 9
+                elide: Text.ElideMiddle
+            }
+            Text {
+                id: clearImage
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.rightMargin: 8
+                text: "\uE711"
+                font.family: "Segoe Fluent Icons"
+                font.pixelSize: 9
+                color: clearImageMouse.containsMouse ? Theme.accent : Theme.textSecondary
+                MouseArea {
+                    id: clearImageMouse
+                    anchors.fill: parent
+                    anchors.margins: -6
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        card.pendingImageUrl = ""
+                        card.pendingImageName = ""
+                    }
+                }
+            }
+        }
+
+        // Input and native image capture controls.
+        Rectangle {
+            id: inputShell
+            width: parent.width
+            height: 32
             radius: 7
             color: Qt.rgba(1, 1, 1, 0.05)
             border.color: input.activeFocus ? Qt.rgba(0.31, 0.56, 0.97, 0.5) : Theme.cardStroke
 
             TextInput {
                 id: input
-                anchors.fill: parent
-                anchors.margins: 8
+                anchors.left: parent.left
+                anchors.right: attachButton.left
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: 8
+                anchors.rightMargin: 4
                 verticalAlignment: TextInput.AlignVCenter
                 color: Theme.textPrimary
                 font.pixelSize: Theme.fontSizeCaption
@@ -540,6 +656,75 @@ GlassCard {
                     font.pixelSize: Theme.fontSizeCaption
                 }
             }
+
+            Rectangle {
+                id: attachButton
+                anchors.right: screenButton.left
+                anchors.verticalCenter: parent.verticalCenter
+                width: 26; height: 26; radius: 5
+                color: attachMouse.containsMouse ? Theme.hover : "transparent"
+                Text {
+                    anchors.centerIn: parent
+                    text: "\uE723"
+                    font.family: "Segoe Fluent Icons"
+                    font.pixelSize: 12
+                    color: Theme.textSecondary
+                }
+                MouseArea {
+                    id: attachMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: imageDialog.open()
+                }
+                ToolTip.visible: attachMouse.containsMouse
+                ToolTip.text: "Joindre une image"
+            }
+            Rectangle {
+                id: screenButton
+                anchors.right: parent.right
+                anchors.rightMargin: 3
+                anchors.verticalCenter: parent.verticalCenter
+                width: 26; height: 26; radius: 5
+                color: screenMouse.containsMouse ? Theme.hover : "transparent"
+                Text {
+                    anchors.centerIn: parent
+                    text: "\uE7C4"
+                    font.family: "Segoe Fluent Icons"
+                    font.pixelSize: 12
+                    color: Theme.textSecondary
+                }
+                MouseArea {
+                    id: screenMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        const source = Starvis.captureDesktop()
+                        if (source === "") {
+                            transcript.append({ role: "assistant",
+                                                text: "Capture d'écran indisponible." })
+                            return
+                        }
+                        card.pendingImageUrl = source
+                        card.pendingImageName = "Capture d'écran"
+                    }
+                }
+                ToolTip.visible: screenMouse.containsMouse
+                ToolTip.text: "Capturer l'écran actif"
+            }
+        }
+    }
+
+    FileDialog {
+        id: imageDialog
+        title: "Joindre une image à Starvis"
+        nameFilters: ["Images (*.png *.jpg *.jpeg *.webp *.bmp)", "Tous les fichiers (*)"]
+        onAccepted: {
+            const source = String(selectedFile)
+            card.pendingImageUrl = source
+            const parts = decodeURIComponent(source).split("/")
+            card.pendingImageName = parts.length > 0 ? parts[parts.length - 1] : "Image"
         }
     }
 }

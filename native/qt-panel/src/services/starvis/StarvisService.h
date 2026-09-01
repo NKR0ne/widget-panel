@@ -45,6 +45,7 @@ class StarvisService : public QObject {
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(bool speaking READ speaking NOTIFY speakingChanged)
     Q_PROPERTY(bool speechPending READ speechPending NOTIFY speakingChanged)
+    Q_PROPERTY(bool reasoningEnabled READ reasoningEnabled WRITE setReasoningEnabled NOTIFY configuredChanged)
     Q_PROPERTY(bool localModelsEnabled READ localModelsEnabled WRITE setLocalModelsEnabled NOTIFY localModelsStateChanged)
     Q_PROPERTY(bool localModelsTransitioning READ localModelsTransitioning NOTIFY localModelsStateChanged)
     Q_PROPERTY(QString model READ model NOTIFY configuredChanged)
@@ -72,7 +73,9 @@ public:
     bool speechPending() const { return m_ttsPending; }
     bool localModelsEnabled() const;
     bool localModelsTransitioning() const { return m_localModelsTransitioning; }
+    bool reasoningEnabled() const;
     Q_INVOKABLE void setLocalModelsEnabled(bool enabled);
+    void setReasoningEnabled(bool enabled);
 
     // allowAgent enables the tool loop (read-only workspace tools + web search
     // + action proposals). Mutating proposals go to the approval queue.
@@ -80,6 +83,8 @@ public:
                           bool allowInternet = false, bool allowAgent = false);
     Q_INVOKABLE void briefing();
     Q_INVOKABLE void cancelChat();
+    Q_INVOKABLE void analyzeImageFile(const QString& source, const QString& prompt);
+    Q_INVOKABLE QString captureDesktop() const;
     // Cloud TTS when an OpenAI key is stored, otherwise the offline Windows
     // voice — spoken alerts must not depend on a cloud key being present.
     Q_INVOKABLE void speak(const QString& text);
@@ -182,7 +187,7 @@ private:
     void probeLocalBackend();
     void classifyLocal(const QVector<QImage>& images, const QVector<QString>& labels,
                        const QString& prompt, QObject* context,
-                       ClassifyCallback callback);
+                       ClassifyCallback callback, bool reasoning = false);
     QVariantMap voiceConfig() const;
     void playSpeechBytes(const QByteArray& bytes, const QString& extension);
     void fallbackSpeech(const QString& text, const QString& error);

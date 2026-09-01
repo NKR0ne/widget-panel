@@ -21,6 +21,7 @@
 #include <QAudioOutput>
 #include <QAudioDevice>
 #include <QCoreApplication>
+#include <QCursor>
 #include <QDateTime>
 #include <QDebug>
 #include <QDesktopServices>
@@ -28,6 +29,7 @@
 #include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -35,7 +37,9 @@
 #include <QMediaDevices>
 #include <QNetworkReply>
 #include <QProcess>
+#include <QPixmap>
 #include <QRegularExpression>
+#include <QScreen>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QUrl>
@@ -299,6 +303,24 @@ bool StarvisService::configured() const
 bool StarvisService::localModelsEnabled() const
 {
     return m_settings->get(QStringLiteral("wp-starvis-local-models-enabled"), true).toBool();
+}
+
+bool StarvisService::reasoningEnabled() const
+{
+    return config().value(QStringLiteral("reasoningEnabled"), false).toBool();
+}
+
+void StarvisService::setReasoningEnabled(bool enabled)
+{
+    QVariantMap cfg = config();
+    if (cfg.value(QStringLiteral("reasoningEnabled"), false).toBool() == enabled)
+        return;
+    cfg.insert(QStringLiteral("reasoningEnabled"), enabled);
+    m_settings->set(QStringLiteral("wp-starvis-config"),
+                    QString::fromUtf8(QJsonDocument::fromVariant(cfg)
+                                          .toJson(QJsonDocument::Compact)));
+    m_settings->flush();
+    emit configuredChanged();
 }
 
 QString StarvisService::localRuntimeScriptPath() const
@@ -1077,7 +1099,7 @@ void StarvisService::classifyWithGallery(const QVector<QPair<QString, QImage>>& 
 void StarvisService::classifyLocal(const QVector<QImage>& images,
                                    const QVector<QString>& labels,
                                    const QString& prompt, QObject* context,
-                                   ClassifyCallback callback)
+                                   ClassifyCallback callback, bool reasoning)
 {
     const QVariantMap cfg = config();
     const QString endpoint = cfg.value(QStringLiteral("visionBaseUrl"),
@@ -1093,12 +1115,17 @@ void StarvisService::classifyLocal(const QVector<QImage>& images,
     request.prompt = prompt;
     request.model = selectedModel;
     request.maxTokens = 768;
+    request.reasoning = reasoning;
     BackendOperation* operation = m_localVisionBackend->analyze(request,
                                                                context ? context : this);
+    if (context == this)
+        m_activeBackendOperation = operation;
     QObject* callbackContext = context ? context : this;
     auto sharedCallback = std::make_shared<ClassifyCallback>(std::move(callback));
     connect(operation, &BackendOperation::succeeded, callbackContext,
-            [operation, sharedCallback](const QVariantMap& result) {
+            [this, operation, sharedCallback](const QVariantMap& result) {
+        if (m_activeBackendOperation == operation)
+            m_activeBackendOperation = nullptr;
         const QString raw = result.value(QStringLiteral("text")).toString();
         (*sharedCallback)(
             QJsonObject::fromVariantMap(result.value(QStringLiteral("json")).toMap()),
@@ -1106,11 +1133,17 @@ void StarvisService::classifyLocal(const QVector<QImage>& images,
         operation->deleteLater();
     });
     connect(operation, &BackendOperation::failed, callbackContext,
-            [operation, sharedCallback](const QString& error) {
+            [this, operation, sharedCallback](const QString& error) {
+        if (m_activeBackendOperation == operation)
+            m_activeBackendOperation = nullptr;
         (*sharedCallback)({}, {}, error);
         operation->deleteLater();
     });
-    connect(operation, &BackendOperation::cancelled, callbackContext, [operation] {
+    connect(operation, &BackendOperation::cancelled, callbackContext,
+            [this, operation, sharedCallback] {
+        if (m_activeBackendOperation == operation)
+            m_activeBackendOperation = nullptr;
+        (*sharedCallback)({}, {}, QStringLiteral("cancelled"));
         operation->deleteLater();
     });
 }
@@ -1201,6 +1234,7 @@ void StarvisService::runLocalSimpleTurn(const QJsonArray& messages, qint64 start
         if (m_activeBackendOperation == operation)
             m_activeBackendOperation = nullptr;
         setBusy(false);
+        emit chatFailed(QStringLiteral("Requête annulée."));
         operation->deleteLater();
     });
 }
@@ -1372,6 +1406,76 @@ void StarvisService::cancelChat()
     if (m_activeStream) {
         m_activeStream->abort();
         m_activeStream = nullptr;
+    }
+}
+
+QString StarvisService::captureDesktop() const
+{
+    QScreen* screen = QGuiApplication::screenAt(QCursor::pos());
+    if (!screen)
+        screen = QGuiApplication::primaryScreen();
+    if (!screen)
+        return {};
+
+    const QPixmap image = screen->grabWindow(0);
+    if (image.isNull())
+        return {};
+    const QString path = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+        + QStringLiteral("/qt-panel-starvis-screen-%1.png")
+              .arg(QDateTime::currentMSecsSinceEpoch());
+    if (!image.save(path, "PNG"))
+        return {};
+    return QUrl::fromLocalFile(path).toString();
+}
+
+void StarvisService::analyzeImageFile(const QString& source, const QString& prompt)
+{
+    if (m_busy)
+        return;
+    if (!visionConfigured()) {
+        emit chatFailed(QStringLiteral("Le service de vision n'est pas disponible."));
+        return;
+    }
+
+    const QUrl url(source);
+    const QString path = url.isLocalFile() ? url.toLocalFile() : source;
+    const QImage image(path);
+    if (image.isNull()) {
+        emit chatFailed(QStringLiteral("Impossible de charger l'image sélectionnée."));
+        return;
+    }
+
+    const QString request = prompt.trimmed().isEmpty()
+        ? QStringLiteral("Analyse cette image et décris clairement les éléments importants.")
+        : prompt.trimmed();
+    const qint64 started = QDateTime::currentMSecsSinceEpoch();
+    const QString visionModel = config().value(
+        QStringLiteral("visionModel"), QStringLiteral("starvis-vision")).toString();
+    setBusy(true);
+    m_state->setAnalyzing(true);
+
+    auto finish = [this, started, visionModel](const QJsonObject&, const QString& raw,
+                                                const QString& error) {
+        m_state->setAnalyzing(false);
+        setBusy(false);
+        if (!error.isEmpty()) {
+            emit chatFailed(error == QLatin1String("cancelled")
+                                ? QStringLiteral("Analyse annulée.") : error);
+            return;
+        }
+        emit replyReceived(raw.trimmed().isEmpty()
+                               ? QStringLiteral("Aucune analyse n'a été produite.")
+                               : raw.trimmed(),
+                           visionModel,
+                           static_cast<int>(QDateTime::currentMSecsSinceEpoch() - started));
+    };
+
+    if (localModelsEnabled() && m_localVisionReady) {
+        classifyLocal({scaledVisionImage(image)}, {}, request, this, std::move(finish),
+                      reasoningEnabled());
+    } else {
+        m_anthropic->classifyImage(image, request, m_modelResolver->currentModel(),
+                                   this, std::move(finish));
     }
 }
 
