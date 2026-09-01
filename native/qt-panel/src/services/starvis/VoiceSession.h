@@ -36,6 +36,8 @@ class VoiceSession : public QObject {
     Q_PROPERTY(QString phase READ phase NOTIFY phaseChanged)
     Q_PROPERTY(int elapsedSec READ elapsedSec NOTIFY elapsedChanged)
     Q_PROPERTY(bool muted READ muted WRITE setMuted NOTIFY mutedChanged)
+    Q_PROPERTY(bool pushToTalk READ pushToTalk NOTIFY availableChanged)
+    Q_PROPERTY(bool pushToTalkHeld READ pushToTalkHeld NOTIFY phaseChanged)
 
 public:
     VoiceSession(SettingsStore* settings, SecretVault* vault, StarvisService* starvis,
@@ -52,9 +54,13 @@ public:
     int elapsedSec() const { return m_elapsedSec; }
     bool muted() const { return m_muted; }
     void setMuted(bool muted);
+    bool pushToTalk() const;
+    bool pushToTalkHeld() const { return m_pushToTalkHeld; }
 
     Q_INVOKABLE void start();
     Q_INVOKABLE void stop(); // user-initiated
+    Q_INVOKABLE void beginPushToTalk();
+    Q_INVOKABLE void endPushToTalk();
 
 signals:
     void statusChanged();
@@ -120,6 +126,7 @@ private:
     bool m_localReceivedDelta = false;
     bool m_localSpeechActive = false;
     bool m_localSpeechFailed = false;
+    bool m_pushToTalkHeld = false;
     int m_localSilenceMs = 0;
     StreamingTextSegmenter m_localSpeechSegmenter{48, 220};
     QStringList m_localSpeechQueue;

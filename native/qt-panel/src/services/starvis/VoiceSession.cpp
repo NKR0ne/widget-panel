@@ -262,6 +262,12 @@ QString VoiceSession::provider() const
     return QStringLiteral("local");
 }
 
+bool VoiceSession::pushToTalk() const
+{
+    return provider() != QLatin1String("openai")
+        && voiceConfig().value(QStringLiteral("pushToTalk"), true).toBool();
+}
+
 QString VoiceSession::localEndpoint() const
 {
     if (provider() == QLatin1String("groq"))
@@ -427,6 +433,34 @@ void VoiceSession::stop()
     closeSession(QStringLiteral("user"));
 }
 
+void VoiceSession::beginPushToTalk()
+{
+    if (!pushToTalk() || !available() || m_muted)
+        return;
+    if (!m_localMode)
+        startLocal();
+    if (!m_localMode || m_localProcessing || m_pushToTalkHeld)
+        return;
+
+    m_pushToTalkHeld = true;
+    m_localHeardSpeech = true;
+    m_localSilenceMs = 0;
+    m_localRecording.clear();
+    m_preRoll.clear();
+    m_idleTimer.stop();
+    setPhase(QStringLiteral("hearing"));
+    if (m_starvis && m_starvis->state())
+        m_starvis->state()->setListening(true);
+}
+
+void VoiceSession::endPushToTalk()
+{
+    if (!m_localMode || !m_pushToTalkHeld)
+        return;
+    m_pushToTalkHeld = false;
+    submitLocalUtterance();
+}
+
 void VoiceSession::closeSession(const QString& reason)
 {
     if (!m_socket)
@@ -570,7 +604,7 @@ void VoiceSession::startLocal()
     m_elapsedSec = 0;
     emit elapsedChanged();
     setStatus(QStringLiteral("live"));
-    setPhase(QStringLiteral("listening"));
+    setPhase(pushToTalk() ? QStringLiteral("ready") : QStringLiteral("listening"));
     startAudio();
     m_elapsedTimer.start();
     const QVariantMap cfg = voiceConfig();
@@ -579,8 +613,8 @@ void VoiceSession::startLocal()
     m_idleTimer.start(idleMin * 60 * 1000);
     m_capTimer.start(capMin * 60 * 1000);
     if (m_starvis && m_starvis->state())
-        m_starvis->state()->setListening(true);
-    qInfo() << "[starvis.voice] local continuous session open";
+        m_starvis->state()->setListening(!pushToTalk());
+    qInfo() << "[starvis.voice] local session open; push-to-talk =" << pushToTalk();
 }
 
 void VoiceSession::stopLocal()
@@ -597,6 +631,7 @@ void VoiceSession::stopLocal()
     m_localMode = false;
     m_localProcessing = false;
     m_localHeardSpeech = false;
+    m_pushToTalkHeld = false;
     m_waitingLocalReply = false;
     resetLocalSpeechQueue();
     m_starvis->stopSpeaking();
@@ -611,10 +646,25 @@ void VoiceSession::stopLocal()
 void VoiceSession::handleLocalAudio(const QByteArray& data)
 {
     const double level = rmsLevel(data);
-    if (m_starvis && m_starvis->state())
-        m_starvis->state()->setAudioLevel(level);
     if (m_muted || m_localProcessing || (m_starvis && m_starvis->busy()))
         return;
+
+    if (pushToTalk()) {
+        if (!m_pushToTalkHeld)
+            return;
+        if (m_starvis && m_starvis->state())
+            m_starvis->state()->setAudioLevel(level);
+        m_localRecording.append(data);
+        constexpr int kMaximumPushToTalkBytes = kSampleRate * 2 * 30;
+        if (m_localRecording.size() >= kMaximumPushToTalkBytes) {
+            m_pushToTalkHeld = false;
+            submitLocalUtterance();
+        }
+        return;
+    }
+
+    if (m_starvis && m_starvis->state())
+        m_starvis->state()->setAudioLevel(level);
 
     const QVariantMap cfg = voiceConfig();
     const double threshold = qBound(0.004,
@@ -653,8 +703,10 @@ void VoiceSession::submitLocalUtterance()
     m_preRoll.clear();
     m_localHeardSpeech = false;
     m_localSilenceMs = 0;
-    if (pcm.size() < kMinimumBytes)
+    if (pcm.size() < kMinimumBytes) {
+        resumeLocalListening();
         return;
+    }
 
     m_localProcessing = true;
     setPhase(QStringLiteral("transcribing"));
@@ -743,9 +795,10 @@ void VoiceSession::resumeLocalListening()
     m_localHeardSpeech = false;
     m_localRecording.clear();
     m_preRoll.clear();
-    setPhase(QStringLiteral("listening"));
+    m_idleTimer.start();
+    setPhase(pushToTalk() ? QStringLiteral("ready") : QStringLiteral("listening"));
     if (m_starvis && m_starvis->state())
-        m_starvis->state()->setListening(true);
+        m_starvis->state()->setListening(!pushToTalk());
 }
 
 void VoiceSession::resetLocalSpeechQueue()

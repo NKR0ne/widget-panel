@@ -1325,6 +1325,13 @@ Item {
                     width: parent.width
                     spacing: 7
                     visible: voiceSettings.sessionProvider === "local"
+                             || voiceSettings.sessionProvider === "groq"
+                    Loader { sourceComponent: blobToggle; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "pushToTalk"; item.fallback = true; item.label = "Maintenir pour parler (recommandé)" } }
+                }
+                Column {
+                    width: parent.width
+                    spacing: 7
+                    visible: voiceSettings.sessionProvider === "local"
                     Text {
                         text: "Reconnaissance locale · Parakeet TDT"
                         color: Theme.textSecondary

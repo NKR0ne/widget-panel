@@ -11,6 +11,7 @@ GlassCard {
     readonly property var voice: Starvis.voice
     readonly property bool live: voice && voice.status === "live"
     readonly property bool connecting: voice && voice.status === "connecting"
+    readonly property bool pushToTalk: voice && voice.pushToTalk
 
     Column {
         id: voiceBody
@@ -36,7 +37,8 @@ GlassCard {
                         transcribing: "Transcription",
                         reasoning: "Réflexion",
                         speaking: "Réponse",
-                        listening: "En écoute"
+                        listening: "En écoute",
+                        ready: "Prêt à parler"
                     }
                     const phase = labels[card.voice.phase] || "En session"
                     return phase + " · " + Math.floor(card.voice.elapsedSec / 60)
@@ -44,7 +46,9 @@ GlassCard {
                 }
                 return "Prêt — " + (card.voice.provider === "local"
                        ? "Qwen local, privé et sans frais."
-                       : "dialogue OpenAI temps réel.")
+                       : card.voice.provider === "groq"
+                         ? "Groq pour la transcription."
+                         : "dialogue OpenAI temps réel.")
             }
             color: card.live ? Theme.textPrimary : Theme.textSecondary
             font.pixelSize: 10
@@ -56,7 +60,7 @@ GlassCard {
             width: parent.width
             height: 4
             radius: 2
-            visible: card.live
+            visible: card.live && (!card.pushToTalk || card.voice.pushToTalkHeld)
             color: Qt.rgba(1, 1, 1, 0.08)
             Rectangle {
                 width: parent.width * Math.min(1, (Starvis.state
@@ -68,7 +72,9 @@ GlassCard {
             }
         }
 
-        Row {
+        Flow {
+            width: parent.width
+            height: childrenRect.height
             spacing: 6
 
             Rectangle {
@@ -76,16 +82,24 @@ GlassCard {
                 height: 24
                 radius: 6
                 enabled: card.voice && card.voice.available
+                         && (!card.pushToTalk || !card.live
+                             || card.voice.phase === "ready"
+                             || card.voice.phase === "listening"
+                             || card.voice.phase === "hearing")
                 opacity: enabled ? 1 : 0.4
-                color: card.live
-                       ? Qt.rgba(0.97, 0.45, 0.45, startMouse.containsMouse ? 0.32 : 0.18)
+                color: card.pushToTalk && card.voice && card.voice.pushToTalkHeld
+                       ? Qt.rgba(0.97, 0.45, 0.45, startMouse.containsMouse ? 0.34 : 0.22)
                        : Qt.rgba(0.31, 0.56, 0.97, startMouse.containsMouse ? 0.32 : 0.15)
-                border.color: card.live ? Qt.rgba(0.97, 0.45, 0.45, 0.45)
-                                        : Qt.rgba(0.31, 0.56, 0.97, 0.45)
+                border.color: card.pushToTalk && card.voice && card.voice.pushToTalkHeld
+                              ? Qt.rgba(0.97, 0.45, 0.45, 0.50)
+                              : Qt.rgba(0.31, 0.56, 0.97, 0.45)
                 Text {
                     id: startLabel
                     anchors.centerIn: parent
-                    text: card.live || card.connecting ? "Terminer" : "Parler"
+                    text: card.pushToTalk
+                          ? (card.voice && card.voice.pushToTalkHeld
+                             ? "Relâcher pour envoyer" : "Maintenir pour parler")
+                          : (card.live || card.connecting ? "Terminer" : "Parler")
                     color: Theme.textPrimary
                     font.pixelSize: 9
                 }
@@ -95,12 +109,49 @@ GlassCard {
                     hoverEnabled: true
                     enabled: parent.enabled
                     cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onPressed: {
+                        if (card.pushToTalk)
+                            card.voice.beginPushToTalk()
+                    }
+                    onReleased: {
+                        if (card.pushToTalk)
+                            card.voice.endPushToTalk()
+                    }
+                    onCanceled: {
+                        if (card.pushToTalk)
+                            card.voice.endPushToTalk()
+                    }
                     onClicked: {
+                        if (card.pushToTalk)
+                            return
                         if (card.live || card.connecting)
                             card.voice.stop()
                         else
                             card.voice.start()
                     }
+                }
+            }
+
+            Rectangle {
+                width: endLabel.implicitWidth + 18
+                height: 24
+                radius: 6
+                visible: card.pushToTalk && (card.live || card.connecting)
+                color: endMouse.containsMouse ? Theme.hover : Theme.cardFill
+                border.color: Theme.cardStroke
+                Text {
+                    id: endLabel
+                    anchors.centerIn: parent
+                    text: "Terminer"
+                    color: Theme.textSecondary
+                    font.pixelSize: 9
+                }
+                MouseArea {
+                    id: endMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: card.voice.stop()
                 }
             }
 
