@@ -212,6 +212,9 @@ StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, Http
 
     loadActions();
     m_lastProvider = provider();
+    setProperty("starvisLocalTtsEngine",
+                voiceConfig().value(QStringLiteral("localTtsEngine"),
+                                    QStringLiteral("piper")).toString().trimmed().toLower());
     connect(m_vault, &SecretVault::changed, this, [this](const QString& key) {
         if (key == QLatin1String("starvis-openai-key")
             || key == QLatin1String("starvis-anthropic-key")
@@ -232,6 +235,21 @@ StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, Http
                     runLocalRuntimeAction(true);
                 }
             }
+        } else if (key == QLatin1String("wp-starvis-voice")) {
+            const QString selectedEngine = voiceConfig()
+                .value(QStringLiteral("localTtsEngine"), QStringLiteral("piper"))
+                .toString().trimmed().toLower();
+            const QString previousEngine = property("starvisLocalTtsEngine").toString();
+            if (selectedEngine != previousEngine) {
+                setProperty("starvisLocalTtsEngine", selectedEngine);
+                if (localModelsEnabled() && !m_localModelsTransitioning) {
+                    stopSpeaking();
+                    m_localTtsReady = false;
+                    m_localModelsTransitioning = true;
+                    emit localModelsStateChanged();
+                    runLocalRuntimeAction(true);
+                }
+            }
         }
     });
     auto* healthTimer = new QTimer(this);
@@ -240,8 +258,12 @@ StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, Http
     healthTimer->start();
     QTimer::singleShot(0, this, &StarvisService::probeLocalBackend);
     QTimer::singleShot(1500, this, [this] {
-        if (localModelsEnabled() && provider() != QLatin1String("local")
-            && !m_localModelsTransitioning) {
+        if (!localModelsEnabled() && !m_localModelsTransitioning) {
+            m_localModelsTransitioning = true;
+            emit localModelsStateChanged();
+            runLocalRuntimeAction(false);
+        } else if (localModelsEnabled() && provider() != QLatin1String("local")
+                   && !m_localModelsTransitioning) {
             m_localModelsTransitioning = true;
             emit localModelsStateChanged();
             runLocalRuntimeAction(true);
@@ -823,8 +845,15 @@ void StarvisService::speak(const QString& text)
         return;
     }
 
+    const QString localEngine = cfg.value(QStringLiteral("localTtsEngine"),
+                                           QStringLiteral("piper"))
+                                    .toString().trimmed().toLower();
     QString ttsModel = cfg.value(QStringLiteral("ttsModel")).toString().trimmed();
-    if (ttsModel.isEmpty())
+    if (output == QLatin1String("local"))
+        ttsModel = localEngine == QLatin1String("chatterbox")
+            ? QStringLiteral("chatterbox-multilingual-v3")
+            : QStringLiteral("piper-fr");
+    else if (ttsModel.isEmpty())
         ttsModel = QStringLiteral("gpt-4o-mini-tts");
     QString voice = cfg.value(QStringLiteral("ttsVoice")).toString().trimmed();
     if (voice.isEmpty())
@@ -859,6 +888,14 @@ void StarvisService::speak(const QString& text)
     request.options.insert(QStringLiteral("responseFormat"), extension);
     request.options.insert(QStringLiteral("timeoutMs"),
                            output == QLatin1String("local") ? 30000 : 60000);
+    if (output == QLatin1String("local") && localEngine == QLatin1String("chatterbox")) {
+        request.options.insert(QStringLiteral("language"), request.language);
+        request.options.insert(QStringLiteral("exaggeration"),
+                               cfg.value(QStringLiteral("ttsExaggeration"), 0.5));
+        request.options.insert(QStringLiteral("cfgWeight"),
+                               cfg.value(QStringLiteral("ttsCfgWeight"), 0.5));
+        request.options.insert(QStringLiteral("timeoutMs"), 120000);
+    }
     const QString instructions = cfg.value(QStringLiteral("ttsInstructions")).toString();
     if (!instructions.isEmpty())
         request.options.insert(QStringLiteral("instructions"), instructions);

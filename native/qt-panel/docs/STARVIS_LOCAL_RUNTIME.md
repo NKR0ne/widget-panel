@@ -8,7 +8,18 @@ capability does not block readiness for the others.
 | Reasoning and tools | 1234 | llama.cpp | Qwen3-4B Q5_K_M | CUDA |
 | Speech recognition | 1235 | NeMo Speech OpenAI API | Parakeet-TDT-0.6B-v3 Q8 | CPU by default; Qwen ASR fallback |
 | Vision | 1236 | llama.cpp | Qwen3-VL-8B Instruct Q4_K_M | partial CUDA offload |
-| Speech synthesis | 1237 | FastAPI / Piper | Tom, Pierre, Jessica fr-FR medium | CPU |
+| Speech synthesis | 1237 | FastAPI / Chatterbox or Piper | Multilingual V3 or French Piper voices | CUDA or CPU |
+
+Local TTS assets are isolated from the other Python runtimes:
+
+- Chatterbox environment: `M:\LLModels\starvis-chatterbox-runtime`
+- Chatterbox V3 weights: `M:\LLModels\Chatterbox\model-v3`
+- Piper environment: `M:\LLModels\starvis-piper-runtime`
+
+`start-starvis-tts-runtime.ps1` selects the configured engine, validates the
+port owner before replacing it, and loads Chatterbox from the local weight
+directory without a startup download. Changing the engine in settings restarts
+the guarded local runtime automatically.
 
 Use the global local-model control in the QtPanel header to start or stop all
 four services. The implementation calls:
@@ -62,4 +73,12 @@ fallback's estimated steady-state voice turn is 5–8 seconds, compared with
 - Qwen3-VL is suitable for people, vehicles, scene state, and broad visual
   reasoning. Small text and license-plate OCR should use a dedicated OCR stage
   before treating the result as authoritative.
-- Piper prioritizes latency and reliability over expressive studio speech.
+- Chatterbox Multilingual V3 is the high-quality French/English engine. Piper
+  remains the low-latency CPU fallback and releases all TTS VRAM.
+- On the RTX 3080 reference machine, Chatterbox V3 loaded in about 18 seconds,
+  added roughly 3 GB of VRAM, and generated a 5.8-second French sample in about
+  20 seconds. It is therefore an opt-in quality mode; Piper remains the default
+  for interactive voice latency.
+- Starting QtPanel with local models disabled now enforces that state by
+  stopping recognized Starvis runtimes, including a previously loaded TTS
+  engine, so the GPU-release control survives restarts and external launches.

@@ -905,7 +905,7 @@ Item {
                     Text {
                         width: parent.width
                         visible: starvisRuntimeCard.parent.runtimeStatus.provider === "local"
-                        text: "Raisonnement Qwen3 4B · Vision Qwen3-VL 8B · ASR Qwen3 1.7B · TTS Piper CPU"
+                        text: "Raisonnement Qwen3 4B · Vision Qwen3-VL 8B · ASR Parakeet · TTS local sélectionnable"
                         color: Theme.textSecondary
                         font.pixelSize: 8
                         elide: Text.ElideRight
@@ -1102,7 +1102,9 @@ Item {
                 width: parent.width
                 text: {
                     const status = starvisRuntimeCard.parent.runtimeStatus
-                    const output = status.speechProvider === "local" ? "Piper local rapide"
+                    const output = status.speechProvider === "local"
+                                 ? (voiceSettings.localTtsEngine === "chatterbox"
+                                    ? "Chatterbox V3 local" : "Piper local rapide")
                                  : status.speechProvider === "openai" ? "OpenAI TTS"
                                  : status.speechProvider === "windows" ? "Windows SAPI hors ligne"
                                  : "aucune sortie vocale"
@@ -1130,10 +1132,17 @@ Item {
                     modal.starvisRevision
                     return modal.blobValue("wp-starvis-voice", "speechProvider", "local")
                 }
+                readonly property string localTtsEngine: {
+                    modal.starvisRevision
+                    return modal.blobValue("wp-starvis-voice", "localTtsEngine", "piper")
+                }
                 readonly property string selectedVoice: {
                     modal.starvisRevision
-                    const saved = modal.blobValue("wp-starvis-voice", "ttsVoice", "Tom")
-                    return ["Tom", "Pierre", "Jessica"].indexOf(saved) >= 0 ? saved : "Tom"
+                    const fallback = localTtsEngine === "chatterbox" ? "V3 Default" : "Tom"
+                    const saved = modal.blobValue("wp-starvis-voice", "ttsVoice", fallback)
+                    const allowed = localTtsEngine === "chatterbox"
+                                  ? ["V3 Default"] : ["Tom", "Pierre", "Jessica"]
+                    return allowed.indexOf(saved) >= 0 ? saved : fallback
                 }
 
                 Text { text: "CONVERSATION"; color: Theme.textSecondary; font.pixelSize: 8 }
@@ -1179,7 +1188,7 @@ Item {
                     spacing: 4
                     Repeater {
                         model: [
-                            { label: "Piper rapide", value: "local" },
+                            { label: "TTS local", value: "local" },
                             { label: "Windows", value: "windows" },
                             { label: "OpenAI", value: "openai" }
                         ]
@@ -1214,12 +1223,55 @@ Item {
                     width: parent.width
                     spacing: 7
                     visible: voiceSettings.speechProvider === "local"
-                    Text { text: "Voix Piper françaises"; color: Theme.textSecondary; font.pixelSize: 8 }
+                    Text { text: "MOTEUR LOCAL"; color: Theme.textSecondary; font.pixelSize: 8 }
+                    Row {
+                        width: parent.width
+                        spacing: 4
+                        Repeater {
+                            model: [
+                                { label: "Chatterbox V3", value: "chatterbox", voice: "V3 Default" },
+                                { label: "Piper rapide", value: "piper", voice: "Tom" }
+                            ]
+                            delegate: Rectangle {
+                                required property var modelData
+                                readonly property bool selected: voiceSettings.localTtsEngine === modelData.value
+                                width: (voiceSettings.width - 4) / 2
+                                height: 27; radius: 5
+                                color: selected ? Theme.activeFill
+                                                : engineMouse.containsMouse ? Theme.hover : "transparent"
+                                border.color: selected ? Theme.accent : Theme.cardStroke
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: parent.modelData.label
+                                    color: parent.selected ? Theme.textPrimary : Theme.textSecondary
+                                    font.pixelSize: 9
+                                    font.weight: parent.selected ? Font.DemiBold : Font.Normal
+                                }
+                                MouseArea {
+                                    id: engineMouse
+                                    anchors.fill: parent; hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        modal.setBlobValue("wp-starvis-voice", "localTtsEngine",
+                                                           parent.modelData.value)
+                                        modal.setBlobValue("wp-starvis-voice", "ttsVoice",
+                                                           parent.modelData.voice)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Text {
+                        text: voiceSettings.localTtsEngine === "chatterbox"
+                              ? "Voix multilingue haute qualité" : "Voix françaises à faible latence"
+                        color: Theme.textSecondary; font.pixelSize: 8
+                    }
                     Flow {
                         width: parent.width
                         spacing: 4
                         Repeater {
-                            model: ["Tom", "Pierre", "Jessica"]
+                            model: voiceSettings.localTtsEngine === "chatterbox"
+                                   ? ["V3 Default"] : ["Tom", "Pierre", "Jessica"]
                             delegate: Rectangle {
                                 required property string modelData
                                 readonly property bool selected: voiceSettings.selectedVoice === modelData
@@ -1266,7 +1318,7 @@ Item {
                             onClicked: Starvis.previewVoice(voiceSettings.selectedVoice)
                         }
                     }
-                    Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "ttsEndpoint"; item.fallback = "http://127.0.0.1:1237/v1"; item.placeholder = "API Piper locale" } }
+                    Loader { sourceComponent: blobField; onLoaded: { item.storeKey = "wp-starvis-voice"; item.field = "ttsEndpoint"; item.fallback = "http://127.0.0.1:1237/v1"; item.placeholder = "API TTS locale" } }
                 }
 
                 Column {

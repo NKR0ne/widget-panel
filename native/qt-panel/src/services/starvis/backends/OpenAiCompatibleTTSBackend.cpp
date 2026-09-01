@@ -85,6 +85,14 @@ BackendOperation* OpenAiCompatibleTTSBackend::synthesize(const TtsRequest& reque
         body.insert(QStringLiteral("instructions"), instructions);
     if (request.options.contains(QStringLiteral("speed")))
         body.insert(QStringLiteral("speed"), request.options.value(QStringLiteral("speed")).toDouble());
+    if (request.options.contains(QStringLiteral("language")))
+        body.insert(QStringLiteral("language"), request.options.value(QStringLiteral("language")).toString());
+    if (request.options.contains(QStringLiteral("exaggeration")))
+        body.insert(QStringLiteral("exaggeration"),
+                    request.options.value(QStringLiteral("exaggeration")).toDouble());
+    if (request.options.contains(QStringLiteral("cfgWeight")))
+        body.insert(QStringLiteral("cfg_weight"),
+                    request.options.value(QStringLiteral("cfgWeight")).toDouble());
 
     QNetworkRequest networkRequest{QUrl(speechUrl())};
     networkRequest.setHeader(QNetworkRequest::ContentTypeHeader,

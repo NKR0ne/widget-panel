@@ -402,6 +402,9 @@ private slots:
         request.voice = QStringLiteral("Tom");
         request.language = QStringLiteral("fr");
         request.stream = false;
+        request.options.insert(QStringLiteral("language"), QStringLiteral("fr"));
+        request.options.insert(QStringLiteral("exaggeration"), 0.6);
+        request.options.insert(QStringLiteral("cfgWeight"), 0.4);
         BackendOperation* operation = backend.synthesize(request, this);
         QSignalSpy finishedSpy(operation, &BackendOperation::succeeded);
 
@@ -419,6 +422,9 @@ private slots:
                  QStringLiteral("Bonjour Starvis"));
         QCOMPARE(body.value(QStringLiteral("response_format")).toString(),
                  QStringLiteral("wav"));
+        QCOMPARE(body.value(QStringLiteral("language")).toString(), QStringLiteral("fr"));
+        QCOMPARE(body.value(QStringLiteral("exaggeration")).toDouble(), 0.6);
+        QCOMPARE(body.value(QStringLiteral("cfg_weight")).toDouble(), 0.4);
     }
 
     void openAiCompatibleTtsCancelsTransport()

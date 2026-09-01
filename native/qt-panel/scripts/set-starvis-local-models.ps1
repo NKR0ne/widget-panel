@@ -32,15 +32,19 @@ function Get-ListeningProcess {
 }
 
 function Stop-StarvisPythonRuntime {
-    param([int]$Port, [string]$ScriptName)
+    param([int]$Port, [string[]]$ScriptNames)
     $process = Get-ListeningProcess -Port $Port
     if ($null -eq $process) {
         return
     }
     $command = [string]$process.CommandLine
     $legacyAsr = $Port -eq $asrPort -and $command -like '*starvis-voice-runtime.py*'
+    $expectedScript = $false
+    foreach ($scriptName in $ScriptNames) {
+        $expectedScript = $expectedScript -or $command -like "*$scriptName*"
+    }
     if ($process.Name -notmatch '^python(?:w)?\.exe$' `
-            -or ($command -notlike "*$ScriptName*" -and !$legacyAsr)) {
+            -or (!$expectedScript -and !$legacyAsr)) {
         throw "Port $Port is owned by a process that is not the expected Starvis runtime."
     }
     Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
@@ -126,13 +130,16 @@ if ($Action -eq 'enable') {
     Write-Output $(if ($Profile -eq 'all') {
         'Starvis reasoning, vision, ASR, and TTS runtimes started.'
     } else {
-        'Starvis hybrid runtime started: local vision and Piper; reasoning and ASR released.'
+        'Starvis hybrid runtime started: local vision and TTS; reasoning and ASR released.'
     })
     exit 0
 }
 
 Stop-StarvisAsrRuntime
-Stop-StarvisPythonRuntime -Port $ttsPort -ScriptName 'starvis-fast-tts-runtime.py'
+Stop-StarvisPythonRuntime -Port $ttsPort -ScriptNames @(
+    'starvis-fast-tts-runtime.py',
+    'starvis-chatterbox-tts-runtime.py'
+)
 if (Test-Path -LiteralPath $lms) {
     $previousErrorAction = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
