@@ -47,15 +47,18 @@ DirectCameraClient::DirectCameraClient(SettingsStore* settings, SecretVault* vau
 {
     m_player.setVideoSink(&m_decodeSink);
     QPlaybackOptions options;
-    options.setPlaybackIntent(QPlaybackOptions::PlaybackIntent::LowLatencyStreaming);
-    options.setNetworkTimeout(std::chrono::seconds(12));
+    // Camera integrity matters more than shaving a fraction of a second from
+    // live latency. Qt's low-latency intent reduces FFmpeg buffering and can
+    // expose damaged H.264 frames when RTSP packets arrive late or reordered.
+    options.setPlaybackIntent(QPlaybackOptions::PlaybackIntent::Playback);
+    options.setNetworkTimeout(std::chrono::seconds(20));
     m_player.setPlaybackOptions(options);
 
     m_firstFrameTimer.setSingleShot(true);
-    m_firstFrameTimer.setInterval(15000);
+    m_firstFrameTimer.setInterval(25000);
     connect(&m_firstFrameTimer, &QTimer::timeout, this, [this] {
         if (m_attemptActive && !m_receivedFrame)
-            fail(QStringLiteral("No video frame arrived within 15 seconds."));
+            fail(QStringLiteral("No video frame arrived within 25 seconds."));
     });
 
     m_staleFrameTimer.setInterval(5000);
@@ -64,6 +67,14 @@ DirectCameraClient::DirectCameraClient(SettingsStore* settings, SecretVault* vau
             return;
         if (QDateTime::currentMSecsSinceEpoch() - m_lastFrameAtMs > 15000)
             fail(QStringLiteral("The camera stream stopped delivering frames."));
+    });
+
+    m_reconnectTimer.setSingleShot(true);
+    connect(&m_reconnectTimer, &QTimer::timeout, this, [this] {
+        if (!m_attemptActive && configured() && verified()) {
+            qInfo() << "[camera-direct] retrying verified stream after transport failure";
+            start();
+        }
     });
 
     connect(&m_decodeSink, &QVideoSink::videoFrameChanged,
@@ -102,7 +113,8 @@ DirectCameraClient::DirectCameraClient(SettingsStore* settings, SecretVault* vau
         m_status = QStringLiteral("ready");
 
     qInfo() << "[camera-direct] endpoint" << endpoint()
-            << "configured" << configured() << "verified" << verified();
+            << "configured" << configured() << "verified" << verified()
+            << "robust playback buffering enabled";
 }
 
 DirectCameraClient::~DirectCameraClient()
@@ -347,6 +359,7 @@ void DirectCameraClient::start()
 void DirectCameraClient::stop()
 {
     clearPlayer();
+    m_reconnectDelayMs = 2000;
     setStatus(configured() ? QStringLiteral("stopped") : QStringLiteral("setup"));
 }
 
@@ -436,6 +449,7 @@ void DirectCameraClient::handleFrame(const QVideoFrame& frame)
         return;
 
     m_receivedFrame = true;
+    m_reconnectDelayMs = 2000;
     m_firstFrameTimer.stop();
     m_staleFrameTimer.start();
     setVerificationState(true, 0);
@@ -455,7 +469,8 @@ void DirectCameraClient::handlePlayerError(QMediaPlayer::Error error, const QStr
     qWarning() << "[camera-direct] player error" << error
                << "backend detail" << sanitizedError(backendDetail);
     if (authenticationRejected) {
-        fail(QStringLiteral("Camera authentication rejected (401 Unauthorized). Verify the direct-camera username and password before rearming."));
+        fail(QStringLiteral("Camera authentication rejected (401 Unauthorized). Verify the direct-camera username and password before rearming."),
+             true);
         return;
     }
     if (!backendDetail.isEmpty()) {
@@ -489,10 +504,12 @@ void DirectCameraClient::setVerificationState(bool isVerified, int attempts)
     emit configurationChanged();
 }
 
-void DirectCameraClient::fail(const QString& detail)
+void DirectCameraClient::fail(const QString& detail, bool authenticationRejected)
 {
-    const bool failedBeforeFirstFrame = !m_receivedFrame;
-    if (failedBeforeFirstFrame && m_attemptWasVerified)
+    // A known-good configuration must not lose verification because the LAN
+    // dropped packets or FFmpeg's demuxer timed out. Only a positive auth
+    // rejection can consume the protected credential guard.
+    if (authenticationRejected && m_attemptWasVerified)
         setVerificationState(false, 1);
 
     const QString safeDetail = detail.isEmpty()
@@ -502,6 +519,14 @@ void DirectCameraClient::fail(const QString& detail)
     setStatus(blocked ? QStringLiteral("blocked") : QStringLiteral("error"), safeDetail);
     qWarning() << "[camera-direct] stream stopped:" << safeDetail
                << "remaining protected attempts" << authAttemptsRemaining();
+
+    if (!authenticationRejected && configured() && verified()) {
+        const int delayMs = m_reconnectDelayMs;
+        m_reconnectTimer.start(delayMs);
+        m_reconnectDelayMs = std::min(m_reconnectDelayMs * 2, 30000);
+        qInfo() << "[camera-direct] verified transport reconnect scheduled in"
+                << delayMs << "ms";
+    }
 }
 
 void DirectCameraClient::clearPlayer()
@@ -509,6 +534,7 @@ void DirectCameraClient::clearPlayer()
     m_attemptActive = false;
     m_firstFrameTimer.stop();
     m_staleFrameTimer.stop();
+    m_reconnectTimer.stop();
     m_ignorePlayerSignals = true;
     m_player.stop();
     m_player.setSource({});

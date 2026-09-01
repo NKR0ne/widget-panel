@@ -75,7 +75,7 @@ private:
     void handlePlayerError(QMediaPlayer::Error error, const QString& detail);
     void setStatus(const QString& status, const QString& error = {});
     void setVerificationState(bool verified, int attempts);
-    void fail(const QString& detail);
+    void fail(const QString& detail, bool authenticationRejected = false);
     void clearPlayer();
     QString sanitizedError(const QString& detail) const;
 
@@ -86,6 +86,7 @@ private:
     QPointer<QVideoSink> m_renderSink;
     QTimer m_firstFrameTimer;
     QTimer m_staleFrameTimer;
+    QTimer m_reconnectTimer;
     QByteArray m_configFingerprint;
     QString m_status = QStringLiteral("setup");
     QString m_error;
@@ -97,6 +98,7 @@ private:
     bool m_receivedFrame = false;
     bool m_ignorePlayerSignals = false;
     bool m_suppressConfigurationChange = false;
+    int m_reconnectDelayMs = 2000;
 };
 
 } // namespace qtpanel
