@@ -127,6 +127,31 @@ GlassCard {
                     onClicked: card.voice.muted = !card.voice.muted
                 }
             }
+
+            Rectangle {
+                width: stopSpeechLabel.implicitWidth + 18
+                height: 24
+                visible: Starvis.speaking || Starvis.speechPending
+                radius: 6
+                color: stopSpeechMouse.containsMouse
+                       ? Qt.rgba(0.97, 0.45, 0.45, 0.28)
+                       : Qt.rgba(0.97, 0.45, 0.45, 0.14)
+                border.color: Qt.rgba(0.97, 0.45, 0.45, 0.45)
+                Text {
+                    id: stopSpeechLabel
+                    anchors.centerIn: parent
+                    text: "Arrêter la voix"
+                    color: Theme.textPrimary
+                    font.pixelSize: 9
+                }
+                MouseArea {
+                    id: stopSpeechMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: Starvis.stopSpeaking()
+                }
+            }
         }
     }
 }

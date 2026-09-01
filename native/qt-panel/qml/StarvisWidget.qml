@@ -93,7 +93,10 @@ GlassCard {
     Connections {
         target: Starvis.voice
         function onTranscriptEvent(role, text) {
-            transcript.append({ role: role, text: text })
+            // Local/Groq assistant turns already arrive through replyReceived.
+            // Realtime OpenAI voice does not use the normal chat pipeline.
+            if (role !== "assistant" || Starvis.voice.provider === "openai")
+                transcript.append({ role: role, text: text })
         }
     }
 
@@ -325,7 +328,8 @@ GlassCard {
                             anchors.right: parent.right
                             anchors.top: parent.top
                             anchors.margins: 6
-                            text: Starvis.speaking ? "" : ""   // Stop / Volume
+                            text: Starvis.speaking || Starvis.speechPending
+                                  ? "" : ""   // Stop / Volume
                             font.family: "Segoe Fluent Icons"
                             font.pixelSize: 11
                             color: speakMouse.containsMouse ? Theme.accent : Theme.textSecondary
@@ -336,7 +340,12 @@ GlassCard {
                                 anchors.margins: -5
                                 hoverEnabled: true
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: Starvis.speak(bubble.text)
+                                onClicked: {
+                                    if (Starvis.speaking || Starvis.speechPending)
+                                        Starvis.stopSpeaking()
+                                    else
+                                        Starvis.speak(bubble.text)
+                                }
                             }
                         }
                     }
