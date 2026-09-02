@@ -764,7 +764,7 @@ void StarvisService::fallbackSpeech(const QString& text, const QString& error)
     if (allowWindowsFallback && m_speech && m_speech->available()) {
         if (m_speechIsAlert) {
             beginAlertPlayback();
-            if (!m_speech->sayAtVolume(text, 50))
+            if (!m_speech->sayAtVolume(text, 100))
                 finishAlertPlayback();
         } else {
             m_speech->say(text);
@@ -785,7 +785,7 @@ void StarvisService::beginAlertPlayback()
     if (m_alertAudioFocus)
         m_alertAudioFocus->engage();
     if (m_ttsAudio)
-        m_ttsAudio->setVolume(0.5f);
+        m_ttsAudio->setVolume(1.0f);
 }
 
 void StarvisService::finishAlertPlayback()
@@ -830,7 +830,7 @@ void StarvisService::playSpeechBytes(const QByteArray& bytes, const QString& ext
             m_ttsPending = false;
             emit speakingChanged();
             beginAlertPlayback();
-            if (m_speech->sayAtVolume(fallbackText, 50)) {
+            if (m_speech->sayAtVolume(fallbackText, 100)) {
                 qWarning() << "[starvis.audio] no Qt output; alert routed through Windows speech";
                 return;
             }
@@ -918,7 +918,7 @@ void StarvisService::playSpeechBytes(const QByteArray& bytes, const QString& ext
     const int playbackGeneration = ++m_ttsPlaybackGeneration;
     emit speakingChanged();
     beginAlertPlayback();
-    m_ttsAudio->setVolume(m_speechIsAlert ? 0.5f : 0.85f);
+    m_ttsAudio->setVolume(m_speechIsAlert ? 1.0f : 0.85f);
     m_ttsPlayer->play();
     qInfo() << "[starvis] TTS playback requested," << bytes.size() << "bytes on"
             << m_ttsAudio->device().description();
@@ -974,7 +974,7 @@ void StarvisService::speakInternal(const QString& text, bool alert)
         if (m_speech && m_speech->available()) {
             if (m_speechIsAlert) {
                 beginAlertPlayback();
-                if (!m_speech->sayAtVolume(clean, 50))
+                if (!m_speech->sayAtVolume(clean, 100))
                     finishAlertPlayback();
             } else {
                 m_speech->say(clean);

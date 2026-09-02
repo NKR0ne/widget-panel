@@ -4,12 +4,19 @@
 #include <QVector>
 
 #include <audiopolicy.h>
+#include <endpointvolume.h>
 #include <mmdeviceapi.h>
 #include <windows.h>
 
 #include <utility>
 
 namespace qtpanel {
+
+namespace {
+
+constexpr float kAlertMasterVolume = 0.5f;
+
+}
 
 struct WindowsAudioFocus::Private {
     struct Session {
@@ -18,6 +25,10 @@ struct WindowsAudioFocus::Private {
     };
 
     QVector<Session> sessions;
+    IAudioEndpointVolume* endpointVolume = nullptr;
+    float originalMasterVolume = 1.0f;
+    BOOL originalEndpointMuted = FALSE;
+    bool endpointStateCaptured = false;
     bool engaged = false;
     bool comInitialized = false;
 };
@@ -66,18 +77,49 @@ bool WindowsAudioFocus::engage()
             }
         }
     }
-    if (SUCCEEDED(hr))
-        hr = device->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
-                              reinterpret_cast<void**>(&sessionManager));
-    if (SUCCEEDED(hr))
-        hr = sessionManager->GetSessionEnumerator(&sessionEnumerator);
+
+    if (SUCCEEDED(hr) && device) {
+        const HRESULT endpointHr = device->Activate(
+            __uuidof(IAudioEndpointVolume), CLSCTX_ALL, nullptr,
+            reinterpret_cast<void**>(&d->endpointVolume));
+        if (SUCCEEDED(endpointHr) && d->endpointVolume
+            && SUCCEEDED(d->endpointVolume->GetMasterVolumeLevelScalar(
+                &d->originalMasterVolume))
+            && SUCCEEDED(d->endpointVolume->GetMute(&d->originalEndpointMuted))) {
+            d->endpointStateCaptured = true;
+            const HRESULT unmuteHr = d->endpointVolume->SetMute(FALSE, nullptr);
+            const HRESULT volumeHr = d->endpointVolume->SetMasterVolumeLevelScalar(
+                kAlertMasterVolume, nullptr);
+            if (SUCCEEDED(unmuteHr) && SUCCEEDED(volumeHr)) {
+                qInfo() << "[audio-focus] master volume"
+                        << qRound(d->originalMasterVolume * 100.0f) << "-> 50";
+            } else {
+                qWarning() << "[audio-focus] unable to apply alert master volume"
+                           << Qt::hex << unmuteHr << volumeHr;
+            }
+        } else {
+            qWarning() << "[audio-focus] unable to control master volume"
+                       << Qt::hex << endpointHr;
+            if (d->endpointVolume) {
+                d->endpointVolume->Release();
+                d->endpointVolume = nullptr;
+            }
+        }
+    }
+
+    HRESULT sessionHr = hr;
+    if (SUCCEEDED(sessionHr))
+        sessionHr = device->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
+                                     reinterpret_cast<void**>(&sessionManager));
+    if (SUCCEEDED(sessionHr))
+        sessionHr = sessionManager->GetSessionEnumerator(&sessionEnumerator);
 
     int count = 0;
-    if (SUCCEEDED(hr))
-        hr = sessionEnumerator->GetCount(&count);
+    if (SUCCEEDED(sessionHr))
+        sessionHr = sessionEnumerator->GetCount(&count);
 
     const DWORD ownPid = GetCurrentProcessId();
-    for (int i = 0; SUCCEEDED(hr) && i < count; ++i) {
+    for (int i = 0; SUCCEEDED(sessionHr) && i < count; ++i) {
         IAudioSessionControl* control = nullptr;
         if (FAILED(sessionEnumerator->GetSession(i, &control)) || !control)
             continue;
@@ -119,10 +161,10 @@ bool WindowsAudioFocus::engage()
     if (deviceEnumerator)
         deviceEnumerator->Release();
 
-    d->engaged = SUCCEEDED(hr);
+    d->engaged = d->endpointStateCaptured || SUCCEEDED(sessionHr);
     if (!d->engaged) {
         qWarning() << "[audio-focus] unable to enumerate Windows audio sessions"
-                   << Qt::hex << hr;
+                   << Qt::hex << sessionHr;
         restore();
         return false;
     }
@@ -132,6 +174,18 @@ bool WindowsAudioFocus::engage()
 
 void WindowsAudioFocus::restore()
 {
+    if (d->endpointVolume) {
+        if (d->endpointStateCaptured) {
+            d->endpointVolume->SetMasterVolumeLevelScalar(d->originalMasterVolume, nullptr);
+            d->endpointVolume->SetMute(d->originalEndpointMuted, nullptr);
+            qInfo() << "[audio-focus] restored master volume to"
+                    << qRound(d->originalMasterVolume * 100.0f);
+        }
+        d->endpointVolume->Release();
+        d->endpointVolume = nullptr;
+    }
+    d->endpointStateCaptured = false;
+
     for (const Private::Session& session : std::as_const(d->sessions)) {
         if (session.volume) {
             session.volume->SetMute(session.wasMuted, nullptr);

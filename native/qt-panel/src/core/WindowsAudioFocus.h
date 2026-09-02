@@ -6,8 +6,8 @@
 
 namespace qtpanel {
 
-// Temporarily mutes active Windows audio sessions outside this process and
-// restores each session's original mute state when the alert completes.
+// Temporarily mutes active Windows audio sessions outside this process, sets
+// the default output endpoint to the alert level, then restores every state.
 class WindowsAudioFocus final : public QObject {
     Q_OBJECT
 
