@@ -77,6 +77,7 @@ Item {
     }
     function setStarvisValue(key, value) {
         const cfg = starvisConfig()
+        const activeProvider = starvisProvider()
         cfg[key] = value
         if (key === "maxTokens")
             cfg[key] = Math.max(128, Math.min(8192, Number(value) || 1800))
@@ -85,9 +86,15 @@ Item {
         if (key === "baseUrl") {
             while (value.endsWith("/"))
                 value = value.slice(0, -1)
-            cfg[key] = value || "https://api.openai.com/v1"
+            const fallback = activeProvider === "local"
+                           ? "http://127.0.0.1:1234/v1"
+                           : "https://api.openai.com/v1"
+            if (activeProvider === "local" && isCloudStarvisUrl(value))
+                value = fallback
+            else if (activeProvider === "openai" && isLoopbackStarvisUrl(value))
+                value = fallback
+            cfg[key] = value || fallback
         }
-        const activeProvider = starvisProvider()
         if (key === "model" && activeProvider === "local")
             cfg.localModel = cfg[key]
         else if (key === "model" && activeProvider === "openai")
@@ -99,26 +106,69 @@ Item {
         Store.set("wp-starvis-config", JSON.stringify(cfg))
     }
     function starvisProvider() {
-        const selected = starvisValue("provider", "local").trim().toLowerCase()
-        return selected === "anthropic" || selected === "openai" ? selected : "local"
+        const cfg = starvisConfig()
+        const selected = String(cfg.provider || "").trim().toLowerCase()
+        if (selected === "local" || selected === "anthropic" || selected === "openai")
+            return selected
+        const endpoint = String(cfg.baseUrl || "").trim()
+        if (isLoopbackStarvisUrl(endpoint))
+            return "local"
+        if (isCloudStarvisUrl(endpoint))
+            return endpoint.toLowerCase().indexOf("anthropic") >= 0 ? "anthropic" : "openai"
+        return "local"
+    }
+    function isLoopbackStarvisUrl(value) {
+        const lower = String(value || "").trim().toLowerCase()
+        return lower.indexOf("http://127.0.0.1") === 0
+            || lower.indexOf("http://localhost") === 0
+            || lower.indexOf("http://[::1]") === 0
+            || lower.indexOf("https://127.0.0.1") === 0
+            || lower.indexOf("https://localhost") === 0
+            || lower.indexOf("https://[::1]") === 0
+    }
+    function isCloudStarvisUrl(value) {
+        const lower = String(value || "").trim().toLowerCase()
+        return lower.indexOf("api.openai.com") >= 0
+            || lower.indexOf(".openai.azure.com") >= 0
+            || lower.indexOf("api.anthropic.com") >= 0
+    }
+    function safeLocalStarvisUrl(cfg) {
+        const dedicated = String(cfg.localBaseUrl || "").trim()
+        if (dedicated !== "" && !isCloudStarvisUrl(dedicated))
+            return dedicated.replace(/\/+$/, "")
+        const generic = String(cfg.baseUrl || "").trim()
+        if (generic !== "" && !isCloudStarvisUrl(generic))
+            return generic.replace(/\/+$/, "")
+        return "http://127.0.0.1:1234/v1"
+    }
+    function safeOpenAiStarvisUrl(cfg) {
+        const dedicated = String(cfg.openaiBaseUrl || "").trim()
+        if (dedicated !== "" && !isLoopbackStarvisUrl(dedicated))
+            return dedicated.replace(/\/+$/, "")
+        const generic = String(cfg.baseUrl || "").trim()
+        if (generic !== "" && !isLoopbackStarvisUrl(generic))
+            return generic.replace(/\/+$/, "")
+        return "https://api.openai.com/v1"
     }
     function selectStarvisProvider(provider) {
         const cfg = starvisConfig()
         const current = starvisProvider()
         if (current === "local") {
             cfg.localModel = cfg.model || "starvis-local"
-            cfg.localBaseUrl = cfg.baseUrl || "http://127.0.0.1:1234/v1"
+            cfg.localBaseUrl = safeLocalStarvisUrl(cfg)
         } else if (current === "openai") {
             cfg.openaiModel = cfg.model || "gpt-5.6-terra"
-            cfg.openaiBaseUrl = cfg.baseUrl || "https://api.openai.com/v1"
+            cfg.openaiBaseUrl = safeOpenAiStarvisUrl(cfg)
         }
         cfg.provider = provider
         if (provider === "local") {
             cfg.model = cfg.localModel || "starvis-local"
-            cfg.baseUrl = cfg.localBaseUrl || "http://127.0.0.1:1234/v1"
+            cfg.localBaseUrl = safeLocalStarvisUrl(cfg)
+            cfg.baseUrl = cfg.localBaseUrl
         } else if (provider === "openai") {
             cfg.model = cfg.openaiModel || "gpt-5.6-terra"
-            cfg.baseUrl = cfg.openaiBaseUrl || "https://api.openai.com/v1"
+            cfg.openaiBaseUrl = safeOpenAiStarvisUrl(cfg)
+            cfg.baseUrl = cfg.openaiBaseUrl
         }
         Store.set("wp-starvis-config", JSON.stringify(cfg))
         starvisRevision++

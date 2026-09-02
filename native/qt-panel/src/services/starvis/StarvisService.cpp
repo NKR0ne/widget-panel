@@ -2,6 +2,7 @@
 
 #include "AnthropicClient.h"
 #include "ModelResolver.h"
+#include "ReasoningEndpoint.h"
 #include "backends/BackendOperation.h"
 #include "backends/OpenAiCompatibleLLMBackend.h"
 #include "backends/OpenAiCompatibleTTSBackend.h"
@@ -60,7 +61,6 @@ namespace {
 
 const char kDefaultModel[] = "gpt-5.6-terra";
 const char kDefaultFrontierModel[] = "gpt-5.6-sol";
-const char kDefaultBaseUrl[] = "https://api.openai.com/v1";
 
 // STARVIS_SYSTEM_PROMPT from main.js; native agent tools are appended per request.
 const char kSystemPrompt[] =
@@ -103,26 +103,6 @@ bool supportsTemperature(const QString& model)
              || model.startsWith(QLatin1String("o1"))
              || model.startsWith(QLatin1String("o3"))
              || model.startsWith(QLatin1String("o4")));
-}
-
-bool isLocalBaseUrl(const QString& value)
-{
-    const QUrl url(value);
-    const QString host = url.host().toLower();
-    return host == QLatin1String("127.0.0.1")
-        || host == QLatin1String("localhost")
-        || host == QLatin1String("::1");
-}
-
-// One place for the trailing-slash-tolerant base URL (was three copies).
-QString normalizedOpenAiBaseUrl(const QVariantMap& cfg)
-{
-    QString url = cfg.value(QStringLiteral("baseUrl")).toString().trimmed();
-    if (url.isEmpty())
-        url = QLatin1String(kDefaultBaseUrl);
-    while (url.endsWith(QLatin1Char('/')))
-        url.chop(1);
-    return url;
 }
 
 QImage scaledVisionImage(const QImage& source, int maxDim = 1280)
@@ -222,6 +202,17 @@ StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, Http
     connect(this, &StarvisService::replyDelta, m_state,
             [this](const QString& text) { m_state->noteTextDelta(text.size()); });
     connect(this, &StarvisService::usageUpdated, m_state, &StarvisState::setUsage);
+
+    const QVariantMap storedConfig = config();
+    const QVariantMap repairedConfig = ReasoningEndpoint::repairedConfig(storedConfig);
+    if (repairedConfig != storedConfig) {
+        m_settings->set(QStringLiteral("wp-starvis-config"),
+                        QString::fromUtf8(QJsonDocument::fromVariant(repairedConfig)
+                                              .toJson(QJsonDocument::Compact)));
+        m_settings->flush();
+        qInfo() << "[starvis] repaired reasoning endpoint separation for"
+                << repairedConfig.value(QStringLiteral("provider")).toString();
+    }
 
     loadActions();
     m_lastProvider = provider();
@@ -428,7 +419,9 @@ QString StarvisService::provider() const
     const QVariantMap cfg = config();
     const QString selected = cfg.value(QStringLiteral("provider")).toString().trimmed().toLower();
     if (selected == QLatin1String("local")
-        || (selected.isEmpty() && isLocalBaseUrl(normalizedOpenAiBaseUrl(cfg))))
+        || (selected.isEmpty()
+            && ReasoningEndpoint::isLoopback(
+                ReasoningEndpoint::normalized(cfg.value(QStringLiteral("baseUrl")).toString()))))
         return QStringLiteral("local");
     if (selected == QLatin1String("openai"))
         return QStringLiteral("openai");
@@ -453,6 +446,14 @@ QVariantMap StarvisService::providerStatus() const
     const double budget = qBound(1.0,
         config().value(QStringLiteral("monthlyBudgetUsd"), 25.0).toDouble(), 10000.0);
     const QString voiceProvider = m_voice ? m_voice->provider() : QStringLiteral("none");
+    QString endpoint;
+    if (local)
+        endpoint = ReasoningEndpoint::localBaseUrl(config());
+    else if (activeProvider == QLatin1String("openai"))
+        endpoint = ReasoningEndpoint::openAiBaseUrl(config());
+    else
+        endpoint = config().value(QStringLiteral("anthropicBaseUrl"),
+                                  QStringLiteral("https://api.anthropic.com")).toString();
     return {
         {QStringLiteral("provider"), activeProvider},
         {QStringLiteral("model"), model()},
@@ -470,7 +471,7 @@ QVariantMap StarvisService::providerStatus() const
         {QStringLiteral("realtimeVoiceReady"), m_voice && m_voice->available()},
         {QStringLiteral("contextWindow"), local ? 8192 : 0},
         {QStringLiteral("localMultimodal"), false},
-        {QStringLiteral("endpoint"), normalizedOpenAiBaseUrl(config())},
+        {QStringLiteral("endpoint"), endpoint},
         {QStringLiteral("visionEndpoint"), config().value(QStringLiteral("visionBaseUrl"),
              QStringLiteral("http://127.0.0.1:1236/v1"))},
         {QStringLiteral("asrEndpoint"), voiceConfig().value(QStringLiteral("asrEndpoint"),
@@ -1159,7 +1160,7 @@ void StarvisService::probeLocalBackend()
         });
     };
     if (provider() == QLatin1String("local"))
-        probeModel(normalizedOpenAiBaseUrl(cfg), model(), &m_localBackendReady);
+        probeModel(ReasoningEndpoint::localBaseUrl(cfg), model(), &m_localBackendReady);
     else
         setReady(m_localBackendReady, false);
     probeModel(cfg.value(QStringLiteral("visionBaseUrl"),
@@ -1316,7 +1317,7 @@ void StarvisService::runLocalSimpleTurn(const QJsonArray& messages, qint64 start
 {
     const QVariantMap cfg = config();
     const QString chatModel = model();
-    m_localLlmBackend->configure(normalizedOpenAiBaseUrl(cfg), chatModel);
+    m_localLlmBackend->configure(ReasoningEndpoint::localBaseUrl(cfg), chatModel);
 
     LlmRequest request;
     request.messages = messages;
@@ -1392,7 +1393,7 @@ void StarvisService::runLocalTurn(const QJsonArray& messages, bool allowAgent,
     const QVariantMap cfg = config();
     const QString chatModel = model();
     const int maxTokens = qBound(128, cfg.value(QStringLiteral("maxTokens"), 1800).toInt(), 8192);
-    const QString baseUrl = normalizedOpenAiBaseUrl(cfg);
+    const QString baseUrl = ReasoningEndpoint::localBaseUrl(cfg);
 
     QJsonObject body{{QStringLiteral("model"), chatModel},
                      {QStringLiteral("messages"), messages},
@@ -1627,7 +1628,7 @@ void StarvisService::post(const QString& userMessage, const QVariantList& histor
 
     const QVariantMap cfg = config();
     const QString chatModel = selectOpenAiModel(userMessage, allowInternet, allowAgent);
-    const QString baseUrl = normalizedOpenAiBaseUrl(cfg);
+    const QString baseUrl = ReasoningEndpoint::openAiBaseUrl(cfg);
     const int maxTokens = qBound(128, cfg.value(QStringLiteral("maxTokens"), 1800).toInt(), 8192);
 
     QJsonArray input;
@@ -2004,7 +2005,7 @@ void StarvisService::runAgentTurn(const QJsonArray& input, bool allowInternet, i
 {
     const QString key = apiKey();
     const QVariantMap cfg = config();
-    const QString baseUrl = normalizedOpenAiBaseUrl(cfg);
+    const QString baseUrl = ReasoningEndpoint::openAiBaseUrl(cfg);
 
     QJsonArray tools = agentTools();
     if (allowInternet)

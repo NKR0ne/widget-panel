@@ -12,6 +12,7 @@
 #include "shell/SystemTheme.h"
 #include "services/starvis/ModelResolver.h"
 #include "services/starvis/MotionDetector.h"
+#include "services/starvis/ReasoningEndpoint.h"
 #include "services/starvis/backends/BackendOperation.h"
 #include "services/starvis/backends/OpenAiCompatibleLLMBackend.h"
 #include "services/starvis/backends/OpenAiCompatibleVisionBackend.h"
@@ -538,6 +539,39 @@ private slots:
     }
 
     // ── Starvis: auto model resolution ───────────────────────────────────
+    void localReasoningEndpointRejectsCloudLeak()
+    {
+        const QVariantMap contaminated{
+            {QStringLiteral("provider"), QStringLiteral("local")},
+            {QStringLiteral("baseUrl"), QStringLiteral("https://api.openai.com/v1")},
+            {QStringLiteral("localBaseUrl"), QStringLiteral("https://api.openai.com/v1")},
+        };
+        QCOMPARE(ReasoningEndpoint::localBaseUrl(contaminated),
+                 QStringLiteral("http://127.0.0.1:1234/v1"));
+
+        const QVariantMap repaired = ReasoningEndpoint::repairedConfig(contaminated);
+        QCOMPARE(repaired.value(QStringLiteral("baseUrl")).toString(),
+                 QStringLiteral("http://127.0.0.1:1234/v1"));
+        QCOMPARE(repaired.value(QStringLiteral("localBaseUrl")).toString(),
+                 QStringLiteral("http://127.0.0.1:1234/v1"));
+        QCOMPARE(repaired.value(QStringLiteral("openaiBaseUrl")).toString(),
+                 QStringLiteral("https://api.openai.com/v1"));
+    }
+
+    void reasoningEndpointsRemainProviderSpecific()
+    {
+        const QVariantMap config{
+            {QStringLiteral("provider"), QStringLiteral("local")},
+            {QStringLiteral("baseUrl"), QStringLiteral("http://127.0.0.1:1234/v1/")},
+            {QStringLiteral("localBaseUrl"), QStringLiteral("http://192.168.1.50:1234/v1/")},
+            {QStringLiteral("openaiBaseUrl"), QStringLiteral("https://api.openai.com/v1/")},
+        };
+        QCOMPARE(ReasoningEndpoint::localBaseUrl(config),
+                 QStringLiteral("http://192.168.1.50:1234/v1"));
+        QCOMPARE(ReasoningEndpoint::openAiBaseUrl(config),
+                 QStringLiteral("https://api.openai.com/v1"));
+    }
+
     void modelResolverPrefersTopTier()
     {
         const QJsonArray models{

@@ -40,6 +40,7 @@ qt_add_executable(qt-panel WIN32
     src/services/pressreader/PressReaderService.h src/services/pressreader/PressReaderService.cpp
     src/services/reader/ReaderService.h src/services/reader/ReaderService.cpp
     src/services/starvis/StarvisService.h src/services/starvis/StarvisService.cpp
+    src/services/starvis/ReasoningEndpoint.h
     src/services/starvis/AnthropicClient.h src/services/starvis/AnthropicClient.cpp
     src/services/starvis/ModelResolver.h src/services/starvis/ModelResolver.cpp
     src/services/starvis/StarvisState.h src/services/starvis/StarvisState.cpp
