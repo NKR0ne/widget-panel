@@ -69,7 +69,7 @@ function Stop-StarvisAsrRuntime {
 }
 
 function Stop-StarvisLlamaRuntime {
-    param([int]$Port, [string]$Alias)
+    param([int]$Port, [string]$Alias, [switch]$IgnoreUnexpectedOwner)
     $process = Get-ListeningProcess -Port $Port
     if ($null -eq $process) {
         return
@@ -79,6 +79,9 @@ function Stop-StarvisLlamaRuntime {
             -and $command -like "*$Alias*") {
         Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
     } elseif ($null -ne $process) {
+        if ($IgnoreUnexpectedOwner) {
+            return
+        }
         throw "Port $Port is not owned by the expected Starvis llama runtime."
     }
 }
@@ -122,7 +125,8 @@ if ($Action -eq 'enable') {
             & $lms unload 'starvis-local' 2>$null
             $ErrorActionPreference = $previousErrorAction
         }
-        Stop-StarvisLlamaRuntime -Port $reasoningPort -Alias 'starvis-local'
+        Stop-StarvisLlamaRuntime -Port $reasoningPort -Alias 'starvis-local' `
+            -IgnoreUnexpectedOwner
     }
     & (Join-Path $scriptsRoot 'start-starvis-vision-runtime.ps1')
     & (Join-Path $scriptsRoot 'start-starvis-tts-runtime.ps1')
@@ -143,10 +147,11 @@ Stop-StarvisPythonRuntime -Port $ttsPort -ScriptNames @(
 if (Test-Path -LiteralPath $lms) {
     $previousErrorAction = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
+    # The LM Studio server is user-managed; release only the Starvis model.
     & $lms unload 'starvis-local' 2>$null
-    & $lms server stop 2>$null
     $ErrorActionPreference = $previousErrorAction
 }
-Stop-StarvisLlamaRuntime -Port $reasoningPort -Alias 'starvis-local'
+Stop-StarvisLlamaRuntime -Port $reasoningPort -Alias 'starvis-local' `
+    -IgnoreUnexpectedOwner
 Stop-StarvisLlamaRuntime -Port $visionPort -Alias 'starvis-vision'
 Write-Output 'Starvis local models stopped; GPU memory released.'
