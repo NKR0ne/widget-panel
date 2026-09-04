@@ -116,7 +116,6 @@ if ($Action -eq 'enable') {
     if ($Profile -eq 'all') {
         & (Join-Path $scriptsRoot 'start-starvis-runtime.ps1')
         & (Join-Path $scriptsRoot 'start-starvis-voice-runtime.ps1')
-        Wait-StarvisHealth -Port $asrPort -Capability 'asrReady'
     } else {
         Stop-StarvisAsrRuntime
         if (Test-Path -LiteralPath $lms) {
@@ -130,6 +129,9 @@ if ($Action -eq 'enable') {
     }
     & (Join-Path $scriptsRoot 'start-starvis-vision-runtime.ps1')
     & (Join-Path $scriptsRoot 'start-starvis-tts-runtime.ps1')
+    if ($Profile -eq 'all') {
+        Wait-StarvisHealth -Port $asrPort -Capability 'asrReady'
+    }
     Wait-StarvisHealth -Port $ttsPort -Capability 'ttsReady'
     Write-Output $(if ($Profile -eq 'all') {
         'Starvis reasoning, vision, ASR, and TTS runtimes started.'

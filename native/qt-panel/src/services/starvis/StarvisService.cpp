@@ -266,8 +266,10 @@ StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, Http
             m_localModelsTransitioning = true;
             emit localModelsStateChanged();
             runLocalRuntimeAction(false);
-        } else if (localModelsEnabled() && provider() != QLatin1String("local")
-                   && !m_localModelsTransitioning) {
+        } else if (localModelsEnabled() && !m_localModelsTransitioning) {
+            // Reconcile the complete local stack after login. LM Studio may
+            // restore the reasoning model while the independent vision and
+            // speech runtimes remain stopped.
             m_localModelsTransitioning = true;
             emit localModelsStateChanged();
             runLocalRuntimeAction(true);
