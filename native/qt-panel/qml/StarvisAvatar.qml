@@ -6,6 +6,9 @@ import QtPanel.Native
 // render path where Quick3D offscreen fails).
 Item {
     id: root
+    readonly property var visualMetrics: avatarLoader.item ? avatarLoader.item.visualMetrics : []
+    readonly property string activeRenderer: avatarLoader.status !== Loader.Ready ? "Chargement"
+        : avatarLoader.source.toString().indexOf("2D") >= 0 ? "2D" : "3D"
 
     property int storeRev: 0
     Connections {

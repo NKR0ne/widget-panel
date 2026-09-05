@@ -1,12 +1,10 @@
 import QtQuick
+import QtQuick.Controls
+import QtQuick.Layouts
 import QtPanel.Native
 
-// Full-stage Starvis workspace (mode id "starvis"): status rail | avatar
-// centerpiece | chat column. Voice controls and sentry tiles are appended by
-// their phases.
 Item {
     id: stage
-
     property int rev: 0
     Connections {
         target: Starvis
@@ -15,185 +13,296 @@ Item {
     }
     readonly property var status: { rev; return Starvis.providerStatus() }
     readonly property var starvisState: Starvis.state
+    readonly property bool compact: width < 900
+    readonly property string stateLabel: {
+        const names = { idle: "En veille", listening: "À l'écoute", reasoning: "Réflexion",
+                        speaking: "Parole", analyzing: "Analyse caméra", alert: "Alerte" }
+        return names[starvisState ? starvisState.state : "idle"] || "En veille"
+    }
+    property var metrics: []
+    function sampleVisuals() {
+        const s = starvisState
+        metrics = [
+            { label: "Débit estimé", value: (s ? s.tokensPerSec : 0).toFixed(1) + " tok/s",
+              effect: "Intensité de la réflexion" },
+            { label: "Niveau audio", value: Math.round((s ? s.audioLevel : 0) * 100) + " %",
+              effect: "Amplitude en écoute / parole" }
+        ].concat(avatar.visualMetrics).concat([
+            { label: "Animation", value: Panel.panelVisible && Motion.decorativeEnabled ? "Active" : "En pause",
+              effect: "Visibilité et préférence de mouvement" },
+            { label: "Alerte", value: s && s.state === "alert" ? "2 Hz" : "Inactive",
+              effect: "Clignotement prioritaire" }
+        ])
+    }
+    Timer {
+        interval: 250
+        running: stage.visible && Panel.panelVisible
+        repeat: true
+        triggeredOnStart: true
+        onTriggered: stage.sampleVisuals()
+    }
 
-    readonly property real railWidth: Math.max(230, width * 0.20)
-    readonly property real chatWidth: Math.max(320, width * 0.30)
-
-
-    // ── Left: status rail ────────────────────────────────────────────────────
     Flickable {
-        id: statusRail
-        width: stage.railWidth
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        contentHeight: railColumn.height
+        anchors.fill: parent
+        contentWidth: width
+        contentHeight: workspace.height
         clip: true
         boundsBehavior: Flickable.StopAtBounds
+        ScrollBar.vertical: ScrollBar { policy: stage.compact ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff }
 
-        Column {
-            id: railColumn
-            width: statusRail.width
-            spacing: 10
+        GridLayout {
+            id: workspace
+            width: parent.width
+            height: stage.compact ? implicitHeight : stage.height
+            columns: stage.compact ? 1 : 3
+            columnSpacing: 16
+            rowSpacing: 20
 
-            Text {
-                text: "Starvis"
-                color: Theme.textPrimary
-                font.pixelSize: Theme.fontSizeTitle
-                font.weight: Font.DemiBold
-            }
-
-            GlassCard {
-                width: parent.width
-                title: "Modèle"
-                implicitHeight: modelColumn.implicitHeight + 46
+            Flickable {
+                id: statusRail
+                Layout.preferredWidth: stage.compact ? workspace.width : Math.max(220, workspace.width * 0.23)
+                Layout.fillWidth: stage.compact
+                Layout.fillHeight: !stage.compact
+                Layout.preferredHeight: stage.compact ? Math.min(540, railColumn.height) : stage.height
+                Layout.minimumWidth: 0
+                contentHeight: railColumn.height
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
                 Column {
-                    id: modelColumn
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.top: parent.top
-                    anchors.margins: 12
-                    anchors.topMargin: 34
-                    spacing: 4
-
+                    id: railColumn
+                    width: Math.max(0, statusRail.width - 12)
+                    spacing: 12
+                    Text {
+                        text: "Starvis · État des services"
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        color: Theme.textPrimary
+                        font.pixelSize: 15
+                        font.weight: Font.DemiBold
+                    }
                     Text {
                         width: parent.width
-                        text: stage.status.model || "—"
+                        text: !stage.status.localModelsEnabled ? "Modèles locaux désactivés"
+                            : stage.status.localModelsTransitioning ? "Mise à jour des services…"
+                            : "Modèles et fournisseurs"
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
+                        wrapMode: Text.WordWrap
+                    }
+                    Repeater {
+                        model: stage.status.services || []
+                        delegate: Rectangle {
+                            id: serviceRow
+                            required property var modelData
+                            width: railColumn.width
+                            height: serviceBody.implicitHeight + 24
+                            radius: 6
+                            color: Theme.cardFill
+                            border.color: Theme.cardStroke
+                            Column {
+                                id: serviceBody
+                                x: 12; y: 12
+                                width: parent.width - 24
+                                spacing: 6
+                                RowLayout {
+                                    width: parent.width
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: serviceRow.modelData.label
+                                        color: Theme.textSecondary
+                                        font.pixelSize: 11
+                                        elide: Text.ElideRight
+                                    }
+                                    Rectangle {
+                                        Layout.preferredWidth: 6
+                                        Layout.preferredHeight: 6
+                                        radius: 3
+                                        color: serviceRow.modelData.ready ? "#55d9ae" : "#e9ae60"
+                                    }
+                                }
+                                Text {
+                                    width: parent.width
+                                    text: serviceRow.modelData.model || "Modèle non confirmé"
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 12
+                                    font.weight: Font.DemiBold
+                                    wrapMode: Text.WrapAnywhere
+                                }
+                                Text {
+                                    width: parent.width
+                                    text: serviceRow.modelData.backend + " · "
+                                        + (!serviceRow.modelData.ready ? "Indisponible"
+                                           : serviceRow.modelData.confirmed ? "Chargé · confirmé"
+                                           : "Configuré / prêt")
+                                    color: serviceRow.modelData.ready ? "#80dfc1" : "#efbc80"
+                                    font.pixelSize: 10
+                                    wrapMode: Text.WordWrap
+                                }
+                                Text {
+                                    width: parent.width
+                                    text: serviceRow.modelData.detail
+                                    color: Theme.textSecondary
+                                    font.pixelSize: 10
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                        }
+                    }
+                    Rectangle { width: parent.width; height: 1; color: Theme.cardStroke }
+                    Text {
+                        text: "Session"
                         color: Theme.textPrimary
                         font.pixelSize: 12
                         font.weight: Font.DemiBold
-                        elide: Text.ElideMiddle
                     }
                     Text {
                         width: parent.width
-                        text: stage.status.provider === "local"
-                              ? (!stage.status.localModelsEnabled
-                                 ? "Local · désactivé · GPU libéré"
-                                 : stage.status.ready ? "Local · CUDA · prêt"
-                                                      : "Local · démarrage…")
-                              : stage.status.provider === "anthropic"
-                                ? (stage.status.pinned ? "Anthropic · épinglé" : "Anthropic · auto")
-                                : "OpenAI"
-                        color: Theme.textSecondary
-                        font.pixelSize: 9
-                        wrapMode: Text.WordWrap
-                    }
-                    Text {
-                        width: parent.width
-                        visible: stage.starvisState !== null
                         text: {
                             const s = stage.starvisState
-                            if (!s || (s.sessionInputTokens === 0 && s.sessionOutputTokens === 0))
-                                return "Session: aucune utilisation"
-                            return "Session: " + s.sessionInputTokens + " in / "
-                                   + s.sessionOutputTokens + " out · ~$"
-                                   + s.sessionCostUsd.toFixed(3)
+                            return s ? s.sessionInputTokens + " jetons entrants · " + s.sessionOutputTokens
+                                + " sortants\nCoût estimé : $" + s.sessionCostUsd.toFixed(3) : "Aucune utilisation"
                         }
+                        wrapMode: Text.WordWrap
                         color: Theme.textSecondary
-                        font.pixelSize: 9
+                        font.pixelSize: 11
+                    }
+                    Text {
+                        width: parent.width
+                        text: "Présence : " + (Sentry.presence === "absent" ? "absente"
+                            : Sentry.presence === "present" ? "détectée" : "accueillie")
+                        color: Theme.textPrimary
+                        font.pixelSize: 11
                         wrapMode: Text.WordWrap
                     }
-                    Rectangle {
-                        width: refreshLabel.implicitWidth + 14
-                        height: 22
-                        radius: 6
-                        color: refreshMouse.containsMouse ? Theme.hover : Theme.cardFill
-                        border.color: Theme.cardStroke
-                        Text {
-                            id: refreshLabel
-                            anchors.centerIn: parent
-                            text: "Résoudre le modèle"
-                            color: Theme.textSecondary
-                            font.pixelSize: 9
-                        }
-                        MouseArea {
-                            id: refreshMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: Starvis.refreshModel()
-                        }
+                    Text {
+                        width: parent.width
+                        text: stage.starvisState && stage.starvisState.lastAlert.text
+                            ? stage.starvisState.lastAlert.text : "Aucune alerte récente"
+                        wrapMode: Text.WordWrap
+                        color: Theme.textSecondary
+                        font.pixelSize: 11
                     }
                 }
             }
 
-            // Voice card (functional once VoiceSession lands; see Loader below).
-            Loader {
-                id: voiceLoader
-                width: parent.width
-                source: "StarvisVoicePanel.qml"
-                onStatusChanged: if (status === Loader.Error) active = false
+            Flickable {
+                id: center
+                Layout.fillWidth: true
+                Layout.fillHeight: !stage.compact
+                Layout.minimumWidth: 0
+                Layout.preferredHeight: stage.compact ? 900 : stage.height
+                contentHeight: centerBody.height
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                Column {
+                    id: centerBody
+                    width: Math.max(0, center.width - 12)
+                    spacing: 10
+                    StarvisAvatar {
+                        id: avatar
+                        width: Math.min(parent.width, 330)
+                        height: width
+                        anchors.horizontalCenter: parent.horizontalCenter
+                    }
+                    Text {
+                        width: parent.width
+                        text: stage.stateLabel
+                        horizontalAlignment: Text.AlignHCenter
+                        color: Theme.textPrimary
+                        font.pixelSize: 15
+                        font.weight: Font.DemiBold
+                    }
+                    RowLayout {
+                        width: parent.width
+                        Text {
+                            Layout.fillWidth: true
+                            text: "Dynamique visuelle"
+                            color: Theme.textPrimary
+                            font.pixelSize: 12
+                        }
+                        Text {
+                            text: avatar.activeRenderer
+                            color: Theme.textSecondary
+                            font.pixelSize: 10
+                        }
+                    }
+                    Grid {
+                        id: metricGrid
+                        width: parent.width
+                        columns: width >= 440 ? 2 : 1
+                        columnSpacing: 18
+                        rowSpacing: 10
+                        Repeater {
+                          model: stage.metrics
+                          delegate: Column {
+                            required property var modelData
+                            width: (metricGrid.width - metricGrid.columnSpacing * (metricGrid.columns - 1)) / metricGrid.columns
+                            spacing: 2
+                            RowLayout {
+                                width: parent.width
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: modelData.label
+                                    color: Theme.textSecondary
+                                    font.pixelSize: 11
+                                    elide: Text.ElideRight
+                                }
+                                Text {
+                                    text: modelData.value
+                                    color: Theme.textPrimary
+                                    font.pixelSize: 11
+                                    font.family: "Consolas"
+                                }
+                            }
+                            Text {
+                                width: parent.width
+                                text: modelData.effect
+                                color: Theme.textSecondary
+                                font.pixelSize: 10
+                                wrapMode: Text.WordWrap
+                            }
+                          }
+                        }
+                    }
+                    StarvisVisionPanel {
+                        width: parent.width
+                        height: Math.max(300, center.height - y)
+                    }
+                }
             }
 
-            // Sentry events (functional once SentryService lands).
-            Loader {
-                id: sentryLoader
-                width: parent.width
-                source: "StarvisSentryPanel.qml"
-                onStatusChanged: if (status === Loader.Error) active = false
+            Flickable {
+                id: interactionRail
+                Layout.preferredWidth: stage.compact ? workspace.width : Math.max(340, workspace.width * 0.34)
+                Layout.fillWidth: stage.compact
+                Layout.fillHeight: !stage.compact
+                Layout.minimumWidth: 0
+                Layout.preferredHeight: stage.compact ? 700 : stage.height
+                contentHeight: interactionBody.height
+                clip: true
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+                Column {
+                    id: interactionBody
+                    width: Math.max(0, interactionRail.width - 12)
+                    spacing: 12
+                    Text {
+                        text: "Interaction"
+                        color: Theme.textPrimary
+                        font.pixelSize: 15
+                        font.weight: Font.DemiBold
+                    }
+                    StarvisVoicePanel { width: parent.width }
+                    StarvisWidget {
+                        width: parent.width
+                        transcriptMinimumHeight: 180
+                        transcriptMaximumHeight: Math.max(260, interactionRail.height * 0.45)
+                    }
+                    StarvisSentryPanel { width: parent.width }
+                }
             }
-        }
-    }
-
-    // ── Center: avatar above the Vision section ──────────────────────────────
-    Item {
-        id: centerColumn
-        anchors.left: statusRail.right
-        anchors.right: chatColumn.left
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        anchors.leftMargin: 12
-        anchors.rightMargin: 12
-
-        StarvisAvatar {
-            id: avatar
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: parent.top
-            width: Math.min(parent.width, visionSection.y) * 0.78
-            height: width
-        }
-
-        Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: avatar.bottom
-            anchors.topMargin: 2
-            text: {
-                const s = stage.starvisState ? stage.starvisState.state : "idle"
-                if (s === "reasoning") return "Réflexion en cours…"
-                if (s === "listening") return "À l'écoute"
-                if (s === "speaking") return "Parole"
-                if (s === "analyzing") return "Analyse caméra"
-                if (s === "alert") return "ALERTE"
-                return "En veille"
-            }
-            color: Theme.textSecondary
-            font.pixelSize: 11
-            font.letterSpacing: 2
-        }
-
-        // What Starvis sees, and what it did about it.
-        StarvisVisionPanel {
-            id: visionSection
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            height: Math.max(260, parent.height * 0.48)
-        }
-    }
-
-    // ── Right: chat (the compact card, full height) ──────────────────────────
-    Flickable {
-        id: chatColumn
-        width: stage.chatWidth
-        anchors.right: parent.right
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        contentHeight: chatCard.implicitHeight
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-
-        StarvisWidget {
-            id: chatCard
-            width: chatColumn.width
         }
     }
 }

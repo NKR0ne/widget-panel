@@ -231,6 +231,8 @@ private:
     bool m_localVisionReady = false;
     bool m_localAsrReady = false;
     bool m_localTtsReady = false;
+    QVariantMap m_runtimeModels;
+    int m_probeGeneration = 0;
     QMediaPlayer* m_ttsPlayer = nullptr;
     QAudioOutput* m_ttsAudio = nullptr;
     QString m_ttsPlaybackFallbackText;

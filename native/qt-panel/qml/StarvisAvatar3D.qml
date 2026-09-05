@@ -44,6 +44,13 @@ Item {
         return 0.18
     }
     readonly property real moodGlow: mood === "idle" ? 0.5 : 1.0
+    readonly property var visualMetrics: [
+        { label: "Amplitude", value: (material.uAmp / 40).toFixed(3), effect: "Déformation de la surface" },
+        { label: "Vitesse", value: material.uSpeed.toFixed(2), effect: "Ondulation et orbites" },
+        { label: "Lueur", value: material.uGlow.toFixed(2), effect: "Intensité du contour" },
+        { label: "Fréquence", value: material.uFreq.toFixed(1), effect: "Détail de la surface" },
+        { label: "Couleur", value: material.uColor.toString(), effect: "État prioritaire" }
+    ]
 
     Component.onCompleted: console.info("[starvis.avatar] 3d avatar loaded")
 
@@ -81,6 +88,7 @@ Item {
             opacity: 1
 
             materials: CustomMaterial {
+                id: material
                 shadingMode: CustomMaterial.Shaded
                 vertexShader: "effects/avatar.vert"
                 fragmentShader: "effects/avatar.frag"

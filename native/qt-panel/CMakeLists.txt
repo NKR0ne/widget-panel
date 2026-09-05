@@ -75,6 +75,15 @@ qt_add_executable(qt-panel WIN32
 set(WINAPPSDK_VENDOR ${CMAKE_CURRENT_SOURCE_DIR}/../winappsdk-runtime)
 set(WINRT_GENERATED ${CMAKE_CURRENT_BINARY_DIR}/winrt-generated)
 
+# Localized MSVC include scanning can miss this shared class layout dependency.
+set_property(SOURCE
+    src/main.cpp
+    src/services/starvis/StarvisService.cpp
+    src/services/starvis/SentryService.cpp
+    src/services/starvis/VoiceSession.cpp
+    src/services/diagnostics/DiagnosticsService.cpp
+    APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/services/starvis/StarvisService.h")
+
 target_include_directories(qt-panel PRIVATE src ${WINRT_GENERATED} ${WINAPPSDK_VENDOR}/include)
 target_compile_options(qt-panel PRIVATE /utf-8 /W4)
 target_link_libraries(qt-panel PRIVATE

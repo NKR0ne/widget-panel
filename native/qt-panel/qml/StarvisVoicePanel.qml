@@ -45,7 +45,7 @@ GlassCard {
                            + "m " + (card.voice.elapsedSec % 60) + "s"
                 }
                 return "Prêt — " + (card.voice.provider === "local"
-                       ? "Qwen local, privé et sans frais."
+                       ? "session vocale locale."
                        : card.voice.provider === "groq"
                          ? "Groq pour la transcription."
                          : "dialogue OpenAI temps réel.")

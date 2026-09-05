@@ -70,6 +70,10 @@ def health():
         "status": "ok" if ready else "setup", "asrReady": False,
         "ttsReady": ready, "provider": "Piper", "model": "fr_FR-medium",
         "device": "cpu", "voices": list(VOICE_SPECS),
+        "voiceModels": [
+            {"id": name, "model": path.name, "loaded": path in runtime.models}
+            for name, (path, _) in VOICE_SPECS.items()
+        ],
     }
 
 

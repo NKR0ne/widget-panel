@@ -9,6 +9,8 @@ GlassCard {
     id: card
     title: "Starvis"
     implicitHeight: body.implicitHeight + 24
+    property real transcriptMinimumHeight: 60
+    property real transcriptMaximumHeight: 260
 
     ListModel { id: transcript }
     property bool agentMode: false
@@ -284,7 +286,8 @@ GlassCard {
         // Transcript
         Flickable {
             width: parent.width
-            height: Math.min(260, Math.max(60, transcriptColumn.height))
+            height: Math.min(card.transcriptMaximumHeight, Math.max(card.transcriptMinimumHeight, transcriptColumn.height))
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
             contentHeight: transcriptColumn.height
             clip: true
             boundsBehavior: Flickable.StopAtBounds
@@ -292,7 +295,7 @@ GlassCard {
 
             Column {
                 id: transcriptColumn
-                width: parent.width
+                width: Math.max(0, parent.width - 12)
                 spacing: 6
 
                 Repeater {

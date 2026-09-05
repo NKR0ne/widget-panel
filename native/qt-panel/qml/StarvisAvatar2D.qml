@@ -31,6 +31,12 @@ Item {
     Component.onCompleted: console.info("[starvis.avatar] 2d avatar loaded")
 
     readonly property real base: Math.min(width, height) * 0.42
+    readonly property var visualMetrics: [
+        { label: "Activité", value: root.activity.toFixed(2), effect: "Expansion du halo" },
+        { label: "Pulsation", value: (2 * Math.max(350, 1600 - root.activity * 1100) / 1000).toFixed(2) + " s", effect: "Période de respiration" },
+        { label: "Échelle", value: pulse.scaleFactor.toFixed(3), effect: "Taille instantanée du noyau" },
+        { label: "Couleur", value: root.moodColor.toString(), effect: "État prioritaire" }
+    ]
 
     Behavior on activity { NumberAnimation { duration: 400 } }
 
