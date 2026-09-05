@@ -13,7 +13,13 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $root    = Split-Path $PSScriptRoot -Parent
-$src     = Join-Path $root 'build\nmake-release'
+$releaseSrc = Join-Path $root 'build\release'
+$legacySrc  = Join-Path $root 'build\nmake-release'
+$src     = if (Test-Path (Join-Path $releaseSrc 'qt-panel.exe')) {
+    $releaseSrc
+} else {
+    $legacySrc
+}
 $dest    = Join-Path $env:LOCALAPPDATA 'WidgetPanel'
 $exe     = Join-Path $dest 'qt-panel.exe'
 $startMenu = Join-Path ([Environment]::GetFolderPath('Programs')) 'Widget Panel.lnk'
