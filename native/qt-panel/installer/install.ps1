@@ -43,6 +43,16 @@ Get-Process -Name 'qt-panel' -ErrorAction SilentlyContinue | Stop-Process -Force
 New-Item -ItemType Directory -Force $dest | Out-Null
 Copy-Item -Recurse -Force (Join-Path $src '*') $dest
 
+# Runtime control is resolved relative to the installed executable. Keep the
+# lightweight Starvis launchers beside deployed builds so login startup can
+# reconcile local reasoning, vision, ASR, and TTS without the source tree.
+$scriptsSource = Join-Path $root 'scripts'
+$scriptsDestination = Join-Path $dest 'scripts'
+New-Item -ItemType Directory -Force $scriptsDestination | Out-Null
+Get-ChildItem -LiteralPath $scriptsSource -File |
+    Where-Object { $_.Extension -in @('.ps1', '.py') } |
+    Copy-Item -Destination $scriptsDestination -Force
+
 # Start-Menu shortcut.
 $shell = New-Object -ComObject WScript.Shell
 $lnk = $shell.CreateShortcut($startMenu)
