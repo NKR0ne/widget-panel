@@ -5,10 +5,12 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QJsonDocument>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QRegularExpression>
 #include <QUrl>
 #include <QUrlQuery>
+#include <QUuid>
 
 namespace qtpanel {
 
@@ -105,11 +107,9 @@ LiveFeedService::LiveFeedService(HttpClient* http, QObject* parent)
          QStringLiteral("https://www.bloomberg.com/live/us-btv"),
          QStringLiteral("QB5BNdBFujE")},
         {QStringLiteral("live-radio-canada"), QStringLiteral("Radio-Canada.info"),
-         Transport::MediaValidation,
-         QStringLiteral("https://services.radio-canada.ca/media/validation/v2?"
-                        "appCode=medianetlive&idMedia=36479&tech=hls&output=json"),
-         QStringLiteral("https://ici.radio-canada.ca/info/videos/1-14028569/rdi-en-direct"),
-         QStringLiteral("oacvZh5Rmcg")},
+         Transport::PlutoCatalog,
+         QStringLiteral("62cc1e1e0d0611000837dc1d"),
+         QStringLiteral("https://pluto.tv/ca/live-tv/62cc1e1e0d0611000837dc1d"), {}},
         {QStringLiteral("live-france24"), QStringLiteral("France 24"),
          Transport::DirectHls,
          QStringLiteral("https://live.france24.com/hls/live/2037218/"
@@ -303,13 +303,16 @@ void LiveFeedService::resolve(const QString& feedId, bool force)
         return;
     }
 
-    if (feed->transport == Transport::MediaValidation) {
+    if (feed->transport == Transport::MediaValidation || feed->transport == Transport::PlutoCatalog) {
         if (!force && m_pending.contains(feedId))
             return;
         const quint64 generation = m_resolveGenerations.value(feedId) + 1;
         m_resolveGenerations.insert(feedId, generation);
         m_pending.insert(feedId);
-        resolveMediaValidation(*feed, generation);
+        if (feed->transport == Transport::PlutoCatalog)
+            resolvePluto(*feed, generation);
+        else
+            resolveMediaValidation(*feed, generation);
         return;
     }
 
@@ -331,6 +334,66 @@ void LiveFeedService::resolve(const QString& feedId, bool force)
     m_resolveGenerations.insert(feedId, generation);
     m_pending.insert(feedId);
     resolveYouTube(*feed, generation);
+}
+
+QString LiveFeedService::plutoManifestUrl(const QJsonDocument& catalog, const QString& channelId)
+{
+    for (const auto& value : catalog.array()) {
+        const auto channel = value.toObject();
+        if (channel.value(QStringLiteral("_id")).toString() != channelId)
+            continue;
+        const auto sources = channel.value(QStringLiteral("stitched")).toObject()
+                                 .value(QStringLiteral("urls")).toArray();
+        for (const auto& source : sources) {
+            const auto entry = source.toObject();
+            if (entry.value(QStringLiteral("type")).toString() != QLatin1String("hls"))
+                continue;
+            QUrl url(entry.value(QStringLiteral("url")).toString());
+            if (!url.isValid() || url.scheme() != QLatin1String("https")
+                || !url.host().endsWith(QLatin1String(".pluto.tv")))
+                continue;
+            // The public catalog leaves required client/session values empty.
+            // Keep provider geographic/ad parameters intact; create a fresh session.
+            QUrlQuery query(url);
+            const QString session = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            const QList<QPair<QString, QString>> client{
+                {QStringLiteral("deviceModel"), QStringLiteral("QtPanel")},
+                {QStringLiteral("deviceMake"), QStringLiteral("Windows")},
+                {QStringLiteral("appName"), QStringLiteral("qt-panel")},
+                {QStringLiteral("appVersion"), QStringLiteral("1.0")},
+                {QStringLiteral("deviceType"), QStringLiteral("web")},
+                {QStringLiteral("deviceVersion"), QStringLiteral("11")},
+                {QStringLiteral("deviceId"), session}, {QStringLiteral("sid"), session}
+            };
+            for (const auto& item : client) {
+                query.removeAllQueryItems(item.first);
+                query.addQueryItem(item.first, item.second);
+            }
+            url.setQuery(query);
+            return url.toString();
+        }
+    }
+    return {};
+}
+
+void LiveFeedService::resolvePluto(const Feed& feed, quint64 generation)
+{
+    const QString feedId = feed.id;
+    const QString channelId = feed.source;
+    m_http->getJson(QUrl(QStringLiteral("https://api.pluto.tv/v2/channels")), this,
+        [this, feedId, channelId, generation](const QJsonDocument& doc, const QString& error) {
+            if (m_resolveGenerations.value(feedId) != generation)
+                return;
+            m_pending.remove(feedId);
+            const QString manifest = error.isEmpty() ? plutoManifestUrl(doc, channelId) : QString();
+            if (manifest.isEmpty()) {
+                emit feedFailed(feedId, error.isEmpty()
+                    ? QStringLiteral("Radio-Canada Info indisponible dans le catalogue Pluto TV") : error);
+                return;
+            }
+            qInfo() << "[live]" << feedId << "Pluto manifest host:" << QUrl(manifest).host();
+            emit feedResolved(feedId, manifest);
+        });
 }
 
 void LiveFeedService::resolveMediaValidation(const Feed& feed, quint64 generation)

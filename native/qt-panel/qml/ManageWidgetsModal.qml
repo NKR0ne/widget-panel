@@ -37,7 +37,7 @@ Item {
         { id: "camera-direct", label: "Camera directe", note: "RTSP natif", color: "#60a5fa", modes: ["base"] },
         { id: "euronews", label: "Euronews", note: "En direct | HLS", color: "#1e4ba8", modes: ["live"] },
         { id: "live-bloomberg", label: "Bloomberg Live", note: "En direct | YouTube", color: "#2f6dff", modes: ["live"] },
-        { id: "live-radio-canada", label: "Radio-Canada.info", note: "En direct | YouTube", color: "#2f6dff", modes: ["live"] },
+        { id: "live-radio-canada", label: "Radio-Canada.info", note: "En direct | Pluto TV", color: "#2f6dff", modes: ["live"] },
         { id: "live-france24", label: "France 24", note: "En direct | YouTube", color: "#2f6dff", modes: ["live"] },
         { id: "live-cbc-news", label: "CBC News", note: "En direct | YouTube", color: "#2f6dff", modes: ["live"] },
         { id: "live-lcn", label: "LCN", note: "En direct | HLS", color: "#2f6dff", modes: ["live"] },

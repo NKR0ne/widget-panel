@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QHash>
+#include <QJsonDocument>
 #include <QObject>
 #include <QSet>
 #include <QStringList>
@@ -22,6 +23,8 @@ class LiveFeedService : public QObject {
 
 public:
     explicit LiveFeedService(HttpClient* http, QObject* parent = nullptr);
+
+    static QString plutoManifestUrl(const QJsonDocument& catalog, const QString& channelId);
 
     QString audioFeedId() const { return m_audioFeedId; }
     bool detailOpen() const { return m_detailOpen; }
@@ -59,6 +62,7 @@ private:
         DirectHls,
         MediaValidation,
         YouTube,
+        PlutoCatalog,
     };
 
     struct Feed {
@@ -76,6 +80,7 @@ private:
 
     const Feed* feedById(const QString& feedId) const;
     void resolveMediaValidation(const Feed& feed, quint64 generation);
+    void resolvePluto(const Feed& feed, quint64 generation);
     void resolveYouTube(const Feed& feed, quint64 generation);
 
     HttpClient* m_http = nullptr;

@@ -21,6 +21,7 @@
 #include "services/starvis/backends/StreamingTextSegmenter.h"
 
 #include <QJsonArray>
+#include <QUrlQuery>
 #include <QJsonObject>
 #include <QLocalServer>
 #include <QLocalSocket>
@@ -1058,6 +1059,40 @@ private slots:
         live.requestAudio(QString());
         QCOMPARE(live.audioFeedId(), QString());
         QCOMPARE(changed.count(), 2);
+    }
+
+    void livePlutoCatalogUsesMatchingHlsAndFreshSession()
+    {
+        const auto catalog = QJsonDocument::fromJson(
+            "[{\"_id\":\"other\",\"stitched\":{\"urls\":[{\"type\":\"hls\",\"url\":\"https://stream.pluto.tv/wrong.m3u8\"}]}},"
+            "{\"_id\":\"info\",\"stitched\":{\"urls\":["
+            "{\"type\":\"dash\",\"url\":\"https://stream.pluto.tv/dash.mpd\"},"
+            "{\"type\":\"hls\",\"url\":\"https://stream.pluto.tv/master.m3u8?deviceModel=&sid=&marketingRegion=CA&deviceDNT=0\"}]}}]");
+        const QUrl first(LiveFeedService::plutoManifestUrl(catalog, QStringLiteral("info")));
+        const QUrl second(LiveFeedService::plutoManifestUrl(catalog, QStringLiteral("info")));
+        QCOMPARE(first.path(), QStringLiteral("/master.m3u8"));
+        const QUrlQuery query(first);
+        QCOMPARE(query.queryItemValue(QStringLiteral("deviceModel")), QStringLiteral("QtPanel"));
+        QCOMPARE(query.queryItemValue(QStringLiteral("marketingRegion")), QStringLiteral("CA"));
+        QCOMPARE(query.queryItemValue(QStringLiteral("deviceDNT")), QStringLiteral("0"));
+        QVERIFY(!query.queryItemValue(QStringLiteral("sid")).isEmpty());
+        QVERIFY(first != second);
+        QVERIFY(LiveFeedService::plutoManifestUrl(catalog, QStringLiteral("missing")).isEmpty());
+        QVERIFY(LiveFeedService::plutoManifestUrl(QJsonDocument{}, QStringLiteral("info")).isEmpty());
+        const auto invalid = QJsonDocument::fromJson(
+            "[{\"_id\":\"info\",\"stitched\":{\"urls\":["
+            "{\"type\":\"hls\",\"url\":\"file:///C:/video.m3u8\"},"
+            "{\"type\":\"hls\",\"url\":\"https://pluto.tv.evil.example/master.m3u8\"}]}}]");
+        QVERIFY(LiveFeedService::plutoManifestUrl(invalid, QStringLiteral("info")).isEmpty());
+    }
+
+    void liveRadioCanadaUsesContinuousChannel()
+    {
+        HttpClient http;
+        LiveFeedService live(&http);
+        QVERIFY(live.webUrl(QStringLiteral("live-radio-canada")).startsWith(QStringLiteral("https://pluto.tv/")));
+        QVERIFY(live.videoId(QStringLiteral("live-radio-canada")).isEmpty());
+        QCOMPARE(live.sourceLabel(QStringLiteral("live-radio-canada")), QStringLiteral("HLS"));
     }
 
     void liveShutdownIsIdempotent()
