@@ -1061,29 +1061,41 @@ private slots:
         QCOMPARE(changed.count(), 2);
     }
 
-    void livePlutoCatalogUsesMatchingHlsAndFreshSession()
+    void livePlutoRequiresIssuedSessionForCorrectChannel()
     {
-        const auto catalog = QJsonDocument::fromJson(
-            "[{\"_id\":\"other\",\"stitched\":{\"urls\":[{\"type\":\"hls\",\"url\":\"https://stream.pluto.tv/wrong.m3u8\"}]}},"
-            "{\"_id\":\"info\",\"stitched\":{\"urls\":["
-            "{\"type\":\"dash\",\"url\":\"https://stream.pluto.tv/dash.mpd\"},"
-            "{\"type\":\"hls\",\"url\":\"https://stream.pluto.tv/master.m3u8?deviceModel=&sid=&marketingRegion=CA&deviceDNT=0\"}]}}]");
-        const QUrl first(LiveFeedService::plutoManifestUrl(catalog, QStringLiteral("info")));
-        const QUrl second(LiveFeedService::plutoManifestUrl(catalog, QStringLiteral("info")));
-        QCOMPARE(first.path(), QStringLiteral("/master.m3u8"));
-        const QUrlQuery query(first);
-        QCOMPARE(query.queryItemValue(QStringLiteral("deviceModel")), QStringLiteral("QtPanel"));
+        const auto session = QJsonDocument::fromJson(
+            "{\"servers\":{\"stitcher\":\"https://stream.pluto.tv\"},"
+            "\"sessionToken\":\"issued-token\",\"stitcherParams\":\"sid=issued-session&marketingRegion=CA&deviceDNT=0\","
+            "\"EPG\":[{\"id\":\"other\",\"stitched\":{\"path\":\"/stitch/hls/channel/other/master.m3u8\"}},"
+            "{\"id\":\"info\",\"stitched\":{\"path\":\"/stitch/hls/channel/info/master.m3u8\"}}]}");
+        const QUrl manifest(LiveFeedService::plutoManifestUrl(session, QStringLiteral("info")));
+        QCOMPARE(manifest.path(), QStringLiteral("/v2/stitch/hls/channel/info/master.m3u8"));
+        const QUrlQuery query(manifest);
+        QCOMPARE(query.queryItemValue(QStringLiteral("jwt")), QStringLiteral("issued-token"));
+        QCOMPARE(query.queryItemValue(QStringLiteral("sid")), QStringLiteral("issued-session"));
+        QCOMPARE(query.queryItemValue(QStringLiteral("masterJWTPassthrough")), QStringLiteral("true"));
         QCOMPARE(query.queryItemValue(QStringLiteral("marketingRegion")), QStringLiteral("CA"));
         QCOMPARE(query.queryItemValue(QStringLiteral("deviceDNT")), QStringLiteral("0"));
-        QVERIFY(!query.queryItemValue(QStringLiteral("sid")).isEmpty());
-        QVERIFY(first != second);
-        QVERIFY(LiveFeedService::plutoManifestUrl(catalog, QStringLiteral("missing")).isEmpty());
+        QVERIFY(LiveFeedService::plutoManifestUrl(session, QStringLiteral("missing")).isEmpty());
         QVERIFY(LiveFeedService::plutoManifestUrl(QJsonDocument{}, QStringLiteral("info")).isEmpty());
-        const auto invalid = QJsonDocument::fromJson(
-            "[{\"_id\":\"info\",\"stitched\":{\"urls\":["
-            "{\"type\":\"hls\",\"url\":\"file:///C:/video.m3u8\"},"
-            "{\"type\":\"hls\",\"url\":\"https://pluto.tv.evil.example/master.m3u8\"}]}}]");
-        QVERIFY(LiveFeedService::plutoManifestUrl(invalid, QStringLiteral("info")).isEmpty());
+
+        auto invalid = session.object();
+        invalid.remove(QStringLiteral("sessionToken"));
+        QVERIFY(LiveFeedService::plutoManifestUrl(QJsonDocument(invalid), QStringLiteral("info")).isEmpty());
+        invalid = session.object();
+        invalid.insert(QStringLiteral("servers"), QJsonObject{{"stitcher", "https://pluto.tv.evil.example"}});
+        QVERIFY(LiveFeedService::plutoManifestUrl(QJsonDocument(invalid), QStringLiteral("info")).isEmpty());
+
+        auto alternate = session.object();
+        const auto paths = QJsonDocument::fromJson(
+            "[{\"id\":\"info\",\"stitched\":{\"paths\":["
+            "{\"type\":\"hls\",\"path\":\"/stitch/hls/channel/other/master.m3u8\"},"
+            "{\"type\":\"dash\",\"path\":\"/stitch/dash/channel/info/master.mpd\"},"
+            "{\"type\":\"hls\",\"path\":\"/stitch/hls/channel/info/master.m3u8\"}]}}]").array();
+        alternate.insert(QStringLiteral("EPG"), paths);
+        QCOMPARE(LiveFeedService::plutoManifestUrl(QJsonDocument(alternate), QStringLiteral("info")), manifest.toString());
+        alternate.insert(QStringLiteral("EPG"), QJsonArray{paths.first().toObject().value(QStringLiteral("stitched"))});
+        QVERIFY(LiveFeedService::plutoManifestUrl(QJsonDocument(alternate), QStringLiteral("info")).isEmpty());
     }
 
     void liveRadioCanadaUsesContinuousChannel()

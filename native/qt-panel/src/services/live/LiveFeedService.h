@@ -24,7 +24,7 @@ class LiveFeedService : public QObject {
 public:
     explicit LiveFeedService(HttpClient* http, QObject* parent = nullptr);
 
-    static QString plutoManifestUrl(const QJsonDocument& catalog, const QString& channelId);
+    static QString plutoManifestUrl(const QJsonDocument& session, const QString& channelId);
 
     QString audioFeedId() const { return m_audioFeedId; }
     bool detailOpen() const { return m_detailOpen; }
@@ -62,14 +62,14 @@ private:
         DirectHls,
         MediaValidation,
         YouTube,
-        PlutoCatalog,
+        PlutoSession,
     };
 
     struct Feed {
         QString id;
         QString title;
         Transport transport = Transport::DirectHls;
-        QString source; // Direct HLS URL, Media Validation URL, or YouTube id
+        QString source; // HLS/validation URL, YouTube id, or Pluto channel id
         QString webUrl;
         QString youtubeFallbackId;
     };

@@ -107,7 +107,7 @@ LiveFeedService::LiveFeedService(HttpClient* http, QObject* parent)
          QStringLiteral("https://www.bloomberg.com/live/us-btv"),
          QStringLiteral("QB5BNdBFujE")},
         {QStringLiteral("live-radio-canada"), QStringLiteral("Radio-Canada.info"),
-         Transport::PlutoCatalog,
+         Transport::PlutoSession,
          QStringLiteral("62cc1e1e0d0611000837dc1d"),
          QStringLiteral("https://pluto.tv/ca/live-tv/62cc1e1e0d0611000837dc1d"), {}},
         {QStringLiteral("live-france24"), QStringLiteral("France 24"),
@@ -303,13 +303,13 @@ void LiveFeedService::resolve(const QString& feedId, bool force)
         return;
     }
 
-    if (feed->transport == Transport::MediaValidation || feed->transport == Transport::PlutoCatalog) {
+    if (feed->transport == Transport::MediaValidation || feed->transport == Transport::PlutoSession) {
         if (!force && m_pending.contains(feedId))
             return;
         const quint64 generation = m_resolveGenerations.value(feedId) + 1;
         m_resolveGenerations.insert(feedId, generation);
         m_pending.insert(feedId);
-        if (feed->transport == Transport::PlutoCatalog)
+        if (feed->transport == Transport::PlutoSession)
             resolvePluto(*feed, generation);
         else
             resolveMediaValidation(*feed, generation);
@@ -336,39 +336,46 @@ void LiveFeedService::resolve(const QString& feedId, bool force)
     resolveYouTube(*feed, generation);
 }
 
-QString LiveFeedService::plutoManifestUrl(const QJsonDocument& catalog, const QString& channelId)
+QString LiveFeedService::plutoManifestUrl(const QJsonDocument& session, const QString& channelId)
 {
-    for (const auto& value : catalog.array()) {
+    const auto root = session.object();
+    const QString token = root.value(QStringLiteral("sessionToken")).toString();
+    const QString params = root.value(QStringLiteral("stitcherParams")).toString();
+    const QUrl server(root.value(QStringLiteral("servers")).toObject()
+                          .value(QStringLiteral("stitcher")).toString());
+    if (token.isEmpty() || params.isEmpty() || !server.isValid()
+        || server.scheme() != QLatin1String("https")
+        || !server.host().endsWith(QLatin1String(".pluto.tv")))
+        return {};
+    for (const auto& value : root.value(QStringLiteral("EPG")).toArray()) {
         const auto channel = value.toObject();
-        if (channel.value(QStringLiteral("_id")).toString() != channelId)
+        if (channel.value(QStringLiteral("id")).toString() != channelId)
             continue;
-        const auto sources = channel.value(QStringLiteral("stitched")).toObject()
-                                 .value(QStringLiteral("urls")).toArray();
+        const auto stitched = channel.value(QStringLiteral("stitched")).toObject();
+        auto sources = stitched.value(QStringLiteral("paths")).toArray();
+        if (sources.isEmpty())
+            sources.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("hls")},
+                {QStringLiteral("path"), stitched.value(QStringLiteral("path"))}});
         for (const auto& source : sources) {
             const auto entry = source.toObject();
             if (entry.value(QStringLiteral("type")).toString() != QLatin1String("hls"))
                 continue;
-            QUrl url(entry.value(QStringLiteral("url")).toString());
-            if (!url.isValid() || url.scheme() != QLatin1String("https")
-                || !url.host().endsWith(QLatin1String(".pluto.tv")))
+            const QString path = entry.value(QStringLiteral("path")).toString();
+            if (!path.startsWith(QStringLiteral("/stitch/hls/channel/") + channelId + QLatin1Char('/'))
+                || path.contains(QStringLiteral("..")) || path.contains(QLatin1Char('?'))
+                || path.contains(QLatin1Char('#')) || !path.endsWith(QLatin1String(".m3u8")))
                 continue;
-            // The public catalog leaves required client/session values empty.
-            // Keep provider geographic/ad parameters intact; create a fresh session.
-            QUrlQuery query(url);
-            const QString session = QUuid::createUuid().toString(QUuid::WithoutBraces);
-            const QList<QPair<QString, QString>> client{
-                {QStringLiteral("deviceModel"), QStringLiteral("QtPanel")},
-                {QStringLiteral("deviceMake"), QStringLiteral("Windows")},
-                {QStringLiteral("appName"), QStringLiteral("qt-panel")},
-                {QStringLiteral("appVersion"), QStringLiteral("1.0")},
-                {QStringLiteral("deviceType"), QStringLiteral("web")},
-                {QStringLiteral("deviceVersion"), QStringLiteral("11")},
-                {QStringLiteral("deviceId"), session}, {QStringLiteral("sid"), session}
-            };
-            for (const auto& item : client) {
-                query.removeAllQueryItems(item.first);
-                query.addQueryItem(item.first, item.second);
-            }
+            QUrl url(server);
+            url.setPath(QStringLiteral("/v2") + path);
+            // Unsigned catalog URLs can play a service notice with HTTP 200.
+            // Use the issued session and forward its JWT to child playlists.
+            QUrlQuery query(params);
+            query.removeAllQueryItems(QStringLiteral("jwt"));
+            query.addQueryItem(QStringLiteral("jwt"), token);
+            query.removeAllQueryItems(QStringLiteral("includeExtendedEvents"));
+            query.addQueryItem(QStringLiteral("includeExtendedEvents"), QStringLiteral("true"));
+            query.removeAllQueryItems(QStringLiteral("masterJWTPassthrough"));
+            query.addQueryItem(QStringLiteral("masterJWTPassthrough"), QStringLiteral("true"));
             url.setQuery(query);
             return url.toString();
         }
@@ -380,7 +387,19 @@ void LiveFeedService::resolvePluto(const Feed& feed, quint64 generation)
 {
     const QString feedId = feed.id;
     const QString channelId = feed.source;
-    m_http->getJson(QUrl(QStringLiteral("https://api.pluto.tv/v2/channels")), this,
+    QUrl bootstrap(QStringLiteral("https://boot.pluto.tv/v4/start"));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("appName"), QStringLiteral("web"));
+    query.addQueryItem(QStringLiteral("appVersion"), QStringLiteral("1.0.0"));
+    query.addQueryItem(QStringLiteral("deviceVersion"), QStringLiteral("131.0"));
+    query.addQueryItem(QStringLiteral("deviceModel"), QStringLiteral("web"));
+    query.addQueryItem(QStringLiteral("deviceMake"), QStringLiteral("chrome"));
+    query.addQueryItem(QStringLiteral("deviceType"), QStringLiteral("web"));
+    query.addQueryItem(QStringLiteral("clientID"), QUuid::createUuid().toString(QUuid::WithoutBraces));
+    query.addQueryItem(QStringLiteral("clientModelNumber"), QStringLiteral("1.0.0"));
+    query.addQueryItem(QStringLiteral("channelSlug"), channelId);
+    bootstrap.setQuery(query);
+    m_http->getJson(bootstrap, this,
         [this, feedId, channelId, generation](const QJsonDocument& doc, const QString& error) {
             if (m_resolveGenerations.value(feedId) != generation)
                 return;
@@ -388,10 +407,10 @@ void LiveFeedService::resolvePluto(const Feed& feed, quint64 generation)
             const QString manifest = error.isEmpty() ? plutoManifestUrl(doc, channelId) : QString();
             if (manifest.isEmpty()) {
                 emit feedFailed(feedId, error.isEmpty()
-                    ? QStringLiteral("Radio-Canada Info indisponible dans le catalogue Pluto TV") : error);
+                    ? QStringLiteral("Session de lecture Radio-Canada Info indisponible") : error);
                 return;
             }
-            qInfo() << "[live]" << feedId << "Pluto manifest host:" << QUrl(manifest).host();
+            qInfo() << "[live]" << feedId << "Pluto session manifest host:" << QUrl(manifest).host();
             emit feedResolved(feedId, manifest);
         });
 }
