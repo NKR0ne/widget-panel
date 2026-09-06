@@ -39,3 +39,22 @@ set_tests_properties(qt-panel-tests PROPERTIES
     ENVIRONMENT_MODIFICATION
         "PATH=path_list_prepend:$<TARGET_FILE_DIR:Qt6::Network>"
 )
+
+# Exercise the actual reading QML with deterministic service and surface doubles.
+# Staging avoids starting network/camera/model services in a UI regression test.
+find_program(QML_TEST_RUNNER qmltestrunner HINTS "${Qt6_DIR}/../../../bin" REQUIRED)
+set(NEWS_QML_TEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/news-qml")
+file(GLOB_RECURSE NEWS_QML_MOCKS CONFIGURE_DEPENDS
+    RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}/qml/mocks" "qml/mocks/*")
+foreach(mock_file IN LISTS NEWS_QML_MOCKS)
+    configure_file("qml/mocks/${mock_file}" "${NEWS_QML_TEST_DIR}/${mock_file}" COPYONLY)
+endforeach()
+foreach(qml_file NewsStage.qml ArticleReaderPane.qml)
+    configure_file("${CMAKE_SOURCE_DIR}/qml/${qml_file}"
+                   "${NEWS_QML_TEST_DIR}/${qml_file}" COPYONLY)
+endforeach()
+configure_file(qml/tst_NewsReading.qml "${NEWS_QML_TEST_DIR}/tst_NewsReading.qml" COPYONLY)
+add_test(NAME news-reading-qml COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+    -File "${CMAKE_CURRENT_SOURCE_DIR}/run-news-qml-tests.ps1"
+    -Runner "${QML_TEST_RUNNER}" -InputDir "${NEWS_QML_TEST_DIR}")
+set_tests_properties(news-reading-qml PROPERTIES TIMEOUT 35)

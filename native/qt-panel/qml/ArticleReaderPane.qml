@@ -5,6 +5,8 @@ GlassCard {
     id: pane
 
     signal closeRequested()
+    // A transitioning host can retain the article until its exit completes.
+    property bool closeOnRequest: true
 
     property bool active: false
     property int storeRevision: 0
@@ -14,6 +16,8 @@ GlassCard {
             Number(Store.get("wp-news-reader-scale", 1.0)) || 1.0))
     }
     readonly property var paragraphs: Reader.article.paragraphs || []
+    readonly property string articleUrl: Reader.article.url || ""
+    onArticleUrlChanged: articleScroll.contentY = 0
     readonly property var images: {
         const result = []
         const hero = Reader.article.image || ""
@@ -158,13 +162,15 @@ GlassCard {
         }
         IconButton {
             id: closeButton
+            objectName: "articleReaderClose"
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             enabled: pane.active
             glyph: "\uE8BB"
             tooltip: "Fermer l'article"
             onClicked: {
-                Reader.close()
+                if (pane.closeOnRequest)
+                    Reader.close()
                 pane.closeRequested()
             }
         }

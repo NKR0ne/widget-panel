@@ -1,0 +1,5 @@
+module QtPanel.Native
+singleton Store 1.0 Store.qml
+singleton News 1.0 News.qml
+singleton Reader 1.0 Reader.qml
+singleton PressReader 1.0 PressReader.qml

@@ -2,13 +2,30 @@ import QtQuick
 import QtQuick.Dialogs
 import QtPanel.Native
 
-// News workspace mapped onto the shared configured column span: one category
-// column, then balanced article-list and reader spans using all remaining room.
+// The same article list moves from the overview into the focused category rail.
 Item {
     id: stage
+    clip: true
 
     property string selectedCategory: ""
     property string selectedUrl: ""
+    property string focusedCategory: ""
+    property bool categoryFocused: false
+    property real overviewScrollY: 0
+    property real focusProgress: categoryFocused ? 1 : 0
+    readonly property bool focusTransitioning: focusAnimation.running
+    Behavior on focusProgress {
+        NumberAnimation {
+            id: focusAnimation
+            duration: Motion.panelMs
+            easing.type: Easing.BezierSpline
+            easing.bezierCurve: Motion.emphasized
+        }
+    }
+    onFocusProgressChanged: {
+        if (!categoryFocused && focusProgress === 0)
+            finishClosingArticle()
+    }
     property int newsRevision: 0
     property int storeRevision: 0
     property int carouselCascadeCursor: 0
@@ -60,10 +77,8 @@ Item {
     readonly property int carouselColumns: Math.max(1, Math.min(6,
         configuredColumns + (3 - cardSize)))
     readonly property real cardSizeScale: 1.0 + (cardSize - 3) * 0.18
-    // ── Lecture: three panes (categories | articles | reader) ────────────────
-    // Fixed at three columns; the panes themselves are dragged instead, stored
-    // as fractions of the stage width so they survive a panel resize.
-    readonly property real minPaneFraction: 0.14
+    // Independent rail widths for overview and focus; retain the legacy setting.
+    readonly property real minPaneFraction: 0.22
     // >= 0 while a splitter is being dragged, otherwise the stored value shows.
     property real railFractionDraft: -1
     property real listFractionDraft: -1
@@ -86,19 +101,21 @@ Item {
     readonly property real listFraction: listFractionDraft >= 0
                                          ? listFractionDraft : storedReaderSplit.list
     readonly property real railWidth: Math.max(1, Math.round(width * railFraction))
-    readonly property real dividerPosition: Math.round(
-        width * (railFraction + listFraction))
+    readonly property real focusedRailWidth: Math.max(1, Math.round(width * listFraction))
+    readonly property real dividerPosition: railWidth
+        + (focusedRailWidth - railWidth) * focusProgress
     readonly property var selectedItems: {
         newsRevision
         const result = []
         const seen = {}
-        const labels = selectedCategory !== "" ? [selectedCategory] : News.categories
+        const category = focusedCategory || selectedCategory
+        const labels = category !== "" ? [category] : News.categories
         for (const label of labels) {
             for (const item of News.itemsFor(label)) {
                 const key = item.link || (label + "|" + (item.title || ""))
                 if (!seen[key]) {
                     seen[key] = true
-                    result.push(item)
+                    result.push(Object.assign({}, item, { readingCategory: label }))
                 }
             }
         }
@@ -106,50 +123,83 @@ Item {
     }
 
     function selectCategory(label) {
+        resetReading()
         selectedCategory = label || ""
-        selectedUrl = ""
-        Reader.close()
+        articleList.positionViewAtBeginning()
     }
 
     function uiPx(value) {
         return Math.max(8, Math.round(Number(value) * uiScale))
     }
 
-    function openArticle(item) {
+    function openArticle(item, category) {
         if (!item || !item.link)
             return
+        const label = category || item.readingCategory || focusedCategory
+            || selectedCategory || News.categories.find(function(label) {
+                return News.itemsFor(label).some(function(candidate) {
+                    return candidate.link === item.link
+                })
+            })
+        if (!label)
+            return
+        if (focusedCategory === "")
+            overviewScrollY = articleList.contentY - articleList.originY
+        focusedCategory = label
         selectedUrl = String(item.link)
+        categoryFocused = true
+        articleListPane.forceActiveFocus()
         Reader.open(item.link, item.title || "", item.source || "",
                     item.image || "", item.description || "")
+        Qt.callLater(function() {
+            if (!stage.categoryFocused)
+                return
+            const index = stage.selectedItems.findIndex(function(candidate) {
+                return String(candidate.link) === stage.selectedUrl
+            })
+            if (index >= 0)
+                articleList.positionViewAtIndex(index, ListView.Contain)
+        })
     }
 
-    // Entering Lire should never land on an empty pane: show the first article
-    // of the first category. Waits for the first fetch when items aren't in yet.
-    function openFirstArticle() {
-        if (viewMode !== "reader" || pressReaderSelected)
-            return
-        const labels = News.categories
-        if (labels.length === 0)
-            return
-        const label = selectedCategory !== "" ? selectedCategory : labels[0]
-        const items = News.itemsFor(label)
-        if (items.length === 0)
-            return
-        if (selectedCategory === "")
-            selectedCategory = label
-        openArticle(items[0])
+    function closeArticle() {
+        categoryFocused = false
+        if (focusProgress === 0)
+            finishClosingArticle()
     }
 
-    // Keeps every Lecture pane usable: each at least minPaneFraction wide, the
-    // reader pane included (it takes whatever the other two leave).
+    function finishClosingArticle() {
+        if (focusedCategory === "")
+            return
+        focusedCategory = ""
+        selectedUrl = ""
+        Reader.close()
+        Qt.callLater(function() {
+            if (stage.focusedCategory !== "")
+                return
+            articleList.contentY = articleList.originY + Math.max(0,
+                Math.min(stage.overviewScrollY,
+                         articleList.contentHeight - articleList.height))
+        })
+    }
+
+    function resetReading() {
+        categoryFocused = false
+        focusedCategory = ""
+        selectedUrl = ""
+        overviewScrollY = 0
+        Reader.close()
+    }
+
+    // Each layout has one splitter. Neither rail may crowd out its content pane.
     function clampReaderSplit(rail, list) {
         const minimum = minPaneFraction
         const safeRail = Number(rail) || (1 / 3)
         const safeList = Number(list) || (1 / 3)
         const clampedRail = Math.max(minimum,
-            Math.min(1 - 2 * minimum, safeRail))
+            Math.min(0.5, safeRail))
         const clampedList = Math.max(minimum,
-            Math.min(1 - minimum - clampedRail, safeList))
+            Math.min(0.5, safeList))
         return { rail: clampedRail, list: clampedList }
     }
 
@@ -184,19 +234,16 @@ Item {
                 PressReader.openCatalog()
             return
         }
-        selectedUrl = ""
-        Reader.close()
+        resetReading()
         Store.set("wp-news-view-mode", next)
-        if (next === "reader")
-            openFirstArticle()
-        else if (next === "pressreader" && !PressReader.open)
+        if (next === "pressreader" && !PressReader.open)
             PressReader.openCatalog()
     }
 
     function openCarouselArticle(label, item) {
         setViewMode("reader")
         selectedCategory = label || ""
-        openArticle(item)
+        openArticle(item, label)
     }
 
     function carouselCardIsVisible(card) {
@@ -276,12 +323,12 @@ Item {
             if (stage.selectedCategory !== ""
                     && News.categories.indexOf(stage.selectedCategory) < 0)
                 stage.selectCategory("")
+            if (stage.focusedCategory !== ""
+                    && News.categories.indexOf(stage.focusedCategory) < 0)
+                stage.closeArticle()
         }
         function onCategoryUpdated() {
             stage.newsRevision++
-            // First articles may land after the stage loaded; open one then.
-            if (stage.selectedUrl === "")
-                stage.openFirstArticle()
         }
     }
 
@@ -312,13 +359,14 @@ Item {
 
     Component.onDestruction: Reader.close()
     Component.onCompleted: {
-        openFirstArticle()
         if (viewMode === "carousel")
             restartCarouselCascade()
         else if (viewMode === "pressreader" && !PressReader.open)
             PressReader.openCatalog()
     }
     onViewModeChanged: {
+        if (viewMode !== "reader")
+            resetReading()
         if (viewMode === "carousel")
             restartCarouselCascade()
         else
@@ -347,8 +395,10 @@ Item {
 
     Item {
         id: categoryRail
-        visible: stage.viewMode === "reader"
-        anchors.left: parent.left
+        visible: stage.viewMode === "reader" && stage.focusProgress < 1
+        enabled: !stage.categoryFocused && !stage.focusTransitioning
+        opacity: 1 - stage.focusProgress
+        x: -width * stage.focusProgress
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: stage.railWidth
@@ -615,13 +665,21 @@ Item {
 
     Item {
         id: articleListPane
+        objectName: "newsReadingArticles"
         visible: stage.viewMode === "reader"
-        anchors.left: categoryRail.right
-        anchors.leftMargin: 8
-        anchors.right: centerDivider.left
-        anchors.rightMargin: 8
+        x: (stage.railWidth + 8) * (1 - stage.focusProgress)
+        width: (stage.width - stage.railWidth - 8) * (1 - stage.focusProgress)
+            + (stage.focusedRailWidth - 8) * stage.focusProgress
         anchors.top: parent.top
         anchors.bottom: parent.bottom
+        Keys.onEscapePressed: function(event) {
+            if (stage.categoryFocused) {
+                stage.closeArticle()
+                event.accepted = true
+            } else {
+                event.accepted = false
+            }
+        }
 
         Row {
             id: listHeader
@@ -629,11 +687,23 @@ Item {
             height: 30
             spacing: 8
 
+            IconButton {
+                id: backToNews
+                objectName: "newsReadingBack"
+                visible: stage.focusedCategory !== ""
+                opacity: stage.focusProgress
+                enabled: stage.categoryFocused
+                buttonSize: 26
+                glyph: "\uE72B"
+                tooltip: "Retour aux nouvelles"
+                onClicked: stage.closeArticle()
+            }
             Text {
-                width: Math.max(60, parent.width - listCount.width - 8)
+                width: Math.max(0, parent.width - listCount.width - 8
+                    - (backToNews.visible ? backToNews.width + 8 : 0))
                 anchors.verticalCenter: parent.verticalCenter
-                text: stage.selectedCategory !== "" ? stage.selectedCategory
-                    : "Toutes les nouvelles"
+                text: stage.focusedCategory || (stage.selectedCategory !== "" ? stage.selectedCategory
+                    : "Toutes les nouvelles")
                 color: Theme.textPrimary
                 font.pixelSize: stage.uiPx(Theme.fontSizeTitle)
                 font.weight: Font.DemiBold
@@ -650,12 +720,13 @@ Item {
 
         ListView {
             id: articleList
+            objectName: "newsReadingList"
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: listHeader.bottom
             anchors.bottom: parent.bottom
             anchors.topMargin: 8
-            model: stage.newsRevision, stage.selectedItems
+            model: stage.selectedItems
             spacing: 6
             clip: true
             boundsBehavior: Flickable.StopAtBounds
@@ -679,7 +750,7 @@ Item {
                     anchors.top: parent.top
                     anchors.bottom: parent.bottom
                     anchors.margins: 7
-                    width: visible ? 108 : 0
+                    width: visible ? Math.min(108, articleRow.width * 0.3) : 0
                     radius: 5
                     color: Qt.rgba(1, 1, 1, 0.04)
                     clip: true
@@ -755,36 +826,32 @@ Item {
     }
 
     Rectangle {
-        id: centerDivider
-        visible: stage.viewMode === "reader"
-        x: stage.dividerPosition - 1
+        visible: stage.viewMode === "reader" && stage.focusProgress < 1
+        x: categoryRail.x + categoryRail.width - 1
+        opacity: 1 - stage.focusProgress
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         width: 1
         color: Theme.cardStroke
     }
 
-    // Pane splitters. Both are direct children of the stage, which does not
-    // clip — a handle parented to one of the panes would lose the half of its
-    // width that falls outside (Qt delivers nothing to a child outside a
-    // clipping parent, the same trap the column handles hit).
-    Repeater {
-        model: [
-            // seam 0: categories | articles — moves both fractions so the
-            // second seam stays put. seam 1: articles | reader.
-            { seam: 0 },
-            { seam: 1 },
-        ]
+    Rectangle {
+        visible: stage.viewMode === "reader" && stage.focusProgress > 0
+        x: readerPane.x - 8
+        opacity: stage.focusProgress
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 1
+        color: Theme.cardStroke
+    }
 
-        delegate: Item {
+    // Keep the handle outside both clipping panes so its full hit area works.
+    Item {
             id: splitter
-            required property var modelData
-            readonly property bool firstSeam: modelData.seam === 0
             visible: stage.viewMode === "reader"
-            // Geometry is stated against the stage, not `parent`: Repeater
-            // delegates are parented to the Repeater's parent, so anchoring
-            // would depend on that indirection.
-            x: (firstSeam ? stage.railWidth + 4 : stage.dividerPosition) - width / 2
+            enabled: !stage.focusTransitioning
+            opacity: stage.focusTransitioning ? 0 : 1
+            x: stage.dividerPosition - width / 2
             y: 0
             width: 12
             height: stage.height
@@ -822,32 +889,30 @@ Item {
                     if (!active || stage.width <= 0)
                         return
                     const delta = activeTranslation.x / stage.width
-                    if (splitter.firstSeam) {
-                        // Hold the total so only this seam moves.
-                        const total = startRail + startList
-                        const rail = Math.max(stage.minPaneFraction,
-                            Math.min(total - stage.minPaneFraction, startRail + delta))
-                        stage.previewReaderSplit(rail, total - rail)
-                    } else {
+                    if (stage.categoryFocused) {
                         stage.previewReaderSplit(startRail, startList + delta)
+                    } else {
+                        stage.previewReaderSplit(startRail + delta, startList)
                     }
                 }
             }
-        }
     }
 
     // While PressReader is selected the content pane is filled by the
     // PressReader surface that PanelColumns seats into it.
     ArticleReaderPane {
         id: readerPane
-        visible: stage.viewMode === "reader"
-        anchors.left: centerDivider.right
-        anchors.leftMargin: 7
-        anchors.right: parent.right
+        objectName: "newsReadingPane"
+        visible: stage.viewMode === "reader" && stage.focusProgress > 0
+        enabled: stage.categoryFocused
+        opacity: stage.focusProgress
+        x: stage.width + (stage.focusedRailWidth + 8 - stage.width) * stage.focusProgress
+        width: Math.max(0, stage.width - stage.focusedRailWidth - 8)
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         active: stage.selectedUrl !== ""
-        onCloseRequested: stage.selectedUrl = ""
+        closeOnRequest: false
+        onCloseRequested: stage.closeArticle()
     }
 
     Item {
