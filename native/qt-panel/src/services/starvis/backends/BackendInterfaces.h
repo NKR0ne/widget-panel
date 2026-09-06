@@ -39,6 +39,7 @@ struct VisionRequest {
     QString model;
     int maxTokens = 800;
     bool reasoning = false;
+    int timeoutMs = 120000;
 };
 
 struct SttRequest {

@@ -272,6 +272,36 @@ private slots:
         QCOMPARE(operation->state(), BackendOperation::State::Cancelled);
     }
 
+    void visionDeadlineFailsAndDoesNotQueueFrames()
+    {
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        connect(&server, &QTcpServer::newConnection, this, [&] {
+            auto* socket = server.nextPendingConnection();
+            connect(socket, &QTcpSocket::readyRead, socket, [socket] { socket->readAll(); });
+        });
+        OpenAiCompatibleVisionBackend backend;
+        backend.configure(QStringLiteral("http://127.0.0.1:%1/v1").arg(server.serverPort()),
+                          QStringLiteral("test-vision"));
+        VisionRequest request;
+        request.images = {QImage(4, 4, QImage::Format_RGB32)};
+        request.images[0].fill(Qt::black);
+        request.timeoutMs = 150;
+        auto* first = backend.analyze(request, this);
+        QSignalSpy failed(first, &BackendOperation::failed);
+        QSignalSpy cancelled(first, &BackendOperation::cancelled);
+        auto* second = backend.analyze(request, this);
+        QSignalSpy busy(second, &BackendOperation::failed);
+        QTRY_COMPARE_WITH_TIMEOUT(busy.count(), 1, 1000);
+        QVERIFY(busy.first().first().toString().contains(QStringLiteral("busy")));
+        QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 1, 1500);
+        QCOMPARE(cancelled.count(), 0);
+        // A deadline is a failure eligible for fallback, not a user cancellation.
+        QVERIFY(!failed.first().first().toString().isEmpty());
+        auto* next = backend.analyze(request, this);
+        next->cancel();
+    }
+
     void openAiCompatibleSttTranscribesPcmAndDetectsLanguage()
     {
         QTcpServer server;

@@ -1350,6 +1350,8 @@ void StarvisService::classifyLocal(const QVector<QImage>& images,
     request.prompt = prompt;
     request.model = selectedModel;
     request.maxTokens = 768;
+    // Background camera verification must not hold an alert for two minutes.
+    request.timeoutMs = context == this ? 120000 : 30000;
     request.reasoning = reasoning;
     BackendOperation* operation = m_localVisionBackend->analyze(request,
                                                                context ? context : this);

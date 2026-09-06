@@ -17,6 +17,7 @@ $reasoningPort = 1234
 $asrPort = 1235
 $visionPort = 1236
 $ttsPort = 1237
+. (Join-Path $scriptsRoot 'starvis-llama-runtime.ps1')
 
 function Get-ListeningProcess {
     param([int]$Port)
@@ -71,13 +72,16 @@ function Stop-StarvisAsrRuntime {
 function Stop-StarvisLlamaRuntime {
     param([int]$Port, [string]$Alias, [switch]$IgnoreUnexpectedOwner)
     $process = Get-ListeningProcess -Port $Port
-    if ($null -eq $process) {
-        return
+    # Also release exact owned loaders that have not bound their port yet.
+    $server = 'M:\LLModels\llama.cpp-b10516-cuda12\llama-server.exe'
+    foreach ($owned in @(Get-StarvisLlamaProcesses -Server $server -Alias $Alias -Port $Port)) {
+        Stop-Process -Id $owned.ProcessId -Force -ErrorAction Stop
     }
+    if ($null -eq $process) { return }
     $command = [string]$process.CommandLine
     if ($process.Name -match '^llama-server\.exe$' `
             -and $command -like "*$Alias*") {
-        Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+        # Already stopped above.
     } elseif ($null -ne $process) {
         if ($IgnoreUnexpectedOwner) {
             return
@@ -114,6 +118,7 @@ function Wait-StarvisHealth {
 
 if ($Action -eq 'enable') {
     if ($Profile -eq 'all') {
+        & (Join-Path $scriptsRoot 'start-starvis-vision-runtime.ps1')
         & (Join-Path $scriptsRoot 'start-starvis-runtime.ps1')
         & (Join-Path $scriptsRoot 'start-starvis-voice-runtime.ps1')
     } else {
@@ -126,8 +131,8 @@ if ($Action -eq 'enable') {
         }
         Stop-StarvisLlamaRuntime -Port $reasoningPort -Alias 'starvis-local' `
             -IgnoreUnexpectedOwner
+        & (Join-Path $scriptsRoot 'start-starvis-vision-runtime.ps1')
     }
-    & (Join-Path $scriptsRoot 'start-starvis-vision-runtime.ps1')
     & (Join-Path $scriptsRoot 'start-starvis-tts-runtime.ps1')
     if ($Profile -eq 'all') {
         Wait-StarvisHealth -Port $asrPort -Capability 'asrReady'

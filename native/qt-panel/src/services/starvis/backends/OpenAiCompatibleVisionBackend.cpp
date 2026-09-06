@@ -123,6 +123,16 @@ BackendOperation* OpenAiCompatibleVisionBackend::analyze(const VisionRequest& re
     auto* operation = new BackendOperation(QStringLiteral("vision"),
                                            QStringLiteral("openai-compatible"),
                                            owner ? owner : this);
+    // The local vision server has one slot. Do not build an invisible queue
+    // of stale camera frames behind an already-running analysis.
+    for (auto* reply : m_network.findChildren<QNetworkReply*>()) {
+        if (!reply->isFinished()) {
+            QTimer::singleShot(0, operation, [operation] {
+                operation->fail(QStringLiteral("Local vision is busy."));
+            });
+            return operation;
+        }
+    }
     if (request.images.isEmpty() || request.images.constFirst().isNull()) {
         QTimer::singleShot(0, operation, [operation] {
             operation->fail(QStringLiteral("No image was provided for vision analysis."));
@@ -175,7 +185,8 @@ BackendOperation* OpenAiCompatibleVisionBackend::analyze(const VisionRequest& re
     QNetworkRequest networkRequest{QUrl(chatCompletionsUrl())};
     networkRequest.setHeader(QNetworkRequest::ContentTypeHeader,
                              QStringLiteral("application/json"));
-    networkRequest.setTransferTimeout(120000);
+    const int timeoutMs = qBound(1, request.timeoutMs, 120000);
+    networkRequest.setTransferTimeout(timeoutMs);
     if (!m_bearerToken.isEmpty())
         networkRequest.setRawHeader("Authorization", "Bearer " + m_bearerToken.toUtf8());
     QNetworkReply* reply = m_network.post(
@@ -191,11 +202,16 @@ BackendOperation* OpenAiCompatibleVisionBackend::analyze(const VisionRequest& re
         const QString transportError = reply->error() == QNetworkReply::NoError
             ? QString() : reply->errorString();
         const bool aborted = reply->error() == QNetworkReply::OperationCanceledError;
+        const bool deadlineExpired = reply->property("visionDeadlineExpired").toBool();
         reply->deleteLater();
         if (!guard)
             return;
-        if (guard->cancellationRequested() || aborted) {
+        if (guard->cancellationRequested() || (aborted && !deadlineExpired)) {
             guard->acknowledgeCancelled();
+            return;
+        }
+        if (deadlineExpired) {
+            guard->fail(QStringLiteral("Local vision deadline exceeded."));
             return;
         }
         if (status < 200 || status >= 300 || !transportError.isEmpty()) {
@@ -219,6 +235,19 @@ BackendOperation* OpenAiCompatibleVisionBackend::analyze(const VisionRequest& re
     });
 
     const QPointer<QNetworkReply> replyGuard(reply);
+    auto* deadline = new QTimer(reply);
+    deadline->setSingleShot(true);
+    connect(deadline, &QTimer::timeout, reply, [replyGuard] {
+        if (replyGuard && !replyGuard->isFinished()) {
+            replyGuard->setProperty("visionDeadlineExpired", true);
+            replyGuard->abort();
+        }
+    });
+    deadline->start(timeoutMs);
+    connect(operation, &QObject::destroyed, reply, [replyGuard] {
+        if (replyGuard && !replyGuard->isFinished())
+            replyGuard->abort();
+    });
     operation->addCancellationHandler([replyGuard] {
         if (replyGuard)
             replyGuard->abort();

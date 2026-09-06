@@ -25,6 +25,9 @@ qt_add_executable(qt-panel-tests
 )
 
 target_include_directories(qt-panel-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+set_property(SOURCE test_qtpanel.cpp
+    "${CMAKE_SOURCE_DIR}/src/services/starvis/backends/OpenAiCompatibleVisionBackend.cpp"
+    APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/src/services/starvis/backends/BackendInterfaces.h")
 target_compile_options(qt-panel-tests PRIVATE /utf-8)
 target_link_libraries(qt-panel-tests PRIVATE
     Qt6::Test
@@ -58,3 +61,6 @@ add_test(NAME news-reading-qml COMMAND powershell -NoProfile -ExecutionPolicy By
     -File "${CMAKE_CURRENT_SOURCE_DIR}/run-news-qml-tests.ps1"
     -Runner "${QML_TEST_RUNNER}" -InputDir "${NEWS_QML_TEST_DIR}")
 set_tests_properties(news-reading-qml PROPERTIES TIMEOUT 35)
+add_test(NAME starvis-runtime-scripts COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+    -File "${CMAKE_CURRENT_SOURCE_DIR}/test_starvis_runtime.ps1")
+set_tests_properties(starvis-runtime-scripts PROPERTIES TIMEOUT 15)

@@ -13,7 +13,6 @@ import unicodedata
 from pathlib import Path
 
 import requests
-import soundfile as sf
 from PIL import Image, ImageDraw
 
 
@@ -192,6 +191,7 @@ def tts_run(output_path: Path, label: str) -> dict:
     elapsed = time.perf_counter() - started
     response.raise_for_status()
     output_path.write_bytes(response.content)
+    import soundfile as sf
     audio = sf.info(output_path)
     return {
         "label": label,
@@ -206,6 +206,7 @@ def tts_run(output_path: Path, label: str) -> dict:
 
 
 def asr_run(audio_path: Path, label: str) -> dict:
+    import soundfile as sf
     audio = sf.info(audio_path)
     before = gpu_snapshot()
     started = time.perf_counter()
@@ -274,7 +275,7 @@ def vision_run(image_path: Path, endpoint: str, model: str) -> dict:
     started = time.perf_counter()
     try:
         response = requests.post(
-            f"{endpoint.rstrip('/')}/chat/completions", json=payload, timeout=300
+            f"{endpoint.rstrip('/')}/chat/completions", json=payload, timeout=30
         )
         elapsed = time.perf_counter() - started
         response.raise_for_status()

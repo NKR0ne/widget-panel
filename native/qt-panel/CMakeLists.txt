@@ -83,6 +83,9 @@ set_property(SOURCE
     src/services/starvis/VoiceSession.cpp
     src/services/diagnostics/DiagnosticsService.cpp
     APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/services/starvis/StarvisService.h")
+set_property(SOURCE src/services/starvis/StarvisService.cpp
+    src/services/starvis/backends/OpenAiCompatibleVisionBackend.cpp
+    APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/services/starvis/backends/BackendInterfaces.h")
 
 target_include_directories(qt-panel PRIVATE src ${WINRT_GENERATED} ${WINAPPSDK_VENDOR}/include)
 target_compile_options(qt-panel PRIVATE /utf-8 /W4)

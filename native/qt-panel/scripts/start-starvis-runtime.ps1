@@ -5,29 +5,23 @@ $alias = 'starvis-local'
 $baseUrl = "http://127.0.0.1:$Port"
 $server = 'M:\LLModels\llama.cpp-b10516-cuda12\llama-server.exe'
 $reasoningModel = 'M:\LLModels\Qwen3-4B-GGUF\Qwen3-4B-Q5_K_M.gguf'
-
-function Test-StarvisModel {
-    try {
-        $models = Invoke-RestMethod -Uri "$baseUrl/v1/models" -TimeoutSec 3
-        return [bool]($models.data | Where-Object { $_.id -eq $alias })
-    } catch {
-        return $false
-    }
-}
-
-if (Test-StarvisModel) { exit 0 }
+. (Join-Path $PSScriptRoot 'starvis-llama-runtime.ps1')
 
 if (!(Test-Path -LiteralPath $server) -or !(Test-Path -LiteralPath $reasoningModel)) {
-    exit 2
+    throw 'Starvis reasoning runtime or model is missing.'
 }
 
+Start-StarvisLlamaServer -Server $server -Alias $alias -Port $Port -BuildArguments {
+$free = Get-StarvisFreeVram
+# Vision has already reserved its budget. Keep headroom for Qt and the desktop.
+$layers = if ($free -ge 4500) { 99 } elseif ($free -ge 2800) { 16 } elseif ($free -ge 1800) { 8 } else { 0 }
 $arguments = @(
     '-m', $reasoningModel,
     '--alias', $alias,
     '--host', '127.0.0.1',
     '--port', $Port,
     '-c', '8192',
-    '-ngl', '99',
+    '-ngl', $layers,
     '--parallel', '1',
     '--flash-attn', 'on',
     '--cache-type-k', 'q8_0',
@@ -35,5 +29,6 @@ $arguments = @(
     '--metrics'
 )
 
-Start-Process -FilePath $server -ArgumentList $arguments `
-    -WorkingDirectory (Split-Path -Parent $server) -WindowStyle Hidden
+if ($layers -eq 0) { $arguments += @('--no-op-offload', '--no-kv-offload') }
+$arguments
+}
