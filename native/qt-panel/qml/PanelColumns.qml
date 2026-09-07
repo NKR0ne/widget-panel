@@ -84,6 +84,7 @@ Item {
         { id: "agenda", source: "AgendaWidget.qml", column: "right", props: {}, resize: true },
         { id: "mail", source: "MailWidget.qml", column: "right", props: {}, resize: true },
         { id: "todo", source: "TodoWidget.qml", column: "right", props: {} },
+        { id: "media-player", source: "MediaWidget.qml", column: "right", props: {}, resize: true, minHeight: 330 },
         { id: "starvis", source: "StarvisWidget.qml", column: "right", props: {} },
         { id: "camera", source: "CameraWidget.qml", column: "left", props: {}, resize: true },
         { id: "camera-direct", source: "DirectCameraWidget.qml", column: "left", props: {}, resize: true },

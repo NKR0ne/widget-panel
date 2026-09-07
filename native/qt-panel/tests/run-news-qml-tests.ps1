@@ -5,6 +5,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $log = Join-Path $InputDir 'results.txt'
 $env:QT_QUICK_BACKEND = 'software'
+$env:QT_QUICK_CONTROLS_STYLE = 'Basic'
 $fonts = Join-Path $InputDir 'fonts'
 New-Item -ItemType Directory -Path $fonts -Force | Out-Null
 foreach ($font in @('segoeui.ttf', 'segoeuib.ttf', 'SegoeIcons.ttf')) {

@@ -2,6 +2,9 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS Test Network Xml Gui)
 
 qt_add_executable(qt-panel-tests
     test_qtpanel.cpp
+    ${CMAKE_SOURCE_DIR}/src/services/media/WindowsMediaService.cpp
+    ${CMAKE_SOURCE_DIR}/src/services/media/WindowsMediaService.h
+    ${CMAKE_SOURCE_DIR}/src/services/media/MediaCatalog.cpp
     ${CMAKE_SOURCE_DIR}/src/core/TextFix.cpp
     ${CMAKE_SOURCE_DIR}/src/core/SettingsStore.cpp
     ${CMAKE_SOURCE_DIR}/src/core/SecretVault.cpp
@@ -24,7 +27,8 @@ qt_add_executable(qt-panel-tests
     ${CMAKE_SOURCE_DIR}/src/services/starvis/ModelResolver.cpp
 )
 
-target_include_directories(qt-panel-tests PRIVATE ${CMAKE_SOURCE_DIR}/src)
+target_include_directories(qt-panel-tests PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_BINARY_DIR}/winrt-generated)
+set_property(SOURCE test_qtpanel.cpp APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/src/services/media/WindowsMediaService.h")
 set_property(SOURCE test_qtpanel.cpp
     "${CMAKE_SOURCE_DIR}/src/services/starvis/backends/OpenAiCompatibleVisionBackend.cpp"
     APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/src/services/starvis/backends/BackendInterfaces.h")
@@ -34,7 +38,11 @@ target_link_libraries(qt-panel-tests PRIVATE
     Qt6::Network
     Qt6::Xml
     Qt6::Gui
+    Qt6::Sql
+    shell32
     advapi32
+    windowsapp
+    ole32
 )
 
 add_test(NAME qt-panel-tests COMMAND qt-panel-tests)
@@ -52,11 +60,12 @@ file(GLOB_RECURSE NEWS_QML_MOCKS CONFIGURE_DEPENDS
 foreach(mock_file IN LISTS NEWS_QML_MOCKS)
     configure_file("qml/mocks/${mock_file}" "${NEWS_QML_TEST_DIR}/${mock_file}" COPYONLY)
 endforeach()
-foreach(qml_file NewsStage.qml ArticleReaderPane.qml)
+foreach(qml_file NewsStage.qml ArticleReaderPane.qml MediaWidget.qml MediaLibraryPane.qml)
     configure_file("${CMAKE_SOURCE_DIR}/qml/${qml_file}"
                    "${NEWS_QML_TEST_DIR}/${qml_file}" COPYONLY)
 endforeach()
 configure_file(qml/tst_NewsReading.qml "${NEWS_QML_TEST_DIR}/tst_NewsReading.qml" COPYONLY)
+configure_file(qml/tst_MediaWidget.qml "${NEWS_QML_TEST_DIR}/tst_MediaWidget.qml" COPYONLY)
 add_test(NAME news-reading-qml COMMAND powershell -NoProfile -ExecutionPolicy Bypass
     -File "${CMAKE_CURRENT_SOURCE_DIR}/run-news-qml-tests.ps1"
     -Runner "${QML_TEST_RUNNER}" -InputDir "${NEWS_QML_TEST_DIR}")

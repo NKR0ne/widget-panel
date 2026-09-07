@@ -4,6 +4,18 @@ This is the source-based parity ledger for the native Qt rewrite. "Implemented"
 means the code path exists in `native/qt-panel`; "partial" means source exists
 but parity, controls, or runtime validation are incomplete.
 
+## Integrated Media Player
+
+The 2026-09-07 revision replaces remote control with an in-process native Windows
+audio engine. Lecture controls, volume, queue, repeat/shuffle, album-cover browsing,
+track lists and playlists are implemented. The current Windows Music library and
+Media Player catalog are discovered automatically and imported read-only. Native
+silent-audio tests cover playback, seeking, queue transitions, looping and Starvis
+mute/restore. Ambient validation found 125 tracks, 9 albums, 5 local covers and
+1 playlist without launching the external player. Catalog schema compatibility is
+guarded; video UI and library/playlist write-back are outside this music card's
+scope. See [Media Player architecture and tests](MEDIA-PLAYER.md).
+
 ## Build And Stall Control
 
 | Area | Status | Notes |

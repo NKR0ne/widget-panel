@@ -34,6 +34,7 @@
 #include "services/live/LiveFeedService.h"
 #include "services/msgraph/MsGraphService.h"
 #include "services/news/NewsService.h"
+#include "services/media/WindowsMediaService.h"
 #include "services/pressreader/PressReaderService.h"
 #include "services/reader/ReaderService.h"
 #include "services/starvis/StarvisService.h"
@@ -363,6 +364,7 @@ int main(int argc, char* argv[])
     WorkstationClient workstation(nullptr);
     StocksModel stocks(&settings, &vault, &http);
     NewsService news(&settings, &http);
+    WindowsMediaService windowsMedia(&settings);
     MsGraphService msGraph(&settings, &http);
     LiveFeedService live(&http);
     ReaderService reader(&http);
@@ -370,6 +372,8 @@ int main(int argc, char* argv[])
     SpeechService speech;
     StarvisService starvis(&settings, &vault, &http, &weather, &stocks, &news, &workstation,
                            &speech);
+    QObject::connect(&starvis, &StarvisService::speakingChanged, &windowsMedia,
+                     [&] { windowsMedia.setDucked(starvis.speaking()); });
     auto* cameraProvider = new CameraImageProvider(); // engine takes ownership
     CameraClient camera(&settings, &vault, cameraProvider);
     DirectCameraClient directCamera(&settings, &vault);
@@ -414,6 +418,7 @@ int main(int argc, char* argv[])
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Workstation", &workstation);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Stocks", &stocks);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "News", &news);
+    qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "WinMedia", &windowsMedia);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "MsGraph", &msGraph);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Live", &live);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Reader", &reader);

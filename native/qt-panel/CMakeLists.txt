@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # so input is injected through QWindowSystemInterface, which lives in the QPA
 # private headers. Gui itself arrives transitively via Quick, but the private
 # target only exists when asked for by name.
-find_package(Qt6 6.8 REQUIRED COMPONENTS Quick QuickControls2 QuickEffects Quick3D Network Xml Multimedia ShaderTools WebEngineQuick WebSockets GuiPrivate)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Quick QuickControls2 QuickEffects Quick3D Network Xml Sql Multimedia ShaderTools WebEngineQuick WebSockets GuiPrivate)
 qt_standard_project_setup(REQUIRES 6.8)
 
 add_subdirectory(qml)
@@ -37,6 +37,9 @@ qt_add_executable(qt-panel WIN32
     src/services/live/LiveFeedService.h src/services/live/LiveFeedService.cpp
     src/services/msgraph/MsGraphService.h src/services/msgraph/MsGraphService.cpp
     src/services/news/NewsService.h src/services/news/NewsService.cpp
+    src/services/media/WindowsMediaService.h src/services/media/WindowsMediaService.cpp
+    src/services/media/MediaLibrary.h
+    src/services/media/MediaCatalog.h src/services/media/MediaCatalog.cpp
     src/services/pressreader/PressReaderService.h src/services/pressreader/PressReaderService.cpp
     src/services/reader/ReaderService.h src/services/reader/ReaderService.cpp
     src/services/starvis/StarvisService.h src/services/starvis/StarvisService.cpp
@@ -88,6 +91,8 @@ set_property(SOURCE src/services/starvis/StarvisService.cpp
     APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/services/starvis/backends/BackendInterfaces.h")
 
 target_include_directories(qt-panel PRIVATE src ${WINRT_GENERATED} ${WINAPPSDK_VENDOR}/include)
+set_property(SOURCE src/main.cpp src/services/media/WindowsMediaService.cpp
+    APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/services/media/WindowsMediaService.h")
 target_compile_options(qt-panel PRIVATE /utf-8 /W4)
 target_link_libraries(qt-panel PRIVATE
     Qt6::Quick
@@ -99,6 +104,8 @@ target_link_libraries(qt-panel PRIVATE
     Qt6::Quick3D
     Qt6::Network
     Qt6::Xml
+    Qt6::Sql
+    shell32
     Qt6::Multimedia
     Qt6::WebSockets
     Qt6::WebEngineQuick

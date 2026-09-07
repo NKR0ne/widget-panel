@@ -295,7 +295,9 @@ if (-not (Test-Path $exe)) { Write-Error "Build succeeded but exe not at: $exe" 
 # PATH it starts but writes no log and never produces --diag captures. Deploy
 # automatically when the runtime is absent; windeployqt is idempotent and only
 # costs time the first time.
-$runtimeMissing = -not (Test-Path (Join-Path $build 'Qt6Core.dll'))
+$runtimeMissing = -not (Test-Path (Join-Path $build 'Qt6Core.dll')) -or
+                  -not (Test-Path (Join-Path $build 'Qt6Sql.dll')) -or
+                  -not (Test-Path (Join-Path $build 'sqldrivers\qsqlite.dll'))
 if ($runtimeMissing -and -not $Deploy) {
     Write-Host 'Qt runtime missing next to the exe - deploying (use -Deploy to silence this).' -ForegroundColor Yellow
 }

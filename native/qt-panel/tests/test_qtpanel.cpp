@@ -4,6 +4,13 @@
 #include "core/TextFix.h"
 #include "core/SettingsStore.h"
 #include "services/news/NewsService.h"
+#include "services/media/MediaLibrary.h"
+#include "services/media/MediaCatalog.h"
+#include <QSqlDatabase>
+#include <QSqlQuery>
+#include "services/media/WindowsMediaService.h"
+#include <QDataStream>
+#include <QScopeGuard>
 #include "services/reader/ReaderService.h"
 #include "services/live/LiveFeedService.h"
 #include "services/pressreader/PressReaderService.h"
@@ -38,6 +45,173 @@ class TestQtPanel : public QObject {
     Q_OBJECT
 
 private slots:
+    void mediaNativePlayerIntegration()
+    {
+        if (!qEnvironmentVariableIsSet("QT_PANEL_TEST_LOCAL_PLAYER"))
+            QSKIP("Opt-in native playback test; silent audio only.");
+        QTemporaryDir temp;
+        SettingsStore settings(temp.filePath("settings.json"));
+        settings.set("wp-media-folders", QStringList{});
+        settings.set("wp-media-auto-library", false);
+        settings.set("wp-media-volume", 0);
+        WindowsMediaService service(&settings);
+        QTRY_VERIFY_WITH_TIMEOUT(!service.playback().isEmpty(), 4000);
+        QVERIFY(!service.playback().value("connected").toBool());
+        const auto path = temp.filePath("silent.wav");
+        QFile wave(path);
+        QVERIFY(wave.open(QIODevice::WriteOnly));
+        const QByteArray pcm(44100 * 4 * 60, '\0');
+        QDataStream out(&wave);
+        out.setByteOrder(QDataStream::LittleEndian);
+        out.writeRawData("RIFF", 4); out << quint32(36 + pcm.size());
+        out.writeRawData("WAVEfmt ", 8); out << quint32(16) << quint16(1) << quint16(2);
+        out << quint32(44100) << quint32(176400) << quint16(4) << quint16(16);
+        out.writeRawData("data", 4); out << quint32(pcm.size());
+        out.writeRawData(pcm.constData(), pcm.size());
+        wave.close();
+        const QVariantMap one{{"url", QUrl::fromLocalFile(path).toString()}, {"title", "One"}};
+        const QVariantMap two{{"url", QUrl::fromLocalFile(path).toString()}, {"title", "Two"}};
+        service.playItems({one, two});
+        QTRY_VERIFY_WITH_TIMEOUT(!service.busy(), 4000);
+        QVERIFY2(service.error().isEmpty(), qPrintable(service.error()));
+        QTRY_VERIFY_WITH_TIMEOUT(service.playback().value("playing").toBool(), 6000);
+        QCOMPARE(service.playback().value("engine").toString(), QString("Windows natif"));
+        QCOMPARE(service.queue().size(), 2);
+        auto command = [&](const QString& action, double value = 0) {
+            service.command(action, value);
+            QElapsedTimer timer; timer.start();
+            while (service.busy() && timer.elapsed() < 3000) QTest::qWait(20);
+        };
+        command("pause");
+        QTRY_VERIFY_WITH_TIMEOUT(!service.playback().value("playing").toBool(), 3000);
+        command("seek", 20);
+        QTRY_VERIFY_WITH_TIMEOUT(service.playback().value("position").toDouble() >= 19, 3000);
+        command("play");
+        QTRY_VERIFY_WITH_TIMEOUT(service.playback().value("playing").toBool(), 3000);
+        service.setDucked(true);
+        QTRY_VERIFY_WITH_TIMEOUT(service.playback().value("ducked").toBool(), 3000);
+        service.setDucked(false);
+        QTRY_VERIFY_WITH_TIMEOUT(!service.playback().value("ducked").toBool(), 3000);
+        QCOMPARE(service.playback().value("volume").toDouble(), 0.0);
+        command("next");
+        QTRY_COMPARE_WITH_TIMEOUT(service.playback().value("queueIndex").toInt(), 1, 3000);
+        command("index", 0);
+        QTRY_COMPARE_WITH_TIMEOUT(service.playback().value("queueIndex").toInt(), 0, 3000);
+        command("repeat", 1);
+        command("seek", 59.5);
+        QTest::qWait(1800);
+        QCOMPARE(service.playback().value("queueIndex").toInt(), 0);
+        QVERIFY(service.playback().value("position").toDouble() < 5);
+        command("repeat", 0);
+        command("seek", 59.5);
+        QTRY_COMPARE_WITH_TIMEOUT(service.playback().value("queueIndex").toInt(), 1, 4000);
+        command("stop");
+        QTRY_VERIFY_WITH_TIMEOUT(service.playback().value("stopped").toBool(), 3000);
+        QVERIFY2(service.error().isEmpty(), qPrintable(service.error()));
+    }
+
+    void mediaAmbientCatalogIntegration()
+    {
+        if (!qEnvironmentVariableIsSet("QT_PANEL_TEST_LOCAL_PLAYER")) QSKIP("Opt-in read-only ambient library test.");
+        QTemporaryDir temp;
+        SettingsStore settings(temp.filePath("settings.json"));
+        WindowsMediaService service(&settings);
+        QTest::qWait(100);
+        QTRY_VERIFY_WITH_TIMEOUT(!service.scanning(), 25000);
+        int covered = 0;
+        for (const auto& album : service.albums()) if (!album.toMap().value("artwork").toString().isEmpty()) ++covered;
+        qInfo() << "Ambient library:" << service.library().size() << "tracks," << service.albums().size()
+                << "albums," << covered << "covers," << service.playlists().size() << "playlists;" << service.libraryStatus();
+        QVERIFY(!service.folders().isEmpty());
+        QVERIFY(!service.library().isEmpty());
+        QVERIFY(covered > 0);
+        QVERIFY(service.libraryStatus().isEmpty());
+    }
+
+    void mediaPlaylistsPreserveOrderAndRejectRemoteSources()
+    {
+        QTemporaryDir temp;
+        QFile file(temp.filePath("mix.m3u8"));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("#EXTM3U\nSecond.mp3\nhttps://example.com/remote.mp3\nFirst.flac\nSecond.mp3\n");
+        file.close();
+        auto playlist = MediaCatalog::readPlaylist(file.fileName());
+        auto items = playlist.value("items").toList();
+        QCOMPARE(items.size(), 3);
+        QCOMPARE(items[0].toMap().value("title").toString(), QString("Second"));
+        QCOMPARE(items[1].toMap().value("title").toString(), QString("First"));
+        QCOMPARE(items[2].toMap().value("url"), items[0].toMap().value("url"));
+        QFile xml(temp.filePath("mix.wpl"));
+        QVERIFY(xml.open(QIODevice::WriteOnly));
+        xml.write("<smil><body><seq><media src=\"First.flac\"/><media src=\"Second.mp3\"/></seq></body></smil>");
+        xml.close();
+        QCOMPARE(MediaCatalog::readPlaylist(xml.fileName()).value("items").toList().size(), 2);
+    }
+
+    void mediaCatalogReadOnlyImportAndSchemaFallback()
+    {
+        QTemporaryDir temp;
+        const auto path = temp.filePath("MediaPlayer.db");
+        {
+            auto db = QSqlDatabase::addDatabase("QSQLITE", "media-fixture");
+            db.setDatabaseName(path);
+            QVERIFY(db.open());
+            QSqlQuery q(db);
+            QVERIFY(q.exec("CREATE TABLE Artist(Id INTEGER PRIMARY KEY,Name TEXT)"));
+            QVERIFY(q.exec("CREATE TABLE Album(Id INTEGER PRIMARY KEY,Title TEXT,ArtistId INTEGER)"));
+            QVERIFY(q.exec("CREATE TABLE Track(Uri TEXT,Title TEXT,AlbumId INTEGER,TrackNumber INTEGER,DiscNumber INTEGER,Duration INTEGER,IsMarkedForDeletion INTEGER)"));
+            QVERIFY(q.exec("CREATE TABLE Playlist(Id INTEGER PRIMARY KEY,Uri TEXT,Title TEXT,IsMarkedForDeletion INTEGER)"));
+            QVERIFY(q.exec("CREATE TABLE PlaylistEntry(Id INTEGER PRIMARY KEY,PlaylistId INTEGER,Source TEXT,Title TEXT)"));
+            QVERIFY(q.exec("INSERT INTO Artist VALUES(1,'Artist')"));
+            QVERIFY(q.exec("INSERT INTO Album VALUES(1,'Album',1)"));
+            QVERIFY(q.exec("INSERT INTO Track VALUES('file:///C:/Music/test.mp3','Title',1,2,1,10000000,0)"));
+            QVERIFY(q.exec("INSERT INTO Playlist VALUES(1,'','Mix',0)"));
+            QVERIFY(q.exec("INSERT INTO PlaylistEntry VALUES(1,1,'file:///C:/Music/test.mp3','Title')"));
+            db.close();
+        }
+        QSqlDatabase::removeDatabase("media-fixture");
+        QFile file(path); QVERIFY(file.open(QIODevice::ReadOnly));
+        const auto before = file.readAll(); file.close();
+        const auto catalog = MediaCatalog::readModernDatabase(path);
+        QVERIFY2(catalog.value("warning").toString().isEmpty(), qPrintable(catalog.value("warning").toString()));
+        const auto tracks = catalog.value("items").toList();
+        QCOMPARE(tracks.size(), 1);
+        QCOMPARE(tracks[0].toMap().value("album").toString(), QString("Album"));
+        QCOMPARE(tracks[0].toMap().value("artist").toString(), QString("Artist"));
+        QCOMPARE(catalog.value("playlists").toList().size(), 1);
+        QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), before);
+        QVERIFY(MediaCatalog::readModernDatabase(temp.filePath("missing.db")).isEmpty());
+    }
+
+    void mediaLibraryClassifiesFormats()
+    {
+        QCOMPARE(MediaLibrary::kind("Song.FLAC"), QString("audio"));
+        QCOMPARE(MediaLibrary::kind("Film.MP4"), QString("video"));
+        QVERIFY(MediaLibrary::kind("image.jpg").isEmpty());
+    }
+
+    void mediaLibraryScansDeduplicatesAndBoundsResults()
+    {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        QDir root(temp.path());
+        QVERIFY(root.mkpath("Album"));
+        for (const auto& name : {"Song.mp3", "Album/Film.mp4", "Album/notes.txt"}) {
+            QFile file(root.filePath(name));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write("fixture");
+        }
+        const auto result = MediaLibrary::scan({temp.path(), root.filePath("Album")});
+        const auto items = result.value("items").toList();
+        QCOMPARE(items.size(), 2);
+        QCOMPARE(items.first().toMap().value("title").toString(), QString("Film"));
+        QVERIFY(QUrl(items.first().toMap().value("url").toString()).isLocalFile());
+        QVERIFY(!result.value("truncated").toBool());
+        QVERIFY(MediaLibrary::scan({temp.path()}, 1).value("truncated").toBool());
+        QCOMPARE(MediaLibrary::scan({root.filePath("missing")}).value("missing").toStringList().size(), 1);
+        QVERIFY(MediaLibrary::scan({}).value("items").toList().isEmpty());
+    }
+
     void backendOperationStreamsAndCompletes()
     {
         BackendOperation operation(QStringLiteral("llm"), QStringLiteral("lm-studio"));

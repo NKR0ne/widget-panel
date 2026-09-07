@@ -1,6 +1,7 @@
 import QtQuick
 Rectangle {
     property string glyph: ""
+    property bool active: false
     property string tooltip: ""
     property int buttonSize: 28
     signal clicked()
