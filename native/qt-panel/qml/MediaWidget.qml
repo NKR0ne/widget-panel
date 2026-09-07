@@ -191,23 +191,6 @@ GlassCard {
                         onClicked: WinMedia.command("stop")
                     }
                 }
-                RowLayout {
-                    Layout.fillWidth: true
-                    IconButton { buttonSize: 24; glyph: Number(card.playback.volume) === 0 ? "\uE74F" : "\uE767"; tooltip: "Couper / retablir le son"; onClicked: WinMedia.command("volume", Number(card.playback.volume) > 0 ? 0 : 50) }
-                    Basic.Slider {
-                        id: volume
-                        objectName: "mediaVolume"
-                        property real requestedVolume: 50
-                        Layout.fillWidth: true; Layout.preferredHeight: 22
-                        from: 0; to: 100
-                        Binding { target: volume; property: "value"; value: Number(card.playback.volume) || 0; when: !volume.pressed }
-                        onMoved: { requestedVolume = value; if (!pressed) WinMedia.command("volume", requestedVolume) }
-                        onPressedChanged: { if (pressed) requestedVolume = value; else WinMedia.command("volume", requestedVolume) }
-                        Accessible.name: "Volume de la musique"
-                        palette.highlight: Theme.accent
-                    }
-                    Text { text: Math.round(volume.value) + "%"; color: Theme.textSecondary; font.pixelSize: 9; Layout.preferredWidth: 30 }
-                }
             }
             MediaLibraryPane {
                 id: libraryPane

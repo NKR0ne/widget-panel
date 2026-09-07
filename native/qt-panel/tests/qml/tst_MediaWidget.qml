@@ -28,6 +28,7 @@ TestCase {
         waitForRendering(card)
     }
     function test_controlsAndCapabilities() {
+        verify(!findChild(card, "mediaVolume"))
         const play = findChild(card, "mediaPlayPause")
         verify(play.enabled)
         mouseClick(play, 20, 20)
@@ -103,5 +104,31 @@ TestCase {
                 image.save("media-" + view + "-" + height + ".png")
             }
         }
+    }
+    function test_themedPopupAndQueueScrollbar() {
+        card.height = 330
+        card.view = "library"
+        const browser = findChild(card, "mediaBrowser")
+        const queue = []
+        for (let i = 0; i < 20; ++i) queue.push({title: "Titre " + i, artist: "Artiste", album: "Album"})
+        WinMedia.queue = queue
+        browser.browseMode = 3
+        const list = findChild(card, "mediaLibraryList")
+        tryCompare(list, "count", 20)
+        const bar = findChild(card, "mediaTrackScrollBar")
+        verify(bar.width <= 7)
+        compare(bar.contentItem.color, Theme.textSecondary)
+        waitForRendering(card)
+        grabImage(card).save("media-queue-scrollbar.png")
+        const section = findChild(card, "mediaLibrarySection")
+        mouseClick(section, 40, 14)
+        tryCompare(section.popup, "visible", true)
+        compare(section.popup.background.color, Theme.panelSolid)
+        waitForRendering(card)
+        grabImage(testCase).save("media-library-popup.png")
+        const listItem = section.popup.contentItem
+        mouseClick(listItem, 50, 16)
+        tryCompare(browser, "browseMode", 0)
+        tryCompare(section.popup, "visible", false)
     }
 }

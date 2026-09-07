@@ -8,7 +8,8 @@ wmplayer.exe, ActiveX, or an external/default application. This is native Window
 audio playback with a Qt interface, not an embedding of Microsoft's application.
 
 Lecture provides artwork, title/artist/album, play/pause/stop, position, previous/
-next, shuffle, repeat-one/repeat-all and a separate music volume. The queue runs
+next, shuffle and repeat-one/repeat-all. Volume is adjusted through Windows,
+without a separate volume control in the card. The queue runs
 independently of card visibility and mode switches. Playback does not start at
 login. Starvis speech temporarily mutes this player's output without replacing
 its selected volume. The Windows playback list handles sequencing and media keys.

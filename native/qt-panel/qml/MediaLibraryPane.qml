@@ -14,6 +14,19 @@ ColumnLayout {
     property string query: ""
     property bool manageFolders: false
     signal playRequested()
+    component LibraryScrollBar: Basic.ScrollBar {
+        id: bar
+        width: 6
+        padding: 0
+        minimumSize: 0.08
+        policy: Basic.ScrollBar.AsNeeded
+        contentItem: Rectangle {
+            implicitWidth: 6; implicitHeight: 24; radius: 3
+            color: bar.pressed ? Theme.textPrimary : Theme.textSecondary
+            opacity: bar.active || bar.hovered ? 0.85 : 0.45
+        }
+        background: Item {}
+    }
     onBrowseModeChanged: { selectedAlbum = ""; Store.set("wp-media-browse", browseMode) }
     function matches(item) { return [item.title || "", item.artist || "", item.album || ""].join(" ").toLowerCase().indexOf(query.toLowerCase()) >= 0 }
     readonly property var albums: WinMedia.albums.filter(function(a) { return matches(a) })
@@ -51,9 +64,46 @@ ColumnLayout {
             model: ["Albums", "Titres", "Playlists", "File de lecture"]
             currentIndex: pane.browseMode; onActivated: pane.browseMode = currentIndex
             font.pixelSize: 11
-            palette.buttonText: Theme.textPrimary; palette.text: Theme.textPrimary
-            palette.base: Theme.cardFill; palette.highlight: Theme.activeFill; palette.highlightedText: Theme.textPrimary
-            background: Rectangle { radius: 4; color: Theme.cardFill; border.color: Theme.cardStroke }
+            leftPadding: 10; rightPadding: 28
+            Accessible.name: "Vue de la bibliotheque"
+            contentItem: Text {
+                text: section.displayText; font: section.font; color: Theme.textPrimary
+                verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+            }
+            indicator: Text {
+                x: section.width - width - 10; anchors.verticalCenter: parent.verticalCenter
+                text: "\uE70D"; font.family: "Segoe Fluent Icons"; font.pixelSize: 10
+                color: Theme.textSecondary
+            }
+            background: Rectangle { radius: 4; color: section.hovered ? Theme.hover : Theme.cardFill; border.color: section.activeFocus ? Theme.accent : Theme.cardStroke }
+            delegate: Basic.ItemDelegate {
+                id: option
+                required property int index
+                required property string modelData
+                width: section.popup.availableWidth; height: 32
+                highlighted: section.highlightedIndex === index
+                contentItem: Text {
+                    text: option.modelData; font: section.font; color: Theme.textPrimary
+                    verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+                }
+                background: Rectangle {
+                    radius: 4
+                    color: option.highlighted ? Theme.activeFill : option.hovered ? Theme.hover : "transparent"
+                }
+            }
+            popup: Basic.Popup {
+                objectName: "mediaLibraryPopup"
+                popupType: Popup.Item
+                y: section.height + 4; width: Math.max(section.width, 168)
+                padding: 4
+                implicitHeight: contentItem.implicitHeight + topPadding + bottomPadding
+                background: Rectangle { color: Theme.panelSolid; radius: 6; border.color: Theme.cardStroke }
+                contentItem: ListView {
+                    implicitHeight: contentHeight
+                    clip: true; model: section.delegateModel; currentIndex: section.highlightedIndex
+                    boundsBehavior: Flickable.StopAtBounds
+                }
+            }
         }
         Item { Layout.fillWidth: true }
         Text { text: WinMedia.scanning ? "Actualisation..." : (pane.browseMode === 0 && !pane.selectedAlbum ? pane.albums.length + " albums" : pane.rows.length + " elements"); color: Theme.textSecondary; font.pixelSize: 9 }
@@ -71,7 +121,7 @@ ColumnLayout {
             objectName: "mediaFolders"
             Layout.fillWidth: true; Layout.preferredHeight: Math.min(60, count * 30)
             clip: true; model: WinMedia.folders
-            ScrollBar.vertical: ScrollBar {}
+            ScrollBar.vertical: LibraryScrollBar {}
             delegate: Item {
                 required property string modelData
                 width: ListView.view.width; height: 30
@@ -96,7 +146,7 @@ ColumnLayout {
         cellWidth: width / Math.max(2, Math.floor(width / 135))
         cellHeight: cellWidth + 47
         model: pane.albums
-        ScrollBar.vertical: ScrollBar {}
+        ScrollBar.vertical: LibraryScrollBar {}
         delegate: Item {
             required property var modelData
             width: grid.cellWidth; height: grid.cellHeight
@@ -120,7 +170,7 @@ ColumnLayout {
         Layout.fillWidth: true; Layout.fillHeight: true
         visible: pane.browseMode !== 0 || pane.selectedAlbum !== ""
         clip: true; spacing: 3; model: pane.rows
-        ScrollBar.vertical: ScrollBar {}
+        ScrollBar.vertical: LibraryScrollBar { objectName: "mediaTrackScrollBar" }
         delegate: Rectangle {
             required property var modelData
             required property int index

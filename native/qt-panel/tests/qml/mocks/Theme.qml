@@ -1,6 +1,7 @@
 pragma Singleton
 import QtQuick
 QtObject {
+    readonly property color panelSolid: "#11151e"
     readonly property color textPrimary: "#f4f5f7"
     readonly property color textSecondary: "#b8c4d5"
     readonly property color accent: "#49bee1"
