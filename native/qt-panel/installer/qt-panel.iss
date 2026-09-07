@@ -31,7 +31,13 @@ Name: "autostart"; Description: "Lancer au démarrage de Windows"; Flags: unchec
 
 [Files]
 ; Whole deployed tree (exe + Qt DLLs + qml/ + plugins + helpers\).
-Source: "{#SrcDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#SrcDir}\*"; DestDir: "{app}"; Excludes: "qt-panel-tests.exe,qt-panel-tests.pdb,Qt6Test.dll,Qt6Testd.dll,tests\*,Testing\*"; Flags: recursesubdirs createallsubdirs ignoreversion
+
+[InstallDelete]
+Type: files; Name: "{app}\qt-panel-tests.exe"
+Type: files; Name: "{app}\qt-panel-tests.pdb"
+Type: files; Name: "{app}\Qt6Test.dll"
+Type: files; Name: "{app}\Qt6Testd.dll"
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"

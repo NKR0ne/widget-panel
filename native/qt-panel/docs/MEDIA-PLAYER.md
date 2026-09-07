@@ -60,8 +60,11 @@ Qt6Sql and its SQLite driver when missing. Tests cover library classification an
 bounds, playlist ordering/remote rejection, unchanged source database bytes,
 QML controls, seeking, album/playlist selection and compact/tall screenshots.
 
-Opt-in live tests use silent audio at zero music volume. With the Qt bin directory
-on PATH:
+Test builds also deploy the test executable's own Qt runtime, including Qt6Test,
+so direct diagnostics do not require Qt on PATH. Installers exclude test binaries
+and remove those accidentally shipped by older installations.
+
+Opt-in live tests use silent audio at zero music volume:
 
 ```powershell
 $env:QT_PANEL_TEST_LOCAL_PLAYER = '1'

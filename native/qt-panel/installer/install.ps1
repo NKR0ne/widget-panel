@@ -41,7 +41,17 @@ if (-not (Test-Path (Join-Path $src 'qt-panel.exe'))) {
 Write-Host "Installing to $dest ..." -ForegroundColor Cyan
 Get-Process -Name 'qt-panel' -ErrorAction SilentlyContinue | Stop-Process -Force
 New-Item -ItemType Directory -Force $dest | Out-Null
-Copy-Item -Recurse -Force (Join-Path $src '*') $dest
+# Development diagnostics are not part of the installed application.
+$testArtifacts = @('qt-panel-tests.exe', 'qt-panel-tests.pdb', 'Qt6Test.dll', 'Qt6Testd.dll')
+Get-ChildItem -LiteralPath $src |
+    Where-Object { $_.Name -notin ($testArtifacts + @('tests', 'Testing')) } |
+    Copy-Item -Recurse -Force -Destination $dest
+foreach ($name in $testArtifacts) {
+    $oldArtifact = Join-Path $dest $name
+    if (Test-Path -LiteralPath $oldArtifact -PathType Leaf) {
+        Remove-Item -LiteralPath $oldArtifact -Force
+    }
+}
 
 # Runtime control is resolved relative to the installed executable. Keep the
 # lightweight Starvis launchers beside deployed builds so login startup can

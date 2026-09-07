@@ -306,6 +306,18 @@ if ($Deploy -or $runtimeMissing) {
     Invoke-NativeCommand -FilePath "$QtDir\bin\windeployqt.exe" -Arguments @('--qmldir', (Join-Path $root 'qml'), $exe) -WorkingDirectory $root -TimeoutSeconds 120
 }
 
+# The app does not link QtTest. Deploy the test executable separately so direct
+# diagnostics work without the development PATH supplied to CTest.
+if ($Tests) {
+    $testExe = Join-Path $build 'qt-panel-tests.exe'
+    Write-Host 'Deploying test runtime...' -ForegroundColor Cyan
+    Invoke-NativeCommand -FilePath "$QtDir\bin\windeployqt.exe" -Arguments @($testExe) -WorkingDirectory $root -TimeoutSeconds 120
+    $testDll = if ($Config -eq 'debug') { 'Qt6Testd.dll' } else { 'Qt6Test.dll' }
+    if (-not (Test-Path (Join-Path $build $testDll))) {
+        throw "Test deployment incomplete: $testDll is missing."
+    }
+}
+
 # The direct camera decoder runs FFmpeg out of process so RTSP transport can be
 # forced to TCP without relying on Qt Multimedia's private backend internals.
 # install-ffmpeg.ps1 provisions the pinned binary once; every build stages it
