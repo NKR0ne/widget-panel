@@ -191,6 +191,29 @@ StarvisService::StarvisService(SettingsStore* settings, SecretVault* vault, Http
             [this] { m_state->setReasoning(m_busy); });
     connect(this, &StarvisService::speakingChanged, m_state,
             [this] { m_state->setSpeaking(speaking()); });
+    connect(this, &StarvisService::speechOutputFinished, m_state,
+            [this](bool success, const QString& error) {
+        if (!success && !error.isEmpty() && error != QLatin1String("cancelled"))
+            m_state->triggerAlert(QStringLiteral("Sortie vocale indisponible : %1").arg(error),
+                                  QStringLiteral("notice"));
+    });
+    auto* audioDevices = new QMediaDevices(this);
+    connect(audioDevices, &QMediaDevices::audioOutputsChanged, this, [this] {
+        if (!m_ttsAudio)
+            return;
+        const auto outputs = QMediaDevices::audioOutputs();
+        const auto defaultOutput = QMediaDevices::defaultAudioOutput();
+        const auto output = !defaultOutput.isNull() ? defaultOutput
+            : outputs.isEmpty() ? QAudioDevice() : outputs.first();
+        if (!output.isNull()) {
+            m_ttsAudio->setDevice(output);
+            qInfo() << "[starvis.audio] output changed to" << output.description();
+        } else {
+            qWarning() << "[starvis.audio] no output after device change";
+            m_state->triggerAlert(QStringLiteral("Aucune sortie audio disponible pour les annonces vocales."),
+                                  QStringLiteral("notice"));
+        }
+    });
     if (m_speech) {
         connect(m_speech, &SpeechService::speakingChanged,
                 this, &StarvisService::speakingChanged);
@@ -927,7 +950,7 @@ void StarvisService::playSpeechBytes(const QByteArray& bytes, const QString& ext
             finishAlertPlayback();
             emit speechOutputFinished(true, QString());
         });
-        qInfo() << "[starvis] TTS playing through native WAV fallback,"
+        qInfo() << "[starvis] TTS requested through native WAV fallback,"
                 << bytes.size() << "bytes";
         return;
     }
@@ -973,6 +996,12 @@ void StarvisService::playSpeechBytes(const QByteArray& bytes, const QString& ext
             }
         });
     }
+    // Refresh even for an existing player: headphones and display audio can
+    // disappear between announcements while the panel stays running.
+    const auto output = !defaultOutput.isNull() ? defaultOutput
+        : audioOutputs.isEmpty() ? QAudioDevice() : audioOutputs.first();
+    if (!output.isNull() && m_ttsAudio->device() != output)
+        m_ttsAudio->setDevice(output);
     m_ttsPlayer->setSource(QUrl());
     m_ttsPlayer->setSource(QUrl::fromLocalFile(path));
     m_ttsPending = false;

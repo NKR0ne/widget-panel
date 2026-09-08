@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Basic as Basic
 import QtQuick.Layouts
-import QtQuick.Dialogs
 import QtPanel.Native
 
 GlassCard {
@@ -18,17 +17,6 @@ GlassCard {
             + (n >= 3600 ? String(Math.floor(n / 60) % 60).padStart(2, "0") : Math.floor(n / 60))
             + ":" + String(n % 60).padStart(2, "0")
     }
-    FileDialog {
-        id: fileDialog
-        title: "Ouvrir un fichier audio"
-        nameFilters: ["Audio (*.mp3 *.flac *.m4a *.aac *.wav *.wma *.ogg *.opus *.aiff *.aif *.alac)"]
-        onAccepted: WinMedia.playFile(selectedFile)
-    }
-    FolderDialog {
-        id: folderDialog
-        title: "Ajouter un dossier multimedia"
-        onAccepted: WinMedia.addFolder(selectedFolder)
-    }
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 10
@@ -38,11 +26,6 @@ GlassCard {
             title: "Media Player"
             status: card.playback.loading ? "CHARGEMENT" : card.playback.connected ? (card.playback.playing ? "LECTURE" : "PAUSE") : "NATIF"
             statusColor: Theme.accent
-            IconButton {
-                buttonSize: 24; glyph: "\uE8E5"; tooltip: "Ouvrir un fichier"
-                enabled: !WinMedia.busy
-                onClicked: fileDialog.open()
-            }
             IconButton {
                 objectName: "mediaQueueToggle"
                 buttonSize: 24; glyph: "\uE8FD"; tooltip: "File de lecture"

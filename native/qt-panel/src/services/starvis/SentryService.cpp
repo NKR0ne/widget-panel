@@ -1016,7 +1016,7 @@ void SentryService::recordEvent(const QString& cameraId, const QImage& frame,
                             : QStringLiteral("info");
     if (m_starvis && m_starvis->state() && severity != QLatin1String("info"))
         m_starvis->state()->triggerAlert(text, severity);
-    if (severity == QLatin1String("alert") || atDoor) {
+    if (severity == QLatin1String("alert") || atDoor || person) {
         ++m_pendingAlerts;
         emit badgeCountChanged(m_pendingAlerts);
     }
@@ -1040,7 +1040,7 @@ void SentryService::recordEvent(const QString& cameraId, const QImage& frame,
             spoken = QStringLiteral("%1 : %2").arg(cameraLabel(cameraId), description);
         m_starvis->speakAlert(spoken);
         logActivity(cameraId, QStringLiteral("alert"),
-                    QStringLiteral("Annonce vocale : ") + spoken);
+                    QStringLiteral("Annonce vocale demandée : ") + spoken);
     }
     emit alertRaised(text, severity);
     logActivity(cameraId,
