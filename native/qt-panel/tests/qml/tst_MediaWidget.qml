@@ -20,6 +20,7 @@ TestCase {
         WinMedia.playlists = [{id: "mix", title: "Selection", source: "Media Player", count: 2}]
         WinMedia.queue = []
         WinMedia.busy = false
+        WinMedia.scanning = false
         WinMedia.error = ""
         WinMedia.lastAction = ""
         WinMedia.lastFile = ""
@@ -42,20 +43,51 @@ TestCase {
         mouseClick(open, 12, 12)
         compare(card.view, "library")
     }
-    function test_librarySearchSelectAndPersistence() {
+    function test_librarySelectAndPersistence() {
         card.view = "library"
         compare(Store.get("wp-media-view"), "library")
-        const search = findChild(card, "mediaSearch")
-        search.text = "Premier"
+        verify(!findChild(card, "mediaSearch"))
+        verify(!findChild(card, "mediaFolders"))
         const section = findChild(card, "mediaLibrarySection")
         section.currentIndex = 1
         section.activated(1)
         const list = findChild(card, "mediaLibraryList")
-        tryCompare(list, "count", 1)
+        tryCompare(list, "count", 2)
         waitForRendering(list)
         mouseClick(list, 90, 24)
         compare(WinMedia.lastFile, "file:///C:/Music/one.mp3")
         compare(card.view, "play")
+    }
+    function test_libraryRefresh() {
+        card.view = "library"
+        const refresh = findChild(card, "mediaRefresh")
+        verify(refresh.visible)
+        mouseClick(refresh, 12, 12)
+        compare(WinMedia.lastAction, "scan")
+        WinMedia.scanning = true
+        verify(!refresh.enabled)
+    }
+    function test_popupStaysAtSelector() {
+        card.view = "library"
+        const section = findChild(card, "mediaLibrarySection")
+        for (const offset of [0, 140]) {
+            card.x = 35
+            card.y = offset
+            waitForRendering(card)
+            mouseClick(section, 40, 14)
+            tryCompare(section.popup, "opened", true)
+            const position = section.popup.background.mapToItem(section, 0, 0)
+            verify(Math.abs(position.x) < 1, "Popup must align with selector left edge")
+            verify(Math.abs(position.y - section.height - 4) < 1,
+                   "Popup must open directly below selector, got " + position.y)
+            grabImage(testCase).save("media-popup-offset-" + offset + ".png")
+            card.y += 20
+            wait(50)
+            const moved = section.popup.background.mapToItem(section, 0, 0)
+            verify(Math.abs(moved.y - section.height - 4) < 1, "Popup must follow the moving card")
+            section.popup.close()
+            tryCompare(section.popup, "visible", false)
+        }
     }
     function test_seekCommitsUserPosition() {
         const seek = findChild(card, "mediaSeek")
@@ -73,6 +105,7 @@ TestCase {
         const grid = findChild(card, "mediaAlbumGrid")
         waitForRendering(grid)
         compare(grid.count, 2)
+        compare(Math.round(grid.width / grid.cellWidth), 4)
         mouseClick(grid, 40, 40)
         compare(browser.selectedAlbum, "one")
         const playAlbum = findChild(card, "mediaAlbumPlay")

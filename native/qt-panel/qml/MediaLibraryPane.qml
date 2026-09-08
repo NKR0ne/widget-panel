@@ -11,8 +11,6 @@ ColumnLayout {
     spacing: 6
     property int browseMode: Math.max(0, Math.min(3, Number(Store.get("wp-media-browse", 0))))
     property string selectedAlbum: ""
-    property string query: ""
-    property bool manageFolders: false
     signal playRequested()
     component LibraryScrollBar: Basic.ScrollBar {
         id: bar
@@ -28,33 +26,16 @@ ColumnLayout {
         background: Item {}
     }
     onBrowseModeChanged: { selectedAlbum = ""; Store.set("wp-media-browse", browseMode) }
-    function matches(item) { return [item.title || "", item.artist || "", item.album || ""].join(" ").toLowerCase().indexOf(query.toLowerCase()) >= 0 }
-    readonly property var albums: WinMedia.albums.filter(function(a) { return matches(a) })
+    readonly property var albums: WinMedia.albums
     readonly property var selected: WinMedia.albums.find(function(a) { return a.id === selectedAlbum }) || ({})
     readonly property var rows: {
         if (browseMode === 3) return WinMedia.queue
-        if (browseMode === 2) return WinMedia.playlists.filter(function(p) { return matches(p) })
-        let tracks = WinMedia.library.filter(function(t) { return (!selectedAlbum || t.albumId === selectedAlbum) && matches(t) })
+        if (browseMode === 2) return WinMedia.playlists
+        let tracks = WinMedia.library.filter(function(t) { return !selectedAlbum || t.albumId === selectedAlbum })
         if (selectedAlbum) tracks.sort(function(a,b) { return Number(a.discNumber || 0) - Number(b.discNumber || 0) || Number(a.trackNumber || 0) - Number(b.trackNumber || 0) })
         return tracks
     }
     FileDialog { id: playlistDialog; title: "Importer une playlist"; nameFilters: ["Playlists (*.wpl *.m3u *.m3u8 *.pls *.xspf *.zpl)"]; onAccepted: WinMedia.importPlaylist(selectedFile) }
-    FolderDialog { id: folderDialog; title: "Ajouter un dossier de musique"; onAccepted: WinMedia.addFolder(selectedFolder) }
-    RowLayout {
-        Layout.fillWidth: true
-        Basic.TextField {
-            id: search
-            objectName: "mediaSearch"
-            Layout.fillWidth: true; Layout.minimumWidth: 40; Layout.preferredHeight: 28
-            placeholderText: "Album, artiste, titre..."; color: Theme.textPrimary; placeholderTextColor: Theme.textSecondary
-            font.pixelSize: 11
-            onTextChanged: searchDelay.restart()
-            Timer { id: searchDelay; interval: 120; onTriggered: pane.query = search.text }
-            background: Rectangle { radius: 4; color: Theme.cardFill; border.color: Theme.cardStroke }
-        }
-        IconButton { buttonSize: 24; glyph: "\uE8B7"; tooltip: "Dossiers Windows et personnels"; active: pane.manageFolders; onClicked: pane.manageFolders = !pane.manageFolders }
-        IconButton { objectName: "mediaRefresh"; buttonSize: 24; glyph: "\uE72C"; tooltip: "Actualiser la bibliotheque"; enabled: !WinMedia.scanning; onClicked: WinMedia.scanLibrary() }
-    }
     RowLayout {
         Layout.fillWidth: true
         Basic.ComboBox {
@@ -92,11 +73,25 @@ ColumnLayout {
                 }
             }
             popup: Basic.Popup {
+                id: libraryPopup
                 objectName: "mediaLibraryPopup"
+                parent: Overlay.overlay
                 popupType: Popup.Item
-                y: section.height + 4; width: Math.max(section.width, 168)
+                width: Math.max(section.width, 168)
+                margins: 4
                 padding: 4
                 implicitHeight: contentItem.implicitHeight + topPadding + bottomPadding
+                function positionAtSelector() {
+                    if (!parent) return
+                    // Use scene coordinates once, outside the card's layered
+                    // and scrolling content in the composition host.
+                    const below = section.mapToItem(parent, 0, section.height + 4)
+                    const above = section.mapToItem(parent, 0, -4)
+                    x = Math.max(4, Math.min(below.x, parent.width - width - 4))
+                    y = below.y + height <= parent.height - 4 ? below.y : Math.max(4, above.y - height)
+                }
+                onAboutToShow: positionAtSelector()
+                Timer { interval: 16; running: libraryPopup.visible; repeat: true; onTriggered: libraryPopup.positionAtSelector() }
                 background: Rectangle { color: Theme.panelSolid; radius: 6; border.color: Theme.cardStroke }
                 contentItem: ListView {
                     implicitHeight: contentHeight
@@ -107,28 +102,8 @@ ColumnLayout {
         }
         Item { Layout.fillWidth: true }
         Text { text: WinMedia.scanning ? "Actualisation..." : (pane.browseMode === 0 && !pane.selectedAlbum ? pane.albums.length + " albums" : pane.rows.length + " elements"); color: Theme.textSecondary; font.pixelSize: 9 }
+        IconButton { objectName: "mediaRefresh"; buttonSize: 24; glyph: "\uE72C"; tooltip: "Actualiser la bibliotheque"; enabled: !WinMedia.scanning; onClicked: WinMedia.scanLibrary() }
         IconButton { visible: pane.browseMode === 2; buttonSize: 24; glyph: "\uE8B5"; tooltip: "Importer une playlist"; onClicked: playlistDialog.open() }
-    }
-    ColumnLayout {
-        visible: pane.manageFolders
-        Layout.fillWidth: true; spacing: 2
-        RowLayout {
-            Layout.fillWidth: true
-            Text { text: "Bibliotheque Windows"; color: Theme.textSecondary; font.pixelSize: 10; Layout.fillWidth: true }
-            IconButton { buttonSize: 24; glyph: "\uE710"; tooltip: "Ajouter un dossier"; onClicked: folderDialog.open() }
-        }
-        ListView {
-            objectName: "mediaFolders"
-            Layout.fillWidth: true; Layout.preferredHeight: Math.min(60, count * 30)
-            clip: true; model: WinMedia.folders
-            ScrollBar.vertical: LibraryScrollBar {}
-            delegate: Item {
-                required property string modelData
-                width: ListView.view.width; height: 30
-                Text { anchors.left: parent.left; anchors.right: remove.left; anchors.rightMargin: 8; anchors.verticalCenter: parent.verticalCenter; text: modelData; elide: Text.ElideMiddle; color: Theme.textSecondary; font.pixelSize: 9 }
-                IconButton { id: remove; anchors.right: parent.right; anchors.rightMargin: 12; buttonSize: 24; glyph: "\uE711"; tooltip: "Masquer ce dossier dans Qt Panel"; onClicked: WinMedia.removeFolder(modelData) }
-            }
-        }
     }
     RowLayout {
         visible: pane.selectedAlbum !== "" && pane.browseMode === 0
@@ -143,8 +118,8 @@ ColumnLayout {
         Layout.fillWidth: true; Layout.fillHeight: true
         visible: pane.browseMode === 0 && !pane.selectedAlbum
         clip: true
-        cellWidth: width / Math.max(2, Math.floor(width / 135))
-        cellHeight: cellWidth + 47
+        cellWidth: width / (2 * Math.max(2, Math.floor(width / 135)))
+        cellHeight: cellWidth + 40
         model: pane.albums
         ScrollBar.vertical: LibraryScrollBar {}
         delegate: Item {
@@ -152,15 +127,15 @@ ColumnLayout {
             width: grid.cellWidth; height: grid.cellHeight
             Rectangle {
                 id: art
-                x: 4; y: 4; width: parent.width - 12; height: width
+                x: 2; y: 2; width: parent.width - 6; height: width
                 radius: 6; color: Qt.darker(Theme.cardFill, 1.3)
                 Image { anchors.fill: parent; anchors.margins: 1; source: modelData.artwork || ""; sourceSize: Qt.size(320,320); fillMode: Image.PreserveAspectFit; asynchronous: true }
                 Text { anchors.centerIn: parent; visible: !modelData.artwork; text: "\uE93C"; color: Theme.textSecondary; font.family: "Segoe Fluent Icons"; font.pixelSize: 30 }
                 MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: pane.selectedAlbum = modelData.id }
             }
-            Text { x: 4; y: art.height + 10; width: parent.width - 37; text: modelData.title; elide: Text.ElideRight; color: Theme.textPrimary; font.pixelSize: 11 }
-            Text { x: 4; y: art.height + 27; width: parent.width - 37; text: modelData.artist || modelData.count + " titres"; elide: Text.ElideRight; color: Theme.textSecondary; font.pixelSize: 9 }
-            IconButton { anchors.right: parent.right; anchors.rightMargin: 8; y: art.height + 10; buttonSize: 24; glyph: "\uE768"; tooltip: "Lire l'album"; enabled: !WinMedia.busy; onClicked: { WinMedia.playAlbum(modelData.id); pane.playRequested() } }
+            Text { x: 2; y: art.height + 8; width: parent.width - 8; text: modelData.title; elide: Text.ElideRight; color: Theme.textPrimary; font.pixelSize: 10 }
+            Text { x: 2; y: art.height + 25; width: parent.width - 30; text: modelData.artist || modelData.count + " titres"; elide: Text.ElideRight; color: Theme.textSecondary; font.pixelSize: 9 }
+            IconButton { anchors.right: parent.right; anchors.rightMargin: 4; y: art.height + 21; buttonSize: 20; glyph: "\uE768"; tooltip: "Lire l'album"; enabled: !WinMedia.busy; onClicked: { WinMedia.playAlbum(modelData.id); pane.playRequested() } }
         }
         Text { anchors.centerIn: parent; width: parent.width - 12; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap; visible: !grid.count && !WinMedia.scanning; text: "Aucun album"; color: Theme.textSecondary; font.pixelSize: 11 }
     }
