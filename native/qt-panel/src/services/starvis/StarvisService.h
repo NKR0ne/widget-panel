@@ -34,6 +34,7 @@ class StocksModel;
 class WeatherService;
 class WorkstationClient;
 class WindowsAudioFocus;
+class AudioOutputRecovery;
 
 // Native Starvis chat, briefing, speech, context injection, vision, and gated
 // agent actions. Local reasoning, vision, ASR, and TTS use independent
@@ -193,6 +194,10 @@ private:
     QVariantMap voiceConfig() const;
     void playSpeechBytes(const QByteArray& bytes, const QString& extension,
                          const QString& fallbackText);
+    void playReadySpeechBytes(const QByteArray& bytes, const QString& extension,
+                             const QString& fallbackText);
+    void withAudioOutput(std::function<void()> ready);
+    void startSpeech(const QString& clean);
     void fallbackSpeech(const QString& text, const QString& error);
     void speakInternal(const QString& text, bool alert);
     void beginAlertPlayback();
@@ -219,6 +224,7 @@ private:
     SentryService* m_sentry = nullptr;
     SpeechService* m_speech = nullptr;
     WindowsAudioFocus* m_alertAudioFocus = nullptr;
+    AudioOutputRecovery* m_audioRecovery = nullptr;
     QNetworkReply* m_activeStream = nullptr;
     QPointer<BackendOperation> m_activeBackendOperation;
     QString m_pendingText;      // streamed text of the in-flight turn
@@ -240,9 +246,7 @@ private:
     int m_ttsPlaybackGeneration = 0;
     QPointer<BackendOperation> m_ttsOperation;
     bool m_ttsPending = false;
-    bool m_nativeSpeechPlaying = false;
     bool m_speechIsAlert = false;
-    int m_nativeSpeechGeneration = 0;
     bool m_localModelsTransitioning = false;
     QString m_lastProvider;
     QVariantList m_actions; // newest first; each: {id,type,summary,detail,status,verdict,reason,severity}

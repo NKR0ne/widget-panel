@@ -1,6 +1,7 @@
 #include <QtTest>
 
 #include "core/HttpClient.h"
+#include "core/AudioOutputRecovery.h"
 #include "core/TextFix.h"
 #include "core/SettingsStore.h"
 #include "services/news/NewsService.h"
@@ -45,6 +46,72 @@ class TestQtPanel : public QObject {
     Q_OBJECT
 
 private slots:
+    void audioOutputAlreadyAvailable()
+    {
+        int wakes = 0;
+        int completions = 0;
+        AudioOutputRecovery recovery([] { return true; }, [&] { ++wakes; });
+        recovery.request([&](bool ready) { QVERIFY(ready); ++completions; });
+        QCOMPARE(completions, 1);
+        QCOMPARE(wakes, 0);
+    }
+
+    void audioOutputReturnsAfterWake()
+    {
+        bool available = false;
+        int wakes = 0;
+        int completions = 0;
+        AudioOutputRecovery recovery([&] { return available; }, [&] { ++wakes; },
+                                     nullptr, 500, 10, 20);
+        recovery.request([&](bool ready) { QVERIFY(ready); ++completions; });
+        QCOMPARE(wakes, 1);
+        QCOMPARE(completions, 0);
+        available = true;
+        QTRY_COMPARE_WITH_TIMEOUT(completions, 1, 400);
+        QTest::qWait(40);
+        QCOMPARE(completions, 1);
+    }
+
+    void audioOutputRecoveryTimesOut()
+    {
+        int completions = 0;
+        AudioOutputRecovery recovery([] { return false; }, [] {}, nullptr, 40, 10, 20);
+        recovery.request([&](bool ready) { QVERIFY(!ready); ++completions; });
+        QTRY_COMPARE_WITH_TIMEOUT(completions, 1, 300);
+        QTest::qWait(60);
+        QCOMPARE(completions, 1);
+    }
+
+    void audioOutputRecoveryCancelledOrReplaced()
+    {
+        bool available = false;
+        int obsolete = 0;
+        int current = 0;
+        AudioOutputRecovery recovery([&] { return available; }, [] {}, nullptr, 300, 10, 20);
+        recovery.request([&](bool) { ++obsolete; });
+        recovery.cancel();
+        available = true;
+        QTest::qWait(50);
+        QCOMPARE(obsolete, 0);
+        available = false;
+        recovery.request([&](bool) { ++obsolete; });
+        recovery.request([&](bool ready) { QVERIFY(ready); ++current; });
+        available = true;
+        QTRY_COMPARE_WITH_TIMEOUT(current, 1, 250);
+        QCOMPARE(obsolete, 0);
+    }
+
+    void audioOutputRecoveryDestroyed()
+    {
+        int completions = 0;
+        {
+            AudioOutputRecovery recovery([] { return false; }, [] {}, nullptr, 20, 5, 5);
+            recovery.request([&](bool) { ++completions; });
+        }
+        QTest::qWait(50);
+        QCOMPARE(completions, 0);
+    }
+
     void mediaNativePlayerIntegration()
     {
         if (!qEnvironmentVariableIsSet("QT_PANEL_TEST_LOCAL_PLAYER"))
