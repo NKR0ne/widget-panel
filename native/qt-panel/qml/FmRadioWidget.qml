@@ -11,6 +11,36 @@ GlassCard {
     activeFocusOnTab: true
     Accessible.role: Accessible.Pane
     Accessible.name: title
+    property var activeFilter: null
+    readonly property var displayedStations: Radio.favoritesMode ? Radio.favorites : Radio.stations
+    function isFavorite(id) {
+        return Radio.favorites.some(function(station) { return station.id === id })
+    }
+    function closeFilter() { activeFilter = null }
+    function openFilter(selector) {
+        if (activeFilter === selector) { closeFilter(); return }
+        activeFilter = selector
+        filterOptions.currentIndex = selector.currentIndex
+        filterOptions.forceActiveFocus()
+        filterOptions.positionViewAtIndex(selector.currentIndex, ListView.Contain)
+    }
+    function chooseFilter(index) {
+        const selector = activeFilter
+        if (!selector || index < 0 || index >= selector.model.length) return
+        closeFilter()
+        selector.activated(index)
+        selector.forceActiveFocus()
+    }
+    onVisibleChanged: if (!visible) closeFilter()
+    TapHandler {
+        onPressedChanged: {
+            if (!pressed || !card.activeFilter) return
+            const p = filterRow.mapFromItem(card, point.position.x, point.position.y)
+            const inMenu = p.x >= filterMenu.x && p.x <= filterMenu.x + filterMenu.width
+                && p.y >= filterMenu.y && p.y <= filterMenu.y + filterMenu.height
+            if (!inMenu && (p.y < 0 || p.y > filterRow.height)) card.closeFilter()
+        }
+    }
 
     readonly property var regionOptions: [
         { label: "R\u00e9gion", value: "local" },
@@ -47,26 +77,31 @@ GlassCard {
         Radio.showLibrary()
     }
 
-    component FilterCombo: Basic.ComboBox {
+    component FilterCombo: Basic.Button {
         id: selector
         property string accessibleLabel
-        textRole: "label"
+        property var model: []
+        property int currentIndex: 0
+        signal activated(int index)
         font.pixelSize: 9
         leftPadding: 8
         rightPadding: 22
         Accessible.name: accessibleLabel
-        onVisibleChanged: if (!visible) popup.close()
+        Accessible.role: Accessible.ComboBox
+        onClicked: card.openFilter(selector)
+        Keys.onDownPressed: card.openFilter(selector)
+        Keys.onUpPressed: card.openFilter(selector)
         contentItem: Text {
-            text: selector.displayText
+            text: selector.model[selector.currentIndex].label
             font: selector.font
             color: Theme.textPrimary
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
         }
-        indicator: Text {
+        Text {
             x: selector.width - width - 7
             anchors.verticalCenter: parent.verticalCenter
-            text: "\uE70D"
+            text: card.activeFilter === selector ? "\uE70E" : "\uE70D"
             font.family: "Segoe Fluent Icons"
             font.pixelSize: 8
             color: Theme.textSecondary
@@ -75,63 +110,6 @@ GlassCard {
             radius: 6
             color: selector.hovered ? Theme.hover : Qt.rgba(1, 1, 1, 0.05)
             border.color: selector.activeFocus ? Theme.accent : Theme.cardStroke
-        }
-        delegate: Basic.ItemDelegate {
-            id: option
-            required property int index
-            required property var modelData
-            width: selector.popup.availableWidth
-            height: 28
-            highlighted: selector.highlightedIndex === index
-            contentItem: Text {
-                text: option.modelData.label
-                font: selector.font
-                color: Theme.textPrimary
-                verticalAlignment: Text.AlignVCenter
-                elide: Text.ElideRight
-            }
-            background: Rectangle {
-                radius: 4
-                color: option.highlighted ? Theme.activeFill
-                      : option.hovered ? Theme.hover : "transparent"
-            }
-        }
-        popup: Basic.Popup {
-            id: filterPopup
-            parent: Overlay.overlay
-            popupType: Popup.Item
-            width: Math.max(selector.width, 132)
-            margins: 4
-            padding: 4
-            implicitHeight: Math.min(260,
-                contentItem.implicitHeight + topPadding + bottomPadding)
-            function positionAtSelector() {
-                if (!parent) return
-                const below = selector.mapToItem(parent, 0, selector.height + 3)
-                const above = selector.mapToItem(parent, 0, -3)
-                x = Math.max(4, Math.min(below.x, parent.width - width - 4))
-                y = below.y + height <= parent.height - 4
-                    ? below.y : Math.max(4, above.y - height)
-            }
-            onAboutToShow: positionAtSelector()
-            Timer {
-                interval: 16
-                running: filterPopup.visible
-                repeat: true
-                onTriggered: filterPopup.positionAtSelector()
-            }
-            background: Rectangle {
-                color: Theme.panelSolid
-                radius: 6
-                border.color: Theme.cardStroke
-            }
-            contentItem: ListView {
-                implicitHeight: contentHeight
-                clip: true
-                model: selector.delegateModel
-                currentIndex: selector.highlightedIndex
-                boundsBehavior: Flickable.StopAtBounds
-            }
         }
     }
 
@@ -142,7 +120,7 @@ GlassCard {
     Keys.onDownPressed: Radio.volume = Math.max(0, Radio.volume - 0.05)
 
     Component.onCompleted: {
-        if (Radio.stations.length === 0 && !Radio.loading)
+        if (!Radio.favoritesMode && Radio.stations.length === 0 && !Radio.loading)
             Radio.browse(Radio.query, Radio.region, Radio.category)
     }
 
@@ -322,32 +300,142 @@ GlassCard {
 
         Row {
             width: parent.width
+            height: 26
+            spacing: 4
+            Repeater {
+                model: ["Stations", "Favoris"]
+                delegate: Basic.Button {
+                    required property int index
+                    required property string modelData
+                    objectName: index === 1 ? "radioFavoritesTab" : "radioStationsTab"
+                    width: (parent.width - parent.spacing) / 2
+                    height: 26
+                    checked: Radio.favoritesMode === (index === 1)
+                    text: modelData
+                    Accessible.role: Accessible.PageTab
+                    contentItem: Text {
+                        text: parent.text
+                        color: parent.checked ? Theme.textPrimary : Theme.textSecondary
+                        font.pixelSize: 10
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle {
+                        radius: 6
+                        color: parent.checked ? Theme.activeFill : parent.hovered ? Theme.hover : "transparent"
+                    }
+                    onClicked: {
+                        card.closeFilter()
+                        Radio.favoritesMode = index === 1
+                        if (!Radio.favoritesMode && Radio.stations.length === 0 && !Radio.loading)
+                            card.runBrowse()
+                    }
+                }
+            }
+        }
+
+        Item {
+            id: filterRow
+            visible: !Radio.favoritesMode
+            z: 10
+            width: parent.width
             height: 28
-            spacing: 7
 
             FilterCombo {
                 id: regionFilter
                 objectName: "radioRegionFilter"
-                width: (parent.width - parent.spacing) * 0.40
+                width: (parent.width - 7) * 0.40
                 height: parent.height
                 model: card.regionOptions
                 currentIndex: card.optionIndex(card.regionOptions, Radio.region)
                 accessibleLabel: "Filtrer par r\u00e9gion"
-                onActivated: card.runBrowse()
+                onActivated: function(index) {
+                    Radio.browse(stationSearch.text, card.regionOptions[index].value, Radio.category)
+                }
             }
             FilterCombo {
                 id: categoryFilter
                 objectName: "radioCategoryFilter"
-                width: parent.width - regionFilter.width - parent.spacing
+                x: regionFilter.width + 7
+                width: parent.width - x
                 height: parent.height
                 model: card.categoryOptions
                 currentIndex: card.optionIndex(card.categoryOptions, Radio.category)
                 accessibleLabel: "Filtrer par type ou genre"
-                onActivated: card.runBrowse()
+                onActivated: function(index) {
+                    Radio.browse(stationSearch.text, Radio.region, card.categoryOptions[index].value)
+                }
+            }
+
+            // Stay in the card's scene subtree: no host/window/overlay coordinates.
+            Rectangle {
+                id: filterMenu
+                objectName: "radioFilterMenu"
+                visible: card.activeFilter !== null
+                x: card.activeFilter ? card.activeFilter.x : 0
+                y: filterRow.height + 3
+                width: card.activeFilter ? Math.min(filterRow.width - x, Math.max(132, card.activeFilter.width)) : 0
+                height: Math.min(260, filterOptions.contentHeight + 8,
+                                 Math.max(36, filterRow.parent.height - filterRow.y - y))
+                radius: 6
+                color: Theme.panelSolid
+                border.color: Theme.cardStroke
+                ListView {
+                    id: filterOptions
+                    objectName: "radioFilterOptions"
+                    anchors.fill: parent
+                    anchors.margins: 4
+                    model: card.activeFilter ? card.activeFilter.model : []
+                    clip: true
+                    keyNavigationEnabled: true
+                    keyNavigationWraps: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    Keys.onReturnPressed: card.chooseFilter(currentIndex)
+                    Keys.onEnterPressed: card.chooseFilter(currentIndex)
+                    Keys.onSpacePressed: card.chooseFilter(currentIndex)
+                    Keys.onEscapePressed: {
+                        const selector = card.activeFilter
+                        card.closeFilter()
+                        if (selector) selector.forceActiveFocus()
+                    }
+                    Keys.onTabPressed: {
+                        const selector = card.activeFilter
+                        card.closeFilter()
+                        if (selector) selector.nextItemInFocusChain().forceActiveFocus()
+                    }
+                    ScrollBar.vertical: Basic.ScrollBar {
+                        width: 5
+                        padding: 0
+                        contentItem: Rectangle { radius: 2; color: Theme.textSecondary; implicitHeight: 20 }
+                        background: Item {}
+                    }
+                    delegate: Basic.ItemDelegate {
+                        id: filterOption
+                        required property int index
+                        required property var modelData
+                        width: filterOptions.width - 6
+                        height: 28
+                        highlighted: filterOptions.currentIndex === index
+                        contentItem: Text {
+                            text: filterOption.modelData.label
+                            font.pixelSize: 9
+                            color: Theme.textPrimary
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                        }
+                        background: Rectangle {
+                            radius: 4
+                            color: filterOption.highlighted ? Theme.activeFill
+                                  : filterOption.hovered ? Theme.hover : "transparent"
+                        }
+                        onClicked: card.chooseFilter(index)
+                    }
+                }
             }
         }
 
         Rectangle {
+            visible: !Radio.favoritesMode
             width: parent.width
             height: 28
             radius: 7
@@ -421,8 +509,15 @@ GlassCard {
             height: Math.max(40, parent.height - y - stationFooter.height - parent.spacing)
             clip: true
             spacing: 2
-            model: Radio.stations
+            model: card.displayedStations
             boundsBehavior: Flickable.StopAtBounds
+            Text {
+                anchors.centerIn: parent
+                visible: Radio.favoritesMode && stationList.count === 0
+                text: "Aucune station favorite"
+                color: Theme.textSecondary
+                font.pixelSize: 10
+            }
             ScrollBar.vertical: Basic.ScrollBar {
                 width: 6
                 padding: 0
@@ -456,7 +551,7 @@ GlassCard {
                 }
                 Text {
                     id: detail
-                    anchors.right: parent.right
+                    anchors.right: favoriteButton.left
                     anchors.rightMargin: 7
                     anchors.verticalCenter: parent.verticalCenter
                     text: modelData.frequency || modelData.codec
@@ -475,6 +570,28 @@ GlassCard {
                         Radio.play()
                     }
                 }
+                Basic.Button {
+                    id: favoriteButton
+                    objectName: "radioFavorite-" + stationRow.modelData.id
+                    anchors.right: parent.right
+                    width: 26
+                    height: parent.height
+                    readonly property bool saved: card.isFavorite(stationRow.modelData.id)
+                    Accessible.name: (saved ? "Retirer des favoris : " : "Ajouter aux favoris : ") + stationRow.modelData.name
+                    Basic.ToolTip.visible: hovered
+                    Basic.ToolTip.delay: 600
+                    Basic.ToolTip.text: saved ? "Retirer des favoris" : "Ajouter aux favoris"
+                    contentItem: Text {
+                        text: favoriteButton.saved ? "\uE735" : "\uE734"
+                        font.family: "Segoe Fluent Icons"
+                        font.pixelSize: 12
+                        color: favoriteButton.saved ? Theme.accent : Theme.textSecondary
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    background: Rectangle { radius: 4; color: parent.hovered ? Theme.hover : "transparent" }
+                    onClicked: Radio.toggleFavorite(stationRow.modelData.id)
+                }
             }
         }
 
@@ -483,8 +600,8 @@ GlassCard {
             objectName: "radioFooter"
             width: parent.width
             horizontalAlignment: Text.AlignRight
-            text: (Radio.libraryMode ? "Biblioth\u00e8que locale" : "R\u00e9sultats")
-                  + "  \u00b7  " + Radio.stations.length + " stations  \u00b7  Radio Browser"
+            text: (Radio.favoritesMode ? "Favoris" : Radio.libraryMode ? "Biblioth\u00e8que locale" : "R\u00e9sultats")
+                  + "  \u00b7  " + card.displayedStations.length + " stations  \u00b7  Radio Browser"
             color: Qt.rgba(1, 1, 1, 0.28)
             font.pixelSize: 8
         }

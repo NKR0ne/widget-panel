@@ -18,6 +18,8 @@ class SettingsStore;
 class RadioService final : public QObject {
     Q_OBJECT
     Q_PROPERTY(QVariantList stations READ stations NOTIFY stationsChanged)
+    Q_PROPERTY(QVariantList favorites READ favorites NOTIFY favoritesChanged)
+    Q_PROPERTY(bool favoritesMode READ favoritesMode WRITE setFavoritesMode NOTIFY stateChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY stateChanged)
     Q_PROPERTY(bool playing READ playing NOTIFY stateChanged)
     Q_PROPERTY(bool buffering READ buffering NOTIFY stateChanged)
@@ -38,6 +40,9 @@ public:
     RadioService(SettingsStore* settings, HttpClient* http, QObject* parent = nullptr);
 
     QVariantList stations() const { return m_stations; }
+    QVariantList favorites() const { return m_favorites; }
+    bool favoritesMode() const { return m_favoritesMode; }
+    void setFavoritesMode(bool enabled);
     bool loading() const { return m_loading; }
     bool playing() const;
     bool buffering() const { return m_buffering; }
@@ -60,6 +65,7 @@ public:
                             const QString& category);
     Q_INVOKABLE void showLibrary();
     Q_INVOKABLE void selectStation(const QString& stationId);
+    Q_INVOKABLE void toggleFavorite(const QString& stationId);
     Q_INVOKABLE void toggle();
     Q_INVOKABLE void play();
     Q_INVOKABLE void pause();
@@ -71,6 +77,7 @@ public:
 
 signals:
     void stationsChanged();
+    void favoritesChanged();
     void stateChanged();
     void currentStationChanged();
     void metadataChanged();
@@ -91,6 +98,7 @@ private:
     QAudioOutput* m_audioOutput = nullptr;
     QVariantList m_libraryStations;
     QVariantList m_stations;
+    QVariantList m_favorites;
     QVariantMap m_current;
     QString m_query;
     QString m_region = QStringLiteral("local");
@@ -100,6 +108,7 @@ private:
     bool m_loading = false;
     bool m_buffering = false;
     bool m_libraryMode = true;
+    bool m_favoritesMode = false;
     int m_requestId = 0;
 };
 

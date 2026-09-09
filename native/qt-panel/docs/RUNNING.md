@@ -21,7 +21,7 @@ powershell -ExecutionPolicy Bypass -File build.ps1 -Generator NMake # fallback i
 powershell -ExecutionPolicy Bypass -File launch.ps1              # launch existing build
 powershell -ExecutionPolicy Bypass -File kill-build-processes.ps1 # cleanup only
 ```
-Output: `build\nmake-release\qt-panel.exe`. Without `-Deploy`, use `launch.ps1`;
+Output: `build\release\qt-panel.exe`. Without `-Deploy`, use `launch.ps1`;
 it configures the Qt DLL, QML import, WebEngine process, resource, and locale
 paths from `C:\Qt\6.10.3\msvc2022_64`. A deployed build is self-contained.
 `build.ps1` runs `kill-build-processes.ps1` before every build by default and
@@ -35,6 +35,29 @@ checks startup liveness, and retries early exits up to three times. Diagnostics
 are written to `%APPDATA%\qt-panel\startup-launch.log`. Login launches preserve
 the panel's initial visibility for 15 seconds so Explorer's transient focus and
 pointer events cannot immediately dismiss an otherwise healthy startup.
+
+## Deployment backups
+The usual installed application is `%LOCALAPPDATA%\WidgetPanel\qt-panel.exe`.
+Install a validated release with `installer\install.ps1 -Autostart`.
+Before replacing a different executable, this installer verifies a SHA-256 copy
+at `qt-panel.exe.bak` and retains five timestamped `.exe.bak` files in `backups\`.
+A failed backup aborts installation before the running app is stopped.
+Reinstalling the identical executable preserves the existing rollback point.
+
+Restore the previous executable with:
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "C:\Users\nicol\source\repos\widget-panel-qt\native\qt-panel\installer\install.ps1" -RestoreBackup
+Start-Process "C:\Users\nicol\AppData\Local\WidgetPanel\qt-panel.exe"
+```
+These are executable backups, not complete runtime or user-settings snapshots.
+If a release changes Qt/runtime dependencies, restore matching dependencies too.
+A previous executable is not necessarily a known-good build: validate startup
+before deploying. The independent runtime check below starts the real radio
+card in isolated profiles in both windowed and composition hosts and exits
+each after five seconds; it does not configure camera, speech, or model services.
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests\test_radio_startup.ps1 -Executable build\release\qt-panel.exe
+```
 
 ## Stall recovery
 - If a build or Qt tool invocation is interrupted, run

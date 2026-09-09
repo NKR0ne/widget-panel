@@ -1525,6 +1525,62 @@ private slots:
         QCOMPARE(station.value(QStringLiteral("bitrate")).toInt(), 128);
     }
 
+    void radioFavoritesSurviveRestartAndDirectoryChanges()
+    {
+        QTemporaryDir directory;
+        const QString path = directory.filePath("settings.json");
+        const QJsonArray stations{
+            QJsonObject{{"id", "one"}, {"name", "Station One"}, {"url", "https://radio.example/one"}},
+            QJsonObject{{"id", "two"}, {"name", "Station Two"}, {"url", "https://radio.example/two"}},
+        };
+        {
+            SettingsStore settings(path);
+            settings.set(QStringLiteral("wp-radio-cache"), QString::fromUtf8(
+                QJsonDocument(stations).toJson(QJsonDocument::Compact)));
+            HttpClient http;
+            RadioService radio(&settings, &http);
+            QSignalSpy changed(&radio, &RadioService::favoritesChanged);
+            radio.toggleFavorite(QStringLiteral("unknown"));
+            QVERIFY(radio.favorites().isEmpty());
+            radio.toggleFavorite(QStringLiteral("one"));
+            radio.toggleFavorite(QStringLiteral("two"));
+            QCOMPARE(radio.favorites().size(), 2);
+            QCOMPARE(changed.count(), 2);
+            radio.setFavoritesMode(true);
+            settings.set(QStringLiteral("wp-radio-cache"), QStringLiteral("[]"));
+            settings.flush();
+        }
+        {
+            SettingsStore settings(path);
+            HttpClient http;
+            RadioService radio(&settings, &http);
+            QVERIFY(radio.stations().isEmpty());
+            QVERIFY(radio.favoritesMode());
+            QCOMPARE(radio.favorites().size(), 2);
+            radio.selectStation(QStringLiteral("two"));
+            QCOMPARE(radio.stationName(), QStringLiteral("Station Two"));
+            radio.next();
+            QCOMPARE(radio.currentStationId(), QStringLiteral("one"));
+            radio.previous();
+            QCOMPARE(radio.currentStationId(), QStringLiteral("two"));
+            radio.toggleFavorite(QStringLiteral("two"));
+            QCOMPARE(radio.currentStationId(), QStringLiteral("two"));
+            QCOMPARE(radio.favorites().size(), 1);
+            radio.toggleFavorite(QStringLiteral("two")); // Current station can be saved again offline.
+            QCOMPARE(radio.favorites().size(), 2);
+            radio.toggleFavorite(QStringLiteral("one"));
+            radio.toggleFavorite(QStringLiteral("two"));
+            radio.next();
+            QCOMPARE(radio.currentStationId(), QStringLiteral("two"));
+            settings.flush();
+        }
+        SettingsStore settings(path);
+        HttpClient http;
+        RadioService restored(&settings, &http);
+        QVERIFY(restored.favoritesMode());
+        QVERIFY(restored.favorites().isEmpty());
+    }
+
     void radioFiltersSurviveRestart()
     {
         QTemporaryDir directory;

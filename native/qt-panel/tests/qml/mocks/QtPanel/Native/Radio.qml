@@ -2,6 +2,8 @@ pragma Singleton
 import QtQuick
 QtObject {
     property var stations: []
+    property var favorites: []
+    property bool favoritesMode: false
     property string query: ""
     property string region: "local"
     property string category: "all"
@@ -23,6 +25,14 @@ QtObject {
     }
     function showLibrary() { browse("", "local", "all") }
     function selectStation(id) { currentStationId = id }
+    function toggleFavorite(id) {
+        if (favorites.some(function(station) { return station.id === id }))
+            favorites = favorites.filter(function(station) { return station.id !== id })
+        else {
+            const station = stations.find(function(station) { return station.id === id })
+            if (station) favorites = favorites.concat([station])
+        }
+    }
     function play() { playing = true }
     function toggle() { playing = !playing }
     function previous() {}

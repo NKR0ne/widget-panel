@@ -94,6 +94,8 @@ set_property(SOURCE src/services/starvis/StarvisService.cpp
 target_include_directories(qt-panel PRIVATE src ${WINRT_GENERATED} ${WINAPPSDK_VENDOR}/include)
 set_property(SOURCE src/main.cpp src/services/media/WindowsMediaService.cpp
     APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/services/media/WindowsMediaService.h")
+set_property(SOURCE src/main.cpp src/services/radio/RadioService.cpp
+    APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/services/radio/RadioService.h")
 target_compile_options(qt-panel PRIVATE /utf-8 /W4)
 target_link_libraries(qt-panel PRIVATE
     Qt6::Quick

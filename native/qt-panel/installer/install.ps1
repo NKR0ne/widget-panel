@@ -3,14 +3,18 @@
 # shortcut, and optionally enables autostart. Run build.ps1 -Deploy first.
 #
 #   powershell -ExecutionPolicy Bypass -File installer\install.ps1 [-Autostart] [-Uninstall]
+#   powershell -ExecutionPolicy Bypass -File installer\install.ps1 -RestoreBackup
 
 param(
     [switch]$Autostart,
-    [switch]$Uninstall
+    [switch]$Uninstall,
+    [switch]$RestoreBackup
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'DeploymentBackup.ps1')
+if ($RestoreBackup -and $Uninstall) { throw 'Choose either -RestoreBackup or -Uninstall.' }
 
 $root    = Split-Path $PSScriptRoot -Parent
 $releaseSrc = Join-Path $root 'build\release'
@@ -34,17 +38,30 @@ if ($Uninstall) {
     return
 }
 
+if ($RestoreBackup) {
+    if (-not (Test-Path -LiteralPath "$exe.bak" -PathType Leaf)) {
+        throw "No deployed executable backup found at $exe.bak"
+    }
+    Get-Process -Name 'qt-panel' -ErrorAction SilentlyContinue | Stop-Process -Force
+    Restore-DeployedExecutable -Executable $exe
+    Write-Host "Executable restored. Launch: $exe" -ForegroundColor Green
+    return
+}
+
 if (-not (Test-Path (Join-Path $src 'qt-panel.exe'))) {
     Write-Error "Deployed build not found at $src. Run: build.ps1 -Deploy"
 }
 
 Write-Host "Installing to $dest ..." -ForegroundColor Cyan
+# Abort before stopping the application if its rollback copy cannot be saved.
+Save-DeployedExecutable -Executable $exe -IncomingExecutable (Join-Path $src 'qt-panel.exe')
 Get-Process -Name 'qt-panel' -ErrorAction SilentlyContinue | Stop-Process -Force
 New-Item -ItemType Directory -Force $dest | Out-Null
 # Development diagnostics are not part of the installed application.
 $testArtifacts = @('qt-panel-tests.exe', 'qt-panel-tests.pdb', 'Qt6Test.dll', 'Qt6Testd.dll')
 Get-ChildItem -LiteralPath $src |
-    Where-Object { $_.Name -notin ($testArtifacts + @('tests', 'Testing')) } |
+    Where-Object { $_.Name -notin ($testArtifacts + @('tests', 'Testing', 'backups')) -and
+                  $_.Name -notlike '*.bak' -and $_.Name -notlike '*.pending' } |
     Copy-Item -Recurse -Force -Destination $dest
 foreach ($name in $testArtifacts) {
     $oldArtifact = Join-Path $dest $name

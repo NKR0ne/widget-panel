@@ -108,6 +108,22 @@ RadioService::RadioService(SettingsStore* settings, HttpClient* http, QObject* p
             this, &RadioService::updateMetadata);
 
     loadCache();
+    const QJsonArray favorites = QJsonDocument::fromJson(
+        m_settings->get(QStringLiteral("wp-radio-favorites")).toString().toUtf8()).array();
+    QSet<QString> favoriteIds;
+    for (const auto& value : favorites) {
+        const QVariantMap station = value.toObject().toVariantMap();
+        const QString id = station.value(QStringLiteral("id")).toString();
+        const QUrl url(station.value(QStringLiteral("url")).toString());
+        if (id.isEmpty() || favoriteIds.contains(id)
+            || station.value(QStringLiteral("name")).toString().isEmpty()
+            || !url.isValid() || url.host().isEmpty()
+            || (url.scheme() != QLatin1String("http") && url.scheme() != QLatin1String("https")))
+            continue;
+        favoriteIds.insert(id);
+        m_favorites.append(station);
+    }
+    m_favoritesMode = m_settings->get(QStringLiteral("wp-radio-favorites-mode")).toBool();
     const QJsonObject browseState = QJsonDocument::fromJson(
         m_settings->get(QStringLiteral("wp-radio-browse")).toString().toUtf8()).object();
     m_query = browseState.value(QStringLiteral("query")).toString();
@@ -371,7 +387,8 @@ void RadioService::setCurrent(const QVariantMap& station, bool persist)
 
 void RadioService::selectStation(const QString& stationId)
 {
-    for (const QVariant& value : std::as_const(m_stations)) {
+    const QVariantList available = m_stations + m_favorites;
+    for (const QVariant& value : available) {
         const QVariantMap station = value.toMap();
         if (station.value(QStringLiteral("id")).toString() != stationId)
             continue;
@@ -385,6 +402,40 @@ void RadioService::selectStation(const QString& stationId)
             play();
         return;
     }
+}
+
+void RadioService::setFavoritesMode(bool enabled)
+{
+    if (m_favoritesMode == enabled)
+        return;
+    m_favoritesMode = enabled;
+    m_settings->set(QStringLiteral("wp-radio-favorites-mode"), enabled);
+    emit stateChanged();
+}
+
+void RadioService::toggleFavorite(const QString& stationId)
+{
+    if (stationId.isEmpty())
+        return;
+    const auto found = std::find_if(m_favorites.begin(), m_favorites.end(),
+        [&stationId](const QVariant& value) {
+            return value.toMap().value(QStringLiteral("id")).toString() == stationId;
+        });
+    if (found != m_favorites.end()) {
+        m_favorites.erase(found);
+    } else {
+        const QVariantList available = m_stations + QVariantList{m_current};
+        const auto station = std::find_if(available.cbegin(), available.cend(),
+            [&stationId](const QVariant& value) {
+                return value.toMap().value(QStringLiteral("id")).toString() == stationId;
+            });
+        if (station == available.cend())
+            return;
+        m_favorites.append(*station);
+    }
+    m_settings->set(QStringLiteral("wp-radio-favorites"), QString::fromUtf8(
+        QJsonDocument(QJsonArray::fromVariantList(m_favorites)).toJson(QJsonDocument::Compact)));
+    emit favoritesChanged();
 }
 
 void RadioService::toggle()
@@ -427,8 +478,9 @@ void RadioService::stop()
 
 int RadioService::currentIndex() const
 {
-    for (int i = 0; i < m_stations.size(); ++i) {
-        if (m_stations.at(i).toMap().value(QStringLiteral("id")).toString()
+    const QVariantList& stations = m_favoritesMode ? m_favorites : m_stations;
+    for (int i = 0; i < stations.size(); ++i) {
+        if (stations.at(i).toMap().value(QStringLiteral("id")).toString()
             == currentStationId()) {
             return i;
         }
@@ -438,11 +490,12 @@ int RadioService::currentIndex() const
 
 void RadioService::next()
 {
-    if (m_stations.isEmpty())
+    const QVariantList& stations = m_favoritesMode ? m_favorites : m_stations;
+    if (stations.isEmpty())
         return;
     const bool shouldPlay = playing();
-    const int nextIndex = (currentIndex() + 1 + m_stations.size()) % m_stations.size();
-    selectStation(m_stations.at(nextIndex).toMap()
+    const int nextIndex = (currentIndex() + 1 + stations.size()) % stations.size();
+    selectStation(stations.at(nextIndex).toMap()
         .value(QStringLiteral("id")).toString());
     if (shouldPlay && !playing())
         play();
@@ -450,14 +503,15 @@ void RadioService::next()
 
 void RadioService::previous()
 {
-    if (m_stations.isEmpty())
+    const QVariantList& stations = m_favoritesMode ? m_favorites : m_stations;
+    if (stations.isEmpty())
         return;
     const bool shouldPlay = playing();
     int index = currentIndex();
     if (index < 0)
         index = 0;
-    const int previousIndex = (index - 1 + m_stations.size()) % m_stations.size();
-    selectStation(m_stations.at(previousIndex).toMap()
+    const int previousIndex = (index - 1 + stations.size()) % stations.size();
+    selectStation(stations.at(previousIndex).toMap()
         .value(QStringLiteral("id")).toString());
     if (shouldPlay && !playing())
         play();

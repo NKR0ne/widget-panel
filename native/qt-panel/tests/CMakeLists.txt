@@ -30,6 +30,8 @@ qt_add_executable(qt-panel-tests
 
 target_include_directories(qt-panel-tests PRIVATE ${CMAKE_SOURCE_DIR}/src ${CMAKE_BINARY_DIR}/winrt-generated)
 set_property(SOURCE test_qtpanel.cpp APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/src/services/media/WindowsMediaService.h")
+set_property(SOURCE test_qtpanel.cpp "${CMAKE_SOURCE_DIR}/src/services/radio/RadioService.cpp"
+    APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/src/services/radio/RadioService.h")
 set_property(SOURCE test_qtpanel.cpp
     "${CMAKE_SOURCE_DIR}/src/services/starvis/backends/OpenAiCompatibleVisionBackend.cpp"
     APPEND PROPERTY OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/src/services/starvis/backends/BackendInterfaces.h")
@@ -76,3 +78,6 @@ set_tests_properties(news-reading-qml PROPERTIES TIMEOUT 35)
 add_test(NAME starvis-runtime-scripts COMMAND powershell -NoProfile -ExecutionPolicy Bypass
     -File "${CMAKE_CURRENT_SOURCE_DIR}/test_starvis_runtime.ps1")
 set_tests_properties(starvis-runtime-scripts PROPERTIES TIMEOUT 15)
+add_test(NAME deployment-backup COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+    -File "${CMAKE_CURRENT_SOURCE_DIR}/test_deployment_backup.ps1")
+set_tests_properties(deployment-backup PROPERTIES TIMEOUT 15)
