@@ -151,8 +151,8 @@ private:
     void post(const QString& userMessage, const QVariantList& history,
               bool allowInternet, bool allowAgent);
     void postLocal(const QString& userMessage, const QVariantList& history,
-                   bool allowAgent);
-    void runLocalSimpleTurn(const QJsonArray& messages, qint64 started);
+                   bool allowAgent, bool briefing = false);
+    void runLocalSimpleTurn(const QJsonArray& messages, qint64 started, bool briefing = false);
     void runLocalTurn(const QJsonArray& messages, bool allowAgent,
                       int loop, qint64 started);
     QJsonArray localTools() const;

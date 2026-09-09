@@ -192,16 +192,19 @@ QNetworkReply* HttpClient::postSse(const QUrl& url,
     request.setRawHeader("Accept", "text/event-stream");
     for (const auto& header : headers)
         request.setRawHeader(header.first, header.second);
-    // The manager-wide 15 s transfer timeout would abort a reasoning model
-    // that streams nothing while it thinks; the idle watchdog below replaces it.
-    request.setTransferTimeout(0);
+    // Zero inherits the manager's 15 s timeout; only a non-zero request
+    // timeout overrides it. Keep Qt and the inactivity watchdog aligned.
+    request.setTransferTimeout(idleTimeoutMs);
 
     QNetworkReply* reply = m_nam.post(request, jsonBody);
 
     auto* watchdog = new QTimer(reply);
     watchdog->setSingleShot(true);
     watchdog->setInterval(idleTimeoutMs);
-    connect(watchdog, &QTimer::timeout, reply, &QNetworkReply::abort);
+    connect(watchdog, &QTimer::timeout, reply, [reply] {
+        reply->setProperty("streamIdleTimeout", true);
+        reply->abort();
+    });
     watchdog->start();
 
     auto buffer = std::make_shared<QByteArray>();
@@ -239,7 +242,8 @@ QNetworkReply* HttpClient::postSse(const QUrl& url,
     });
 
     connect(reply, &QNetworkReply::finished, context,
-            [reply, buffer, onDone = std::move(onDone)] {
+            [reply, watchdog, buffer, idleTimeoutMs, onDone = std::move(onDone)] {
+        watchdog->stop();
         reply->deleteLater();
         const int status =
             reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
@@ -249,12 +253,17 @@ QNetworkReply* HttpClient::postSse(const QUrl& url,
         // callers can extract the provider's message.
         QString error;
         if (reply->error() != QNetworkReply::NoError || status < 200 || status >= 300) {
-            error = reply->error() == QNetworkReply::OperationCanceledError
+            error = reply->property("streamIdleTimeout").toBool()
+                    || reply->error() == QNetworkReply::TimeoutError
+                ? QStringLiteral("Stream inactive for %1 ms").arg(idleTimeoutMs)
+                : reply->error() == QNetworkReply::OperationCanceledError
                 ? QStringLiteral("aborted")
                 : reply->error() != QNetworkReply::NoError
                     ? reply->errorString()
                     : QStringLiteral("HTTP %1").arg(status);
-            QByteArray tail = *buffer + reply->readAll();
+            QByteArray tail = *buffer;
+            if (reply->isOpen())
+                tail += reply->readAll();
             if (!tail.isEmpty())
                 error += QStringLiteral(" — ") + QString::fromUtf8(tail.left(600));
         }
@@ -272,7 +281,7 @@ QNetworkReply* HttpClient::getStreamAuth(const QUrl& url, const QString& user,
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::UserAgentHeader, QLatin1String(kUserAgent));
     request.setRawHeader("Connection", "keep-alive");
-    request.setTransferTimeout(0); // the stream is meant to stay open
+    request.setTransferTimeout(idleTimeoutMs);
 
     QNetworkReply* reply = m_nam.get(request);
     // Credentials never go on the wire unchallenged; they are supplied only

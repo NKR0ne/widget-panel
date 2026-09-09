@@ -1419,7 +1419,7 @@ void StarvisService::classifyLocal(const QVector<QImage>& images,
 }
 
 void StarvisService::postLocal(const QString& userMessage, const QVariantList& history,
-                               bool allowAgent)
+                               bool allowAgent, bool briefing)
 {
     setBusy(true);
     m_turnInputTokens = 0;
@@ -1449,10 +1449,10 @@ void StarvisService::postLocal(const QString& userMessage, const QVariantList& h
     if (allowAgent)
         runLocalTurn(messages, true, 0, started);
     else
-        runLocalSimpleTurn(messages, started);
+        runLocalSimpleTurn(messages, started, briefing);
 }
 
-void StarvisService::runLocalSimpleTurn(const QJsonArray& messages, qint64 started)
+void StarvisService::runLocalSimpleTurn(const QJsonArray& messages, qint64 started, bool briefing)
 {
     const QVariantMap cfg = config();
     const QString chatModel = model();
@@ -1463,7 +1463,11 @@ void StarvisService::runLocalSimpleTurn(const QJsonArray& messages, qint64 start
     request.model = chatModel;
     request.maxTokens = qBound(128, cfg.value(QStringLiteral("maxTokens"), 1800).toInt(), 8192);
     request.temperature = cfg.value(QStringLiteral("temperature"), 0.0).toDouble();
-    request.reasoning = cfg.value(QStringLiteral("reasoningEnabled"), false).toBool();
+    // A spoken summary should not spend its answer budget on hidden thinking.
+    // Keep the user's reasoning preference intact for ordinary conversations.
+    request.reasoning = !briefing && cfg.value(QStringLiteral("reasoningEnabled"), false).toBool();
+    if (briefing)
+        request.maxTokens = qMin(request.maxTokens, 512);
 
     m_pendingText.clear();
     emit replyStarted();
@@ -1661,12 +1665,22 @@ void StarvisService::briefing()
 {
     if (m_busy)
         return;
-    chat(QStringLiteral(
+    qInfo() << "[starvis.briefing] requested; provider=" << provider()
+            << "model=" << model() << "directAnswer=" << (provider() == QLatin1String("local"));
+    const QString prompt = QStringLiteral(
              "Donne-moi un briefing matinal concis à partir du contexte local: météo, marchés, "
              "thèmes principaux des nouvelles, et état de la station. En français, structuré, "
              "sans détailler chaque métrique. Le texte sera lu à voix haute: 120 mots maximum, "
-             "phrases naturelles, sans Markdown, listes, liens, tableaux ni symboles."),
-         {}, false, false);
+             "phrases naturelles, sans Markdown, listes, liens, tableaux ni symboles.");
+    if (provider() == QLatin1String("local")) {
+        if (!localModelsEnabled()) {
+            emit chatFailed(QStringLiteral("Les mod\u00e8les locaux sont d\u00e9sactiv\u00e9s."));
+            return;
+        }
+        postLocal(prompt, {}, false, true);
+    } else {
+        chat(prompt, {}, false, false);
+    }
 }
 
 void StarvisService::cancelChat()

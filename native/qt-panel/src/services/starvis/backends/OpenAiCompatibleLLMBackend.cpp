@@ -7,6 +7,8 @@
 #include <QNetworkReply>
 #include <QPointer>
 #include <QTimer>
+#include <QElapsedTimer>
+#include <QDebug>
 
 namespace qtpanel {
 
@@ -149,6 +151,8 @@ BackendOperation* OpenAiCompatibleLLMBackend::generate(const LlmRequest& request
                         QByteArrayLiteral("Bearer ") + m_bearerToken.toUtf8()});
 
     operation->start();
+    QElapsedTimer elapsed;
+    elapsed.start();
     QPointer<BackendOperation> guard(operation);
     QNetworkReply* reply = m_http->postSse(
         QUrl(chatCompletionsUrl()), headers,
@@ -183,7 +187,7 @@ BackendOperation* OpenAiCompatibleLLMBackend::generate(const LlmRequest& request
             if (!text.isEmpty())
                 guard->appendText(text);
         },
-        [guard, selectedModel](int status, const QString& error) {
+        [guard, selectedModel, elapsed](int status, const QString& error) {
             if (!guard)
                 return;
             if (guard->cancellationRequested() || error == QLatin1String("aborted")) {
@@ -191,6 +195,9 @@ BackendOperation* OpenAiCompatibleLLMBackend::generate(const LlmRequest& request
                 return;
             }
             if (status < 200 || status >= 300 || !error.isEmpty()) {
+                qWarning() << "[starvis.llm] generation failed; model=" << selectedModel
+                           << "elapsedMs=" << elapsed.elapsed() << "status=" << status
+                           << "error=" << providerError(error);
                 guard->fail(error.isEmpty()
                     ? QStringLiteral("LM Studio request failed (%1).").arg(status)
                     : providerError(error));

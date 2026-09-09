@@ -324,8 +324,72 @@ private slots:
         QVERIFY(!operation.active());
     }
 
+    void streamsSurviveSilentReasoningBeyond15Seconds()
+    {
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        connect(&server, &QTcpServer::newConnection, this, [&] {
+            QTcpSocket* socket = server.nextPendingConnection();
+            connect(socket, &QTcpSocket::readyRead, socket, [socket] {
+                socket->readAll();
+                if (socket->property("scheduled").toBool())
+                    return;
+                socket->setProperty("scheduled", true);
+                QTimer::singleShot(16000, socket, [socket] {
+                    socket->write("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n"
+                                  "Connection: close\r\n\r\ndata: ready\n\n");
+                    socket->disconnectFromHost();
+                });
+            });
+        });
+        HttpClient http;
+        const QUrl url(QStringLiteral("http://127.0.0.1:%1/").arg(server.serverPort()));
+        int finished = 0;
+        int events = 0;
+        auto done = [&](int status, const QString& error) {
+            QVERIFY2(error.isEmpty(), qPrintable(error));
+            QCOMPARE(status, 200);
+            ++finished;
+        };
+        auto* post = http.postSse(url, {}, "{}", this,
+            [&](const QString&, const QByteArray& data) { QCOMPARE(data, QByteArray("ready")); ++events; },
+            done, 20000);
+        QCOMPARE(post->request().transferTimeout(), 20000);
+        auto* get = http.getStreamAuth(url, {}, {}, this,
+            [&](const QByteArray& data) { QVERIFY(data.contains("ready")); ++events; }, done, 20000);
+        QCOMPARE(get->request().transferTimeout(), 20000);
+        QTRY_COMPARE_WITH_TIMEOUT(finished, 2, 21000);
+        QCOMPARE(events, 2);
+    }
+
+    void streamIdleTimeoutIsNotUserCancellation()
+    {
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        connect(&server, &QTcpServer::newConnection, this, [&] {
+            auto* socket = server.nextPendingConnection();
+            connect(socket, &QTcpSocket::readyRead, socket, [socket] { socket->readAll(); });
+        });
+        HttpClient http;
+        QString failure;
+        http.postSse(QUrl(QStringLiteral("http://127.0.0.1:%1/").arg(server.serverPort())),
+                     {}, "{}", this, [](const QString&, const QByteArray&) {},
+                     [&](int, const QString& error) { failure = error; }, 100);
+        QTRY_VERIFY_WITH_TIMEOUT(!failure.isEmpty(), 2000);
+        QVERIFY2(failure.contains("inactive"), qPrintable(failure));
+        QVERIFY(failure != "aborted");
+    }
+
+    void openAiCompatibleBackendStreamsAndReportsUsage_data()
+    {
+        QTest::addColumn<bool>("thinking");
+        QTest::newRow("reasoning-chat") << true;
+        QTest::newRow("direct-briefing") << false;
+    }
+
     void openAiCompatibleBackendStreamsAndReportsUsage()
     {
+        QFETCH(bool, thinking);
         QTcpServer server;
         QVERIFY(server.listen(QHostAddress::LocalHost));
         QByteArray requestBytes;
@@ -373,7 +437,7 @@ private slots:
             QJsonObject{{QStringLiteral("role"), QStringLiteral("user")},
                         {QStringLiteral("content"), QStringLiteral("Bonjour")}},
         };
-        request.reasoning = true;
+        request.reasoning = thinking;
         BackendOperation* operation = backend.generate(request, this);
         QSignalSpy textSpy(operation, &BackendOperation::textDelta);
         QSignalSpy thinkingSpy(operation, &BackendOperation::thinkingDelta);
@@ -391,8 +455,8 @@ private slots:
         const QJsonObject sent = QJsonDocument::fromJson(requestBytes.mid(bodyStart)).object();
         QCOMPARE(sent.value(QStringLiteral("model")).toString(), QStringLiteral("qwen-test"));
         QVERIFY(sent.value(QStringLiteral("stream")).toBool());
-        QVERIFY(sent.value(QStringLiteral("chat_template_kwargs")).toObject()
-                    .value(QStringLiteral("enable_thinking")).toBool());
+        QCOMPARE(sent.value(QStringLiteral("chat_template_kwargs")).toObject()
+                     .value(QStringLiteral("enable_thinking")).toBool(), thinking);
     }
 
     void openAiCompatibleBackendCancelsTransport()
