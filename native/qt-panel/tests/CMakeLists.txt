@@ -1,10 +1,11 @@
-find_package(Qt6 6.8 REQUIRED COMPONENTS Test Network Xml Gui)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Test Network Xml Gui Multimedia)
 
 qt_add_executable(qt-panel-tests
     test_qtpanel.cpp
     ${CMAKE_SOURCE_DIR}/src/services/media/WindowsMediaService.cpp
     ${CMAKE_SOURCE_DIR}/src/services/media/WindowsMediaService.h
     ${CMAKE_SOURCE_DIR}/src/services/media/MediaCatalog.cpp
+    ${CMAKE_SOURCE_DIR}/src/services/radio/RadioService.cpp
     ${CMAKE_SOURCE_DIR}/src/core/TextFix.cpp
     ${CMAKE_SOURCE_DIR}/src/core/SettingsStore.cpp
     ${CMAKE_SOURCE_DIR}/src/core/SecretVault.cpp
@@ -38,6 +39,7 @@ target_link_libraries(qt-panel-tests PRIVATE
     Qt6::Network
     Qt6::Xml
     Qt6::Gui
+    Qt6::Multimedia
     Qt6::Sql
     shell32
     advapi32
@@ -60,12 +62,13 @@ file(GLOB_RECURSE NEWS_QML_MOCKS CONFIGURE_DEPENDS
 foreach(mock_file IN LISTS NEWS_QML_MOCKS)
     configure_file("qml/mocks/${mock_file}" "${NEWS_QML_TEST_DIR}/${mock_file}" COPYONLY)
 endforeach()
-foreach(qml_file NewsStage.qml ArticleReaderPane.qml MediaWidget.qml MediaLibraryPane.qml)
+foreach(qml_file NewsStage.qml ArticleReaderPane.qml MediaWidget.qml MediaLibraryPane.qml FmRadioWidget.qml)
     configure_file("${CMAKE_SOURCE_DIR}/qml/${qml_file}"
                    "${NEWS_QML_TEST_DIR}/${qml_file}" COPYONLY)
 endforeach()
 configure_file(qml/tst_NewsReading.qml "${NEWS_QML_TEST_DIR}/tst_NewsReading.qml" COPYONLY)
 configure_file(qml/tst_MediaWidget.qml "${NEWS_QML_TEST_DIR}/tst_MediaWidget.qml" COPYONLY)
+configure_file(qml/tst_FmRadioWidget.qml "${NEWS_QML_TEST_DIR}/tst_FmRadioWidget.qml" COPYONLY)
 add_test(NAME news-reading-qml COMMAND powershell -NoProfile -ExecutionPolicy Bypass
     -File "${CMAKE_CURRENT_SOURCE_DIR}/run-news-qml-tests.ps1"
     -Runner "${QML_TEST_RUNNER}" -InputDir "${NEWS_QML_TEST_DIR}")

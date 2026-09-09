@@ -40,6 +40,7 @@ qt_add_executable(qt-panel WIN32
     src/services/media/WindowsMediaService.h src/services/media/WindowsMediaService.cpp
     src/services/media/MediaLibrary.h
     src/services/media/MediaCatalog.h src/services/media/MediaCatalog.cpp
+    src/services/radio/RadioService.h src/services/radio/RadioService.cpp
     src/services/pressreader/PressReaderService.h src/services/pressreader/PressReaderService.cpp
     src/services/reader/ReaderService.h src/services/reader/ReaderService.cpp
     src/services/starvis/StarvisService.h src/services/starvis/StarvisService.cpp

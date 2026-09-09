@@ -1,6 +1,7 @@
 module QtPanel.Native
 singleton Store 1.0 Store.qml
 singleton WinMedia 1.0 WinMedia.qml
+singleton Radio 1.0 Radio.qml
 singleton News 1.0 News.qml
 singleton Reader 1.0 Reader.qml
 singleton PressReader 1.0 PressReader.qml

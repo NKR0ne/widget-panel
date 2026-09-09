@@ -33,6 +33,7 @@ Item {
         { id: "mail", label: "Outlook Mail", note: "Microsoft Graph", color: "#0078d4", modes: ["base"] },
         { id: "todo", label: "Microsoft To-Do", note: "Microsoft Graph", color: "#2564cf", modes: ["base"] },
         { id: "media-player", label: "Media Player", note: "Windows 11 | Lecture et bibliotheque", color: "#4fc4ae", modes: ["base"] },
+        { id: "radio", label: "Radio FM", note: "Radio Browser | Stations Internet", color: "#fb7185", modes: ["base"] },
         { id: "starvis", label: "Starvis", note: "AI assistant", color: "#62e6ff", modes: ["base"] },
         { id: "camera", label: "Camera", note: "XProtect", color: "#5e8af5", modes: ["base"] },
         { id: "camera-direct", label: "Camera directe", note: "RTSP natif", color: "#60a5fa", modes: ["base"] },
@@ -189,6 +190,8 @@ Item {
             next.splice(i, 1)
         else
             next.push(entry.id)
+        if (entry.id === "radio" && i >= 0)
+            Radio.stop()
         saveActiveIds(next, entry.isCat === true, mode)
     }
 

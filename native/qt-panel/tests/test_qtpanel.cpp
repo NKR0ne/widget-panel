@@ -7,6 +7,7 @@
 #include "services/news/NewsService.h"
 #include "services/media/MediaLibrary.h"
 #include "services/media/MediaCatalog.h"
+#include "services/radio/RadioService.h"
 #include <QSqlDatabase>
 #include <QSqlQuery>
 #include "services/media/WindowsMediaService.h"
@@ -1488,6 +1489,71 @@ private slots:
         QCOMPARE(live.detailUrl(), QString());
         QCOMPARE(live.audioFeedId(), QString());
         QCOMPARE(detailChanged.count(), 4);
+    }
+
+    void radioBrowserParse()
+    {
+        const QJsonArray payload{
+            QJsonObject{
+                {QStringLiteral("stationuuid"), QStringLiteral("one")},
+                {QStringLiteral("name"), QStringLiteral("CHOI 98.1")},
+                {QStringLiteral("url_resolved"), QStringLiteral("https://radio.example/stream")},
+                {QStringLiteral("state"), QStringLiteral("Quebec")},
+                {QStringLiteral("tags"), QStringLiteral("rock,music")},
+                {QStringLiteral("codec"), QStringLiteral("MP3")},
+                {QStringLiteral("bitrate"), 128},
+            },
+            QJsonObject{
+                {QStringLiteral("stationuuid"), QStringLiteral("duplicate")},
+                {QStringLiteral("name"), QStringLiteral("Duplicate")},
+                {QStringLiteral("url_resolved"), QStringLiteral("https://radio.example/stream")},
+            },
+            QJsonObject{
+                {QStringLiteral("stationuuid"), QStringLiteral("broken")},
+                {QStringLiteral("name"), QStringLiteral("Broken")},
+                {QStringLiteral("url_resolved"), QStringLiteral("https://radio.example/broken")},
+                {QStringLiteral("lastcheckok"), 0},
+            },
+        };
+
+        const QVariantList stations = RadioService::parseStations(payload);
+        QCOMPARE(stations.size(), 1);
+        const QVariantMap station = stations.first().toMap();
+        QCOMPARE(station.value(QStringLiteral("name")).toString(), QStringLiteral("CHOI 98.1"));
+        QCOMPARE(station.value(QStringLiteral("frequency")).toString(), QStringLiteral("98.1 FM"));
+        QCOMPARE(station.value(QStringLiteral("tags")).toString(), QStringLiteral("rock,music"));
+        QCOMPARE(station.value(QStringLiteral("bitrate")).toInt(), 128);
+    }
+
+    void radioFiltersSurviveRestart()
+    {
+        QTemporaryDir directory;
+        const QString path = directory.filePath("settings.json");
+        {
+            SettingsStore settings(path);
+            HttpClient http;
+            RadioService radio(&settings, &http);
+            radio.browse(QStringLiteral("jazz station"), QStringLiteral("world"), QStringLiteral("jazz"));
+            settings.flush();
+        }
+        {
+            SettingsStore settings(path);
+            HttpClient http;
+            RadioService radio(&settings, &http);
+            QCOMPARE(radio.query(), QStringLiteral("jazz station"));
+            QCOMPARE(radio.region(), QStringLiteral("world"));
+            QCOMPARE(radio.category(), QStringLiteral("jazz"));
+            QVERIFY(!radio.libraryMode());
+            radio.showLibrary();
+            settings.flush();
+        }
+        SettingsStore settings(path);
+        HttpClient http;
+        RadioService restored(&settings, &http);
+        QCOMPARE(restored.region(), QStringLiteral("local"));
+        QCOMPARE(restored.category(), QStringLiteral("all"));
+        QVERIFY(restored.query().isEmpty());
+        QVERIFY(restored.libraryMode());
     }
 };
 

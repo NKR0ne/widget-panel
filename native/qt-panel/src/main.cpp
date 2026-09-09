@@ -35,6 +35,7 @@
 #include "services/msgraph/MsGraphService.h"
 #include "services/news/NewsService.h"
 #include "services/media/WindowsMediaService.h"
+#include "services/radio/RadioService.h"
 #include "services/pressreader/PressReaderService.h"
 #include "services/reader/ReaderService.h"
 #include "services/starvis/StarvisService.h"
@@ -365,6 +366,7 @@ int main(int argc, char* argv[])
     StocksModel stocks(&settings, &vault, &http);
     NewsService news(&settings, &http);
     WindowsMediaService windowsMedia(&settings);
+    RadioService radio(&settings, &http); // Owns the persistent library and filtered views.
     MsGraphService msGraph(&settings, &http);
     LiveFeedService live(&http);
     ReaderService reader(&http);
@@ -419,6 +421,7 @@ int main(int argc, char* argv[])
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Stocks", &stocks);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "News", &news);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "WinMedia", &windowsMedia);
+    qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Radio", &radio);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "MsGraph", &msGraph);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Live", &live);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Reader", &reader);

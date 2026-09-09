@@ -67,6 +67,7 @@ qt_add_qml_module(qtpanel_ui
         TodoWidget.qml
         MediaWidget.qml
         MediaLibraryPane.qml
+        FmRadioWidget.qml
         MsStatePane.qml
     RESOURCES
         web/traffic-map.html
