@@ -4,6 +4,9 @@
 #include "core/SettingsStore.h"
 
 #include <QAudioOutput>
+#include <QAudioDevice>
+#include <QMediaDevices>
+#include <QTimer>
 #include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -82,6 +85,14 @@ RadioService::RadioService(SettingsStore* settings, HttpClient* http, QObject* p
     m_audioOutput->setVolume(std::clamp(
         m_settings->getDouble(QStringLiteral("wp-radio-volume"), 0.72), 0.0, 1.0));
     m_player->setAudioOutput(m_audioOutput);
+
+    auto* devices = new QMediaDevices(this);
+    auto* audioRecovery = new QTimer(this);
+    audioRecovery->setSingleShot(true);
+    audioRecovery->setInterval(500);
+    connect(devices, &QMediaDevices::audioOutputsChanged, audioRecovery,
+            [audioRecovery] { audioRecovery->start(); });
+    connect(audioRecovery, &QTimer::timeout, this, &RadioService::recoverAudioOutput);
 
     connect(m_player, &QMediaPlayer::playbackStateChanged, this, [this] {
         emit stateChanged();
@@ -454,6 +465,12 @@ void RadioService::play()
         return;
     }
 
+    m_playRequested = true;
+    if (QMediaDevices::audioOutputs().isEmpty()) {
+        recoverAudioOutput();
+        return;
+    }
+    m_waitingForAudio = false;
     const bool retrying = !m_error.isEmpty();
     m_error.clear();
     if (retrying)
@@ -466,13 +483,52 @@ void RadioService::play()
 
 void RadioService::pause()
 {
+    m_playRequested = false;
     m_player->pause();
     emit stateChanged();
 }
 
 void RadioService::stop()
 {
+    m_playRequested = false;
     m_player->stop();
+    emit stateChanged();
+}
+
+void RadioService::recoverAudioOutput()
+{
+    const auto outputs = QMediaDevices::audioOutputs();
+    if (outputs.isEmpty()) {
+        m_waitingForAudio = true;
+        m_player->pause();
+        if (m_playRequested)
+            m_error = QStringLiteral("Aucune sortie audio disponible");
+        emit stateChanged();
+        return;
+    }
+
+    auto output = QMediaDevices::defaultAudioOutput();
+    if (output.isNull())
+        output = outputs.first();
+    if (!m_waitingForAudio && m_audioOutput->device() == output)
+        return;
+
+    // Recreate the sink: a disconnected Windows endpoint can leave the
+    // existing backend silent even while the player reports PlayingState.
+    auto* previousOutput = m_audioOutput;
+    auto* replacement = new QAudioOutput(output, this);
+    replacement->setVolume(previousOutput->volume());
+    replacement->setMuted(previousOutput->isMuted());
+    m_player->setAudioOutput(replacement);
+    m_audioOutput = replacement;
+    previousOutput->deleteLater();
+    m_waitingForAudio = false;
+    qInfo() << "[radio] audio output recovered:" << output.description();
+    if (m_playRequested) {
+        m_player->stop();
+        m_player->setSource(QUrl());
+        play();
+    }
     emit stateChanged();
 }
 

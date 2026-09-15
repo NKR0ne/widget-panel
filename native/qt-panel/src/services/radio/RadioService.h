@@ -91,11 +91,14 @@ private:
     int currentIndex() const;
     QString defaultRegion() const;
     void updateMetadata();
+    void recoverAudioOutput();
 
     SettingsStore* m_settings = nullptr;
     HttpClient* m_http = nullptr;
     QMediaPlayer* m_player = nullptr;
     QAudioOutput* m_audioOutput = nullptr;
+    bool m_playRequested = false;
+    bool m_waitingForAudio = false;
     QVariantList m_libraryStations;
     QVariantList m_stations;
     QVariantList m_favorites;
