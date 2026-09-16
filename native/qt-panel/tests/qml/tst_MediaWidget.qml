@@ -75,18 +75,18 @@ TestCase {
             card.y = offset
             waitForRendering(card)
             mouseClick(section, 40, 14)
-            tryCompare(section.popup, "opened", true)
-            const position = section.popup.background.mapToItem(section, 0, 0)
+            tryCompare(section, "menuOpen", true)
+            const position = findChild(card, "mediaLibraryMenu").mapToItem(section, 0, 0)
             verify(Math.abs(position.x) < 1, "Popup must align with selector left edge")
             verify(Math.abs(position.y - section.height - 4) < 1,
                    "Popup must open directly below selector, got " + position.y)
             grabImage(testCase).save("media-popup-offset-" + offset + ".png")
             card.y += 20
             wait(50)
-            const moved = section.popup.background.mapToItem(section, 0, 0)
+            const moved = findChild(card, "mediaLibraryMenu").mapToItem(section, 0, 0)
             verify(Math.abs(moved.y - section.height - 4) < 1, "Popup must follow the moving card")
-            section.popup.close()
-            tryCompare(section.popup, "visible", false)
+            section.closeMenu()
+            tryCompare(section, "menuOpen", false)
         }
     }
     function test_seekCommitsUserPosition() {
@@ -109,6 +109,7 @@ TestCase {
         mouseClick(grid, 40, 40)
         compare(browser.selectedAlbum, "one")
         const playAlbum = findChild(card, "mediaAlbumPlay")
+        waitForRendering(playAlbum)
         mouseClick(playAlbum, 14, 14)
         compare(WinMedia.lastAction, "album:one")
         compare(card.view, "play")
@@ -155,13 +156,13 @@ TestCase {
         grabImage(card).save("media-queue-scrollbar.png")
         const section = findChild(card, "mediaLibrarySection")
         mouseClick(section, 40, 14)
-        tryCompare(section.popup, "visible", true)
-        compare(section.popup.background.color, Theme.panelSolid)
+        tryCompare(section, "menuOpen", true)
+        compare(findChild(card, "mediaLibraryMenu").color, Theme.panelSolid)
         waitForRendering(card)
         grabImage(testCase).save("media-library-popup.png")
-        const listItem = section.popup.contentItem
+        const listItem = findChild(card, "mediaLibraryOptions")
         mouseClick(listItem, 50, 16)
         tryCompare(browser, "browseMode", 0)
-        tryCompare(section.popup, "visible", false)
+        tryCompare(section, "menuOpen", false)
     }
 }

@@ -11,6 +11,16 @@ ColumnLayout {
     spacing: 6
     property int browseMode: Math.max(0, Math.min(3, Number(Store.get("wp-media-browse", 0))))
     property string selectedAlbum: ""
+    onVisibleChanged: if (!visible) section.menuOpen = false
+    TapHandler {
+        onPressedChanged: {
+            if (!pressed || !section.menuOpen) return
+            const p = section.mapFromItem(pane, point.position.x, point.position.y)
+            if (p.x < 0 || p.x > libraryMenu.width || p.y < 0
+                    || p.y > libraryMenu.y + libraryMenu.height)
+                section.menuOpen = false
+        }
+    }
     signal playRequested()
     component LibraryScrollBar: Basic.ScrollBar {
         id: bar
@@ -37,66 +47,75 @@ ColumnLayout {
     }
     FileDialog { id: playlistDialog; title: "Importer une playlist"; nameFilters: ["Playlists (*.wpl *.m3u *.m3u8 *.pls *.xspf *.zpl)"]; onAccepted: WinMedia.importPlaylist(selectedFile) }
     RowLayout {
+        z: 10
         Layout.fillWidth: true
-        Basic.ComboBox {
+        Basic.Button {
             id: section
             objectName: "mediaLibrarySection"
             Layout.preferredWidth: 145; Layout.preferredHeight: 28
-            model: ["Albums", "Titres", "Playlists", "File de lecture"]
-            currentIndex: pane.browseMode; onActivated: pane.browseMode = currentIndex
+            property var model: ["Albums", "Titres", "Playlists", "File de lecture"]
+            property int currentIndex: pane.browseMode
+            property bool menuOpen: false
+            signal activated(int index)
+            onActivated: function(index) { pane.browseMode = index }
+            function openMenu() {
+                menuOpen = true
+                options.currentIndex = pane.browseMode
+                options.forceActiveFocus()
+            }
+            function closeMenu() { menuOpen = false; forceActiveFocus() }
+            function choose(index) { activated(index); closeMenu() }
+            onClicked: menuOpen ? closeMenu() : openMenu()
+            onVisibleChanged: if (!visible) menuOpen = false
+            Keys.onDownPressed: openMenu()
+            Keys.onUpPressed: openMenu()
             font.pixelSize: 11
             leftPadding: 10; rightPadding: 28
             Accessible.name: "Vue de la bibliotheque"
+            Accessible.role: Accessible.ComboBox
             contentItem: Text {
-                text: section.displayText; font: section.font; color: Theme.textPrimary
+                text: section.model[pane.browseMode]; font: section.font; color: Theme.textPrimary
                 verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
             }
-            indicator: Text {
+            Text {
                 x: section.width - width - 10; anchors.verticalCenter: parent.verticalCenter
-                text: "\uE70D"; font.family: "Segoe Fluent Icons"; font.pixelSize: 10
+                text: section.menuOpen ? "\uE70E" : "\uE70D"; font.family: "Segoe Fluent Icons"; font.pixelSize: 10
                 color: Theme.textSecondary
             }
             background: Rectangle { radius: 4; color: section.hovered ? Theme.hover : Theme.cardFill; border.color: section.activeFocus ? Theme.accent : Theme.cardStroke }
-            delegate: Basic.ItemDelegate {
-                id: option
-                required property int index
-                required property string modelData
-                width: section.popup.availableWidth; height: 32
-                highlighted: section.highlightedIndex === index
-                contentItem: Text {
-                    text: option.modelData; font: section.font; color: Theme.textPrimary
-                    verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
-                }
-                background: Rectangle {
-                    radius: 4
-                    color: option.highlighted ? Theme.activeFill : option.hovered ? Theme.hover : "transparent"
-                }
-            }
-            popup: Basic.Popup {
-                id: libraryPopup
-                objectName: "mediaLibraryPopup"
-                parent: Overlay.overlay
-                popupType: Popup.Item
+            Rectangle {
+                id: libraryMenu
+                objectName: "mediaLibraryMenu"
+                visible: section.menuOpen
+                x: 0; y: section.height + 4
                 width: Math.max(section.width, 168)
-                margins: 4
-                padding: 4
-                implicitHeight: contentItem.implicitHeight + topPadding + bottomPadding
-                function positionAtSelector() {
-                    if (!parent) return
-                    // Use scene coordinates once, outside the card's layered
-                    // and scrolling content in the composition host.
-                    const below = section.mapToItem(parent, 0, section.height + 4)
-                    const above = section.mapToItem(parent, 0, -4)
-                    x = Math.max(4, Math.min(below.x, parent.width - width - 4))
-                    y = below.y + height <= parent.height - 4 ? below.y : Math.max(4, above.y - height)
-                }
-                onAboutToShow: positionAtSelector()
-                Timer { interval: 16; running: libraryPopup.visible; repeat: true; onTriggered: libraryPopup.positionAtSelector() }
-                background: Rectangle { color: Theme.panelSolid; radius: 6; border.color: Theme.cardStroke }
-                contentItem: ListView {
-                    implicitHeight: contentHeight
-                    clip: true; model: section.delegateModel; currentIndex: section.highlightedIndex
+                height: Math.min(136, Math.max(40, pane.height - section.height - 4))
+                color: Theme.panelSolid; radius: 6; border.color: Theme.cardStroke
+                ListView {
+                    id: options
+                    objectName: "mediaLibraryOptions"
+                    anchors.fill: parent; anchors.margins: 4
+                    clip: true; model: section.model
                     boundsBehavior: Flickable.StopAtBounds
+                    keyNavigationEnabled: true
+                    Keys.onReturnPressed: section.choose(currentIndex)
+                    Keys.onEnterPressed: section.choose(currentIndex)
+                    Keys.onEscapePressed: section.closeMenu()
+                    Keys.onTabPressed: section.closeMenu()
+                    ScrollBar.vertical: LibraryScrollBar {}
+                    delegate: Basic.ItemDelegate {
+                        id: option
+                        required property int index
+                        required property string modelData
+                        width: options.width; height: 32
+                        highlighted: options.currentIndex === index
+                        onClicked: section.choose(index)
+                        contentItem: Text {
+                            text: option.modelData; font: section.font; color: Theme.textPrimary
+                            verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+                        }
+                        background: Rectangle { radius: 4; color: option.highlighted ? Theme.activeFill : option.hovered ? Theme.hover : "transparent" }
+                    }
                 }
             }
         }
