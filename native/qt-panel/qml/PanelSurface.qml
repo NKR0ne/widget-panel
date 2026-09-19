@@ -55,6 +55,14 @@ Item {
                     || key.indexOf("wp-news-columns-") === 0
                     || key === "wp-news-ui-scale" || key === "wp-news-view-mode")
                 surface.storeRevision++
+            if (key === "wp-news-view-mode" && surface.panelMode === "news") {
+                // NewsStage can change the submode directly. Wait until its
+                // binding sees the new value, then size the native window from
+                // that submode instead of the mode we just left.
+                Qt.callLater(function() {
+                    surface.fitCurrentWindowMode("news", true, surface.newsSubMode)
+                })
+            }
         }
     }
 
