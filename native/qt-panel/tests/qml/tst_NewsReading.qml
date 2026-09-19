@@ -107,6 +107,15 @@ TestCase {
         compare(stage.railFraction, 0.25)
         compare(stage.listFraction, 0.4)
     }
+    function test_carouselToReaderUsesReaderColumnCountImmediately() {
+        Store.set("wp-news-columns-carousel", 6)
+        Store.set("wp-news-columns-reader", 3)
+        stage.setViewMode("carousel")
+        compare(stage.configuredColumns, 6)
+        stage.setViewMode("reader")
+        compare(stage.configuredColumns, 3)
+        verify(stage.viewMode === "reader")
+    }
     function test_categoryRemovedWhileFocused() {
         focusArticle()
         News.categories = ["Quebec"]

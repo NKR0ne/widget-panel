@@ -103,12 +103,12 @@ Item {
 
     // resetWidth: recompute the window width from the columns instead of
     // restoring the width this mode last remembered (see Panel.fitMode).
-    function fitCurrentWindowMode(mode, resetWidth) {
+    function fitCurrentWindowMode(mode, resetWidth, explicitNewsMode) {
         let widths = {}
         try { widths = JSON.parse(Store.get("wp-col-widths", "{}")) } catch (e) {}
         let count = Number(Store.get("wp-base-columns", 3)) || 3
         if (mode === "news")
-            count = newsColumnCount(newsSubMode)
+            count = newsColumnCount(explicitNewsMode || newsSubMode)
         else if (mode === "monitor" || mode === "live" || mode === "starvis")
             count = 6
         return Panel.fitMode(mode, Math.max(3, Math.min(6, count)), widths,
@@ -150,7 +150,10 @@ Item {
         if (leavingPressReader && PressReader.open)
             PressReader.close()
         if (panelMode === "news")
-            fitCurrentWindowMode("news")
+            // Store.changed is delivered after this function returns in some
+            // QML paths. Pass the selected submode explicitly so switching
+            // from carousel to reading cannot retain the carousel width.
+            fitCurrentWindowMode("news", true, next)
         if (next === "pressreader" && !PressReader.open)
             PressReader.openCatalog()
     }

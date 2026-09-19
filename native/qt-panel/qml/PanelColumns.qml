@@ -153,6 +153,12 @@ Item {
     readonly property var visibleColumns: {
         return columnOrder.slice(0, baseColumnCount)
     }
+    // A browser island occupies the right half of the panel. Keep the three
+    // dashboard columns on the left at their saved widths instead of asking
+    // every visible column to squeeze into the reduced row width.
+    readonly property var renderedColumns: {
+        return Panel.islandOpen ? visibleColumns.slice(0, 3) : visibleColumns
+    }
     // Keep the lightweight telemetry subscription warm whenever workstation
     // cards are configured in either workspace. Tying the pipe to the current
     // mode made Starvis -> Performance wait for a fresh registration/snapshot,
@@ -346,7 +352,7 @@ Item {
         visible: root.mode === "base"
 
         Repeater {
-            model: rowLayout.visible ? root.visibleColumns : []
+            model: rowLayout.visible ? root.renderedColumns : []
 
             delegate: Flickable {
                 id: columnFlick
@@ -371,8 +377,9 @@ Item {
                     return null
                 }
 
-                Layout.fillWidth: true
+                Layout.fillWidth: columnFlick.index === root.renderedColumns.length - 1
                 Layout.fillHeight: true
+                Layout.minimumWidth: 160
                 Layout.preferredWidth: manualWidth > 0 ? manualWidth
                     : (Number(root.savedColWidths[modelData]) || 240)
 
