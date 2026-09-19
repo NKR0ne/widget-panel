@@ -329,8 +329,10 @@ Item {
         const next = parseStored("wp-col-widths", {})
         next[name] = Math.round(Math.max(160, Math.min(520, width)))
         Store.set("wp-col-widths", JSON.stringify(next))
-        // Column widths changed: recompute the base width from them.
-        Panel.fitMode("base", baseColumnCount, next, true)
+        // The native window stays at its current width. The row layout applies
+        // this saved width to the left column while the trailing column absorbs
+        // the remaining space; recomputing the panel here changes total width
+        // on mouse release and makes the drop feel like a second resize.
     }
 
     Loader {
