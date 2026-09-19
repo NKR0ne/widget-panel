@@ -367,6 +367,19 @@ Item {
                 property string colName: modelData
                 property real manualWidth: 0
 
+                function widthBefore() {
+                    let used = 0
+                    for (let i = 0; i < columnFlick.index; ++i)
+                        used += Number(root.savedColWidths[root.renderedColumns[i]]) || 240
+                    return used
+                }
+
+                function trailingWidth() {
+                    return Math.max(0, rowLayout.width
+                        - widthBefore()
+                        - rowLayout.spacing * Math.max(0, root.renderedColumns.length - 1))
+                }
+
                 function beforeIdAt(sceneY, draggedId) {
                     const p = columnContent.mapFromItem(null, 0, sceneY)
                     for (let i = 0; i < columnContent.children.length; i++) {
@@ -381,9 +394,14 @@ Item {
 
                 Layout.fillWidth: columnFlick.index === root.renderedColumns.length - 1
                 Layout.fillHeight: true
-                Layout.minimumWidth: 160
-                Layout.preferredWidth: manualWidth > 0 ? manualWidth
-                    : (Number(root.savedColWidths[modelData]) || 240)
+                Layout.minimumWidth: columnFlick.index === root.renderedColumns.length - 1
+                    ? 0 : 160
+                Layout.maximumWidth: columnFlick.index === root.renderedColumns.length - 1
+                    ? columnFlick.trailingWidth() : 520
+                Layout.preferredWidth: columnFlick.index === root.renderedColumns.length - 1
+                    ? columnFlick.trailingWidth()
+                    : manualWidth > 0 ? manualWidth
+                      : (Number(root.savedColWidths[modelData]) || 240)
 
                 // Disable clipping while dragging so a card can visibly cross
                 // column boundaries; interaction is frozen mid-drag.

@@ -296,8 +296,10 @@ Item {
             spacing: Theme.gap
 
             RowLayout {
+                id: headerBar
                 Layout.fillWidth: true
                 spacing: 8
+                clip: true
 
                 Text {
                     text: "Widget Panel"
@@ -633,6 +635,7 @@ Item {
 
                 Item { Layout.fillWidth: true }
                 IconButton {
+                    buttonSize: 24
                     glyph: "\uE7E8"
                     active: Starvis.localModelsEnabled
                     enabled: !Starvis.localModelsTransitioning
@@ -654,32 +657,38 @@ Item {
                     }
                 }
                 IconButton {
+                    buttonSize: 24
                     glyph: "\uE9D9"
                     onClicked: Ui.openStatus()
                     tooltip: "\u00c9tat des services"
                 }
                 IconButton {
+                    buttonSize: 24
                     glyph: "\uE72C"
                     onClicked: surface.refreshData()
                     tooltip: "Actualiser les donn\u00e9es"
                 }
                 IconButton {
+                    buttonSize: 24
                     glyph: ""   // GridView: manage widgets
                     onClicked: manageModal.show(surface.panelMode)
                     tooltip: "G\u00e9rer les widgets"
                 }
                 IconButton {
+                    buttonSize: 24
                     glyph: ""   // Settings gear
                     onClicked: settingsModal.show()
                     tooltip: "R\u00e9glages"
                 }
                 IconButton {
+                    buttonSize: 24
                     glyph: ""   // Segoe Fluent Icons: Pin
                     active: Panel.pinned
                     onClicked: Panel.togglePin()
                     tooltip: Panel.pinned ? "D\u00e9s\u00e9pingler" : "\u00c9pingler"
                 }
                 IconButton {
+                    buttonSize: 24
                     glyph: ""   // ChevronLeft: slide the panel away
                     onClicked: Panel.hidePanel(false)
                     tooltip: "Masquer le panneau"
