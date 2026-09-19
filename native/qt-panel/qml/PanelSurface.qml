@@ -60,7 +60,7 @@ Item {
                 // binding sees the new value, then size the native window from
                 // that submode instead of the mode we just left.
                 Qt.callLater(function() {
-                    surface.fitCurrentWindowMode("news", true, surface.newsSubMode)
+                    surface.fitCurrentWindowMode("news", false, surface.newsSubMode)
                 })
             }
         }
@@ -161,7 +161,7 @@ Item {
             // Store.changed is delivered after this function returns in some
             // QML paths. Pass the selected submode explicitly so switching
             // from carousel to reading cannot retain the carousel width.
-            fitCurrentWindowMode("news", true, next)
+            fitCurrentWindowMode("news", false, next)
         if (next === "pressreader" && !PressReader.open)
             PressReader.openCatalog()
     }
