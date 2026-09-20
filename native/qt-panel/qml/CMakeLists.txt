@@ -47,6 +47,7 @@ qt_add_qml_module(qtpanel_ui
         LiveStage.qml
         NewsArticleVisual.qml
         NewsWidget.qml
+        NewsReadControls.qml
         NewsStage.qml
         NewsMatrixOverlay.qml
         StarvisWidget.qml

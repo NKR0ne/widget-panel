@@ -2024,7 +2024,7 @@ Item {
             width: parent.width
             spacing: 14
 
-            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "finnhub-key"; item.placeholder = "Clé Finnhub (cotations)" } }
+            Loader { sourceComponent: keyField; onLoaded: { item.vaultKey = "finnhub-key"; item.placeholder = "Clé Finnhub (cotations et actualités)" } }
             Text {
                 text: "TRADINGVIEW"; color: Theme.textSecondary; font.pixelSize: 9
                 font.letterSpacing: 1; topPadding: 4

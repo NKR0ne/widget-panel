@@ -1,3 +1,4 @@
 singleton Theme 1.0 Theme.qml
 singleton Motion 1.0 Motion.qml
+singleton Ui 1.0 Ui.qml
 singleton Notifications 1.0 Notifications.qml

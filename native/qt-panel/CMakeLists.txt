@@ -37,6 +37,7 @@ qt_add_executable(qt-panel WIN32
     src/services/live/LiveFeedService.h src/services/live/LiveFeedService.cpp
     src/services/msgraph/MsGraphService.h src/services/msgraph/MsGraphService.cpp
     src/services/news/NewsService.h src/services/news/NewsService.cpp
+    src/services/news/NewsReadState.h src/services/news/NewsReadState.cpp
     src/services/media/WindowsMediaService.h src/services/media/WindowsMediaService.cpp
     src/services/media/MediaLibrary.h
     src/services/media/MediaCatalog.h src/services/media/MediaCatalog.cpp
@@ -62,6 +63,8 @@ qt_add_executable(qt-panel WIN32
     src/services/camera/HikvisionEventClient.h src/services/camera/HikvisionEventClient.cpp
     src/services/stocks/StocksModel.h src/services/stocks/StocksModel.cpp
     src/services/weather/WeatherService.h src/services/weather/WeatherService.cpp
+    src/services/stocks/MarketInsights.h src/services/stocks/MarketInsights.cpp
+    src/services/weather/WeatherAlerts.h src/services/weather/WeatherAlerts.cpp
     src/services/workstation/WorkstationClient.h src/services/workstation/WorkstationClient.cpp
     src/shell/FocusPolicy.h src/shell/FocusPolicy.cpp
     src/shell/HelperServer.h src/shell/HelperServer.cpp

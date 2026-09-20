@@ -5,6 +5,9 @@
 #include "core/TextFix.h"
 #include "core/SettingsStore.h"
 #include "services/news/NewsService.h"
+#include "services/news/NewsReadState.h"
+#include "services/weather/WeatherAlerts.h"
+#include "services/stocks/MarketInsights.h"
 #include "services/media/MediaLibrary.h"
 #include "services/media/MediaCatalog.h"
 #include "services/radio/RadioService.h"
@@ -47,6 +50,93 @@ class TestQtPanel : public QObject {
     Q_OBJECT
 
 private slots:
+    void newsReadSharedIdentityAndRestart()
+    {
+        QTemporaryDir dir;
+        const auto path = dir.filePath("settings.json");
+        const QVariantMap first{{"link", "https://example.test/story?utm_source=rss#section"}};
+        const QVariantMap duplicate{{"link", "https://example.test/story"}};
+        const QVariantMap second{{"link", "https://example.test/new"}};
+        QCOMPARE(NewsReadState::keyFor(first), NewsReadState::keyFor(duplicate));
+        {
+            SettingsStore settings(path); NewsReadState state(&settings);
+            state.observe("Science", {first});
+            QVERIFY(!state.isUnread(first));
+            state.observe("Science", {first, second});
+            QVERIFY(state.isUnread(second));
+            state.observe("Quebec", {second});
+            QVERIFY(state.isUnread(second));
+            state.setRead(first, false);
+            QCOMPARE(state.unreadCount({first, duplicate, second}), 2);
+            for (int i = 0; i < 10; ++i) state.observe("Science", {duplicate, second});
+            QVERIFY(state.isUnread(first)); // Refresh/image hydration/rotation never consumes unread state.
+            settings.flush();
+        }
+        SettingsStore settings(path); NewsReadState restored(&settings);
+        QVERIFY(restored.isUnread(duplicate));
+        restored.markAllRead({duplicate, second});
+        QCOMPARE(restored.unreadCount({first, second}), 0);
+    }
+
+    void newsReadFailedLoadsRemainUnread()
+    {
+        QTemporaryDir dir; SettingsStore settings(dir.filePath("settings.json")); NewsReadState state(&settings);
+        QVariantMap article{{"url", "https://example.test/new"}, {"paragraphs", QVariantList{"body"}}};
+        state.setRead(article, false);
+        state.readerCompleted(article, true); QVERIFY(state.isUnread(article));
+        article["seedFallback"] = true;
+        state.readerCompleted(article, false); QVERIFY(state.isUnread(article));
+        article.remove("seedFallback"); article["error"] = "timeout";
+        state.readerCompleted(article, false); QVERIFY(state.isUnread(article));
+        article.remove("error");
+        state.readerCompleted(article, false); QVERIFY(!state.isUnread(article));
+    }
+
+    void officialWeatherGeometryAndCancellation()
+    {
+        const auto geometry = QJsonDocument::fromJson(R"({"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[4,4],[6,4],[6,6],[4,6],[4,4]]]})").object().toVariantMap();
+        QVERIFY(WeatherAlerts::contains(geometry, 2, 2));
+        QVERIFY(!WeatherAlerts::contains(geometry, 5, 5));
+        QVERIFY(!WeatherAlerts::contains(geometry, 20, 20));
+        const auto now = QDateTime::fromString("2026-09-20T12:00:00Z", Qt::ISODate).toMSecsSinceEpoch();
+        QVariantMap props{{"feature_id", "area"}, {"alert_code", "rain"}, {"status_en", "issued"},
+            {"publication_datetime", "2026-09-20T10:00:00Z"}, {"expiration_datetime", "2026-09-20T14:00:00Z"}};
+        QVariantMap feature{{"geometry", geometry}, {"properties", props}};
+        QCOMPARE(WeatherAlerts::activeFeatures({feature}, 2, 2, now).size(), 1);
+        QCOMPARE(WeatherAlerts::activeFeatures({feature}, 2, 2, now + 3*3600000).size(), 0);
+        props["status_en"] = "cancelled"; props["publication_datetime"] = "2026-09-20T11:00:00Z";
+        const QVariantMap cancellation{{"geometry", geometry}, {"properties", props}};
+        QCOMPARE(WeatherAlerts::activeFeatures({cancellation, feature}, 2, 2, now).size(), 0);
+        QCOMPARE(WeatherAlerts::activeFeatures({}, 2, 2, now).size(), 0);
+    }
+
+    void marketSessionMidnightAndVolume()
+    {
+        const auto time = QDateTime::fromString("2026-09-19T00:30:00Z", Qt::ISODate).toSecsSinceEpoch();
+        QJsonArray dates, volumes, closes;
+        for (int i = 21; i >= 0; --i) {
+            dates.append(time - i * 86400); volumes.append(i == 0 ? 10000 : 100); closes.append(i == 0 ? 110 : 100);
+        }
+        QJsonObject meta{{"regularMarketTime", time}, {"regularMarketPrice", 110}, {"regularMarketVolume", 250}, {"exchangeTimezoneName", "America/New_York"}};
+        const QJsonObject candle{{"close", closes}, {"volume", volumes}};
+        const QJsonObject indicators{{"quote", QJsonArray{candle}}};
+        QJsonObject data{{"meta", meta}, {"timestamp", dates}, {"indicators", indicators}};
+        const QVariantMap symbol{{"symbol", "NASDAQ:TEST"}};
+        const auto row = MarketInsights::parseChart(data, symbol, time + 60);
+        QCOMPARE(row.value("session").toString(), "2026-09-18");
+        QCOMPARE(row.value("relativeVolume").toDouble(), 2.5);
+        QCOMPARE(row.value("percent").toDouble(), 10.0);
+        auto smaller = row; smaller["symbol"] = "NYSE:SMALL"; smaller["percent"] = -4;
+        const auto ranked = MarketInsights::rank({smaller, row, row}, time + 3600);
+        QCOMPARE(ranked.size(), 2);
+        QCOMPARE(ranked.first().toMap().value("symbol").toString(), "NASDAQ:TEST");
+        QVERIFY(MarketInsights::rank({row}, time + 5*86400).isEmpty());
+        meta["exchangeTimezoneName"] = "Asia/Tokyo"; data["meta"] = meta;
+        QCOMPARE(MarketInsights::parseChart(data, symbol, time + 60).value("session").toString(), "2026-09-19");
+        meta["exchangeTimezoneName"] = "Invalid/Zone"; data["meta"] = meta;
+        QVERIFY(MarketInsights::parseChart(data, symbol, time + 60).isEmpty());
+    }
+
     void audioOutputAlreadyAvailable()
     {
         int wakes = 0;

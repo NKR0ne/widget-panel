@@ -34,6 +34,7 @@
 #include "services/live/LiveFeedService.h"
 #include "services/msgraph/MsGraphService.h"
 #include "services/news/NewsService.h"
+#include "services/news/NewsReadState.h"
 #include "services/media/WindowsMediaService.h"
 #include "services/radio/RadioService.h"
 #include "services/pressreader/PressReaderService.h"
@@ -44,6 +45,8 @@
 #include "services/starvis/VoiceSession.h"
 #include "services/stocks/StocksModel.h"
 #include "services/weather/WeatherService.h"
+#include "services/weather/WeatherAlerts.h"
+#include "services/stocks/MarketInsights.h"
 #include "services/workstation/WorkstationClient.h"
 #include "shell/HelperServer.h"
 #include "shell/PanelWindowController.h"
@@ -362,9 +365,16 @@ int main(int argc, char* argv[])
 
     HttpClient http;
     WeatherService weather(&settings, &http);
+    WeatherAlerts weatherAlerts(&settings, &http);
     WorkstationClient workstation(nullptr);
     StocksModel stocks(&settings, &vault, &http);
+    MarketInsights marketInsights(&stocks, &http, &vault);
     NewsService news(&settings, &http);
+    NewsReadState newsRead(&settings);
+    QObject::connect(&news, &NewsService::categoryUpdated, &newsRead,
+                     [&news, &newsRead](const QString& category) {
+        newsRead.observe(category, news.itemsFor(category));
+    });
     WindowsMediaService windowsMedia(&settings);
     RadioService radio(&settings, &http); // Owns the persistent library and filtered views.
     MsGraphService msGraph(&settings, &http);
@@ -417,9 +427,14 @@ int main(int argc, char* argv[])
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Panel", &controller);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Store", &settings);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Weather", &weather);
+    qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "WeatherAlerts", &weatherAlerts);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Workstation", &workstation);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Stocks", &stocks);
+    qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "MarketInsights", &marketInsights);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "News", &news);
+    qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "NewsRead", &newsRead);
+    QObject::connect(&reader, &ReaderService::articleChanged, &newsRead,
+                     [&reader, &newsRead] { newsRead.readerCompleted(reader.article(), reader.busy()); });
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "WinMedia", &windowsMedia);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Radio", &radio);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "MsGraph", &msGraph);

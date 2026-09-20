@@ -564,6 +564,20 @@ void StocksModel::refresh()
         fetchRow(m_current, i);
 }
 
+QVariantList StocksModel::watchlistSymbols() const
+{
+    QVariantList result;
+    QSet<QString> seen;
+    for (int i = 1; i < m_lists.size(); ++i) {
+        for (const auto& row : m_lists[i].rows) {
+            if (row.ticker.isEmpty() || seen.contains(row.tvSymbol)) continue;
+            seen.insert(row.tvSymbol);
+            result.append(QVariantMap{{"symbol", row.tvSymbol}, {"ticker", row.ticker}, {"name", row.display}});
+        }
+    }
+    return result;
+}
+
 QStringList StocksModel::earningsSymbols() const
 {
     const List* chosen = nullptr;

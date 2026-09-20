@@ -13,6 +13,10 @@ qt_add_executable(qt-panel-tests
     ${CMAKE_SOURCE_DIR}/src/shell/FocusPolicy.cpp
     ${CMAKE_SOURCE_DIR}/src/shell/SystemTheme.cpp
     ${CMAKE_SOURCE_DIR}/src/services/news/NewsService.cpp
+    ${CMAKE_SOURCE_DIR}/src/services/news/NewsReadState.cpp
+    ${CMAKE_SOURCE_DIR}/src/services/weather/WeatherAlerts.cpp
+    ${CMAKE_SOURCE_DIR}/src/services/stocks/MarketInsights.cpp
+    ${CMAKE_SOURCE_DIR}/src/services/stocks/StocksModel.cpp
     ${CMAKE_SOURCE_DIR}/src/services/reader/ReaderService.cpp
     ${CMAKE_SOURCE_DIR}/src/services/live/LiveFeedService.cpp
     ${CMAKE_SOURCE_DIR}/src/services/pressreader/PressReaderService.cpp
@@ -64,11 +68,14 @@ file(GLOB_RECURSE NEWS_QML_MOCKS CONFIGURE_DEPENDS
 foreach(mock_file IN LISTS NEWS_QML_MOCKS)
     configure_file("qml/mocks/${mock_file}" "${NEWS_QML_TEST_DIR}/${mock_file}" COPYONLY)
 endforeach()
-foreach(qml_file NewsStage.qml ArticleReaderPane.qml MediaWidget.qml MediaLibraryPane.qml FmRadioWidget.qml)
+foreach(qml_file NewsStage.qml NewsReadControls.qml ArticleReaderPane.qml MediaWidget.qml MediaLibraryPane.qml FmRadioWidget.qml)
     configure_file("${CMAKE_SOURCE_DIR}/qml/${qml_file}"
                    "${NEWS_QML_TEST_DIR}/${qml_file}" COPYONLY)
 endforeach()
 configure_file(qml/tst_NewsReading.qml "${NEWS_QML_TEST_DIR}/tst_NewsReading.qml" COPYONLY)
+configure_file("${CMAKE_SOURCE_DIR}/qml/NewsWidget.qml" "${NEWS_QML_TEST_DIR}/NewsCarouselUnderTest.qml" COPYONLY)
+configure_file("${CMAKE_SOURCE_DIR}/qml/NewsArticleVisual.qml" "${NEWS_QML_TEST_DIR}/NewsArticleVisual.qml" COPYONLY)
+configure_file(qml/tst_NewsCarousel.qml "${NEWS_QML_TEST_DIR}/tst_NewsCarousel.qml" COPYONLY)
 configure_file("${CMAKE_SOURCE_DIR}/qml/NotificationRules.js" "${NEWS_QML_TEST_DIR}/NotificationRules.js" COPYONLY)
 configure_file(qml/tst_NotificationRules.qml "${NEWS_QML_TEST_DIR}/tst_NotificationRules.qml" COPYONLY)
 configure_file("${CMAKE_SOURCE_DIR}/qml/Notifications.qml" "${NEWS_QML_TEST_DIR}/Notifications.qml" COPYONLY)

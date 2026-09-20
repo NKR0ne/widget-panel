@@ -19,6 +19,7 @@ GlassCard {
     readonly property bool earningsTab: tab === listCount
     readonly property bool iposTab: tab === listCount + 1
     readonly property bool heatmapTab: tab === listCount + 2
+    readonly property bool trendsTab: tab === listCount + 3
     readonly property bool overviewTab: Stocks.currentList === 0
     property string heatmapPeriod: Store.get("wp-heatmap-period", "change") || "change"
     property int storeRevision: 0
@@ -234,7 +235,7 @@ GlassCard {
     Connections {
         target: Stocks
         function onCurrentListChanged() {
-            if (!card.earningsTab && !card.iposTab && !card.heatmapTab)
+            if (!card.earningsTab && !card.iposTab && !card.heatmapTab && !card.trendsTab)
                 card.tab = Stocks.currentList
         }
         function onListsChanged() {
@@ -243,7 +244,7 @@ GlassCard {
             const specialOffset = oldCount > 0 && card.tab >= oldCount
                 ? card.tab - oldCount : -1
             card.knownListCount = nextCount
-            if (specialOffset >= 0 && specialOffset <= 2)
+            if (specialOffset >= 0 && specialOffset <= 3)
                 card.tab = nextCount + specialOffset
             else if (card.tab >= nextCount)
                 card.tab = Math.max(0, nextCount - 1)
@@ -294,6 +295,7 @@ GlassCard {
                         names.push("Revenus")
                         names.push("IPO")
                         names.push("Heatmap")
+                        names.push("Tendances")
                         return names
                     }
                     delegate: Rectangle {
@@ -419,6 +421,78 @@ GlassCard {
                 id: marketContent
                 width: marketFlick.width - (marketFlick.contentHeight > marketFlick.height ? 6 : 0)
                 spacing: 5
+
+        Column {
+            width: parent.width
+            visible: card.trendsTab
+            spacing: 8
+            Row {
+                width: parent.width
+                Text {
+                    width: parent.width - 30
+                    text: MarketInsights.status
+                    color: Theme.textSecondary; font.pixelSize: 10; wrapMode: Text.WordWrap
+                }
+                IconButton { buttonSize: 24; glyph: "\uE72C"; tooltip: "Actualiser les tendances"; onClicked: MarketInsights.refresh() }
+            }
+            Repeater {
+                model: card.trendsTab ? MarketInsights.movers : []
+                delegate: Column {
+                    required property var modelData
+                    required property int index
+                    width: marketContent.width
+                    spacing: 3
+                    Row {
+                        width: parent.width
+                        Text {
+                            width: parent.width - 88
+                            text: (index + 1) + ". " + modelData.name
+                            color: Theme.textPrimary; font.pixelSize: 11; elide: Text.ElideRight
+                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: card.openSymbol(modelData.symbol) }
+                        }
+                        Text {
+                            width: 62; horizontalAlignment: Text.AlignRight
+                            text: (modelData.percent > 0 ? "+" : "") + Number(modelData.percent).toFixed(2) + "%"
+                            color: modelData.percent >= 0 ? card.upColor : card.downColor; font.pixelSize: 11
+                        }
+                        IconButton { buttonSize: 24; glyph: "\uE8A5"; tooltip: "Actualit\u00e9s associ\u00e9es"; onClicked: MarketInsights.loadNews(modelData.symbol) }
+                    }
+                    Text {
+                        width: parent.width
+                        text: modelData.asOf + (modelData.stale ? " - derni\u00e8re cotation" : "")
+                        color: Theme.textSecondary; font.pixelSize: 9; wrapMode: Text.WordWrap
+                    }
+                    Text {
+                        visible: modelData.relativeVolume !== null && modelData.relativeVolume !== undefined
+                        width: parent.width
+                        text: "Vol. " + Number(modelData.relativeVolume || 0).toFixed(2) + "\u00d7 / moy. 20 s\u00e9ances compl\u00e8tes"
+                        color: Number(modelData.relativeVolume) >= 2 ? Theme.accent : Theme.textSecondary
+                        font.pixelSize: 9; wrapMode: Text.WordWrap
+                    }
+                }
+            }
+            Text {
+                width: parent.width; text: MarketInsights.newsStatus
+                color: Theme.textSecondary; font.pixelSize: 10; wrapMode: Text.WordWrap
+            }
+            Repeater {
+                model: card.trendsTab ? MarketInsights.headlines : []
+                delegate: Column {
+                    required property var modelData
+                    width: marketContent.width; spacing: 3
+                    Text {
+                        width: parent.width; text: modelData.title; textFormat: Text.PlainText
+                        color: Theme.textPrimary; font.pixelSize: 11; wrapMode: Text.WordWrap
+                        MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: Panel.openIsland(modelData.link) }
+                    }
+                    Text {
+                        width: parent.width
+                        text: modelData.source + " - " + Qt.formatDateTime(new Date(modelData.published), "dd MMM HH:mm")
+                        color: Theme.textSecondary; font.pixelSize: 9; wrapMode: Text.WordWrap
+                    }
+                }
+            }
+        }
 
         // Earnings calendar view
         Column {
@@ -656,7 +730,7 @@ GlassCard {
         }
 
         Repeater {
-            model: (card.iposTab || card.earningsTab || card.heatmapTab) ? 0 : Stocks
+            model: (card.iposTab || card.earningsTab || card.heatmapTab || card.trendsTab) ? 0 : Stocks
 
             delegate: Item {
                 id: row
@@ -842,7 +916,7 @@ GlassCard {
         }
 
         Text {
-            visible: !card.iposTab && !card.earningsTab && !card.heatmapTab && Stocks.count === 0
+            visible: !card.iposTab && !card.earningsTab && !card.heatmapTab && !card.trendsTab && Stocks.count === 0
             width: parent.width
             text: Stocks.listNames.length ? "Liste vide" : "Aucune liste trouvee"
             color: Theme.textSecondary

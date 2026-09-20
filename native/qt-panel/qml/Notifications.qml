@@ -163,17 +163,41 @@ QtObject {
             Store.set("wp-notifications-weather", JSON.stringify({location: location, code: current.code, tempC: current.tempC}))
         }
     }
+    property Connections officialWeatherEvents: Connections {
+        target: WeatherAlerts
+        function onUpdated() {
+            if (WeatherAlerts.stale) return
+            const alerts = WeatherAlerts.alerts
+            const keys = alerts.map(function(a) { return "eccc:" + a.key + ":" + a.issued })
+            hub.entries = hub.entries.filter(function(e) { return e.key.indexOf("eccc:") !== 0 || keys.indexOf(e.key) >= 0 })
+            for (let i = 0; i < alerts.length; ++i) {
+                const a = alerts[i]
+                hub.push("weather", keys[i], a.title + " - " + a.area, "", a.warning,
+                         Math.max(1, a.expires - Date.now()))
+            }
+            hub.persist()
+        }
+    }
     property Connections quoteEvents: Connections {
-        target: Stocks
-        function onQuoteUpdated(name, symbol, percent, quoteTime) {
-            if (!symbol || !quoteTime || !isFinite(percent)
-                    || Math.abs(percent) < Number(hub.option("marketThreshold", 3))) return
-            const quoted = new Date(Number(quoteTime) * 1000)
-            if (Date.now() - quoted.getTime() > 4 * 86400000) return
-            hub.push("markets", "market:" + quoted.toDateString() + ":" + symbol,
-                name + " " + (percent > 0 ? "+" : "") + Number(percent).toFixed(1) + " %"
-                + " (" + Qt.formatDateTime(quoted, "dd MMM hh:mm") + ")",
-                symbol, false, 4 * 86400000)
+        target: MarketInsights
+        function onRefreshed() {
+            const movers = MarketInsights.movers.filter(function(m) {
+                return Math.abs(m.percent) >= Number(hub.option("marketThreshold", 3))
+            }).slice(0, 3)
+            for (const m of movers) {
+                const key = "market:" + m.session + ":" + m.symbol
+                const text = m.name + " " + (m.percent > 0 ? "+" : "") + Number(m.percent).toFixed(1) + " % (" + m.asOf + ")"
+                hub.entries = hub.entries.map(function(e) {
+                    return e.key === key ? Object.assign({}, e, {text: text}) : e
+                })
+                hub.push("markets", key, text, m.symbol, false, 4 * 86400000)
+            }
+            const volumes = MarketInsights.movers.filter(function(m) { return Number(m.relativeVolume) >= 2 }).slice(0, 3)
+            for (const m of volumes)
+                hub.push("markets", "volume:" + m.session + ":" + m.symbol,
+                    m.name + " : volume " + Number(m.relativeVolume).toFixed(1) + "\u00d7 / moy. 20 s\u00e9ances (" + m.asOf + ")",
+                    m.symbol, false, 4 * 86400000)
+            hub.persist()
         }
     }
     property Connections briefingEvents: Connections {

@@ -54,11 +54,23 @@ TestCase {
         compare(Notifications.entries.length, 1)
     }
     function test_quoteDeduplicationAndTimestamp() {
-        const time = Date.now() / 1000
-        Stocks.quoteUpdated("Test", "TEST:ABC", 4.5, time)
-        Stocks.quoteUpdated("Test", "TEST:ABC", 4.6, time)
+        MarketInsights.movers = [{name:"Test", symbol:"TEST:ABC", percent:4.5, session:"2026-09-18", asOf:"2026-09-18 20:30 EDT"}]
+        MarketInsights.refreshed()
+        MarketInsights.refreshed()
         compare(Notifications.entries.length, 1)
-        Stocks.quoteUpdated("Stale", "TEST:OLD", 8, time - 6 * 86400)
+        verify(Notifications.entries[0].text.indexOf("20:30 EDT") >= 0)
+        MarketInsights.movers = [{name:"Test", symbol:"TEST:ABC", percent:4.5, session:"2026-09-19", asOf:"2026-09-19 20:30 EDT"}]
+        MarketInsights.refreshed()
+        compare(Notifications.entries.length, 2)
+    }
+    function test_weatherCancellationRemovesNotification() {
+        WeatherAlerts.alerts = [{key:"area:rain", issued:Date.now(), expires:Date.now()+3600000, title:"Pluie", area:"Quebec", warning:true}]
+        WeatherAlerts.updated()
         compare(Notifications.entries.length, 1)
+        WeatherAlerts.updated()
+        compare(Notifications.entries.length, 1)
+        WeatherAlerts.alerts = []
+        WeatherAlerts.updated()
+        compare(Notifications.entries.length, 0)
     }
 }

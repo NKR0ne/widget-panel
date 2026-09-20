@@ -61,6 +61,7 @@ public:
     Q_INVOKABLE void refreshWatchlists();
     Q_INVOKABLE void refreshEarnings();
     Q_INVOKABLE void refreshIpos();
+    QVariantList watchlistSymbols() const;
     Q_INVOKABLE QString heatmapUrl(const QString& blockColor = QString(),
                                    const QString& layout = QString()) const;
 

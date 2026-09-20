@@ -22,15 +22,18 @@ GlassCard {
 
     property var items: News.itemsFor(categoryLabel)
     property int storeRev: 0
+    readonly property int unreadCount: { NewsRead.revision; return NewsRead.unreadCount(items) }
+    readonly property bool unreadOnly: { storeRev; return Store.get("wp-news-unread-only", false) === true }
     property int carouselIndex: 0
     property int pendingCarouselIndex: 0
     property var displayedItem: ({})
     property var incomingItem: ({})
     property real flipProgress: 0
     readonly property var presentationItems: {
+        NewsRead.revision
         const result = []
         for (const item of items) {
-            if (String(item.title || "").trim() !== "")
+            if (String(item.title || "").trim() !== "" && (!unreadOnly || NewsRead.isUnread(item)))
                 result.push(item)
         }
         return result
@@ -138,6 +141,7 @@ GlassCard {
     Connections {
         target: Store
         function onChanged(key) {
+            if (key === "wp-news-unread-only") card.storeRev++
             if (key === "wp-news-carousel" || key === "wp-news-carousel-ms")
                 card.storeRev++
             if (key === card.newsHeightKey())
@@ -203,16 +207,32 @@ GlassCard {
 
             Text {
                 id: categoryTitle
-                width: Math.max(40, parent.width - matrixButton.width - 6)
+                width: Math.max(0, parent.width - matrixButton.width - markArticle.width - markCategory.width - 18)
                 anchors.verticalCenter: parent.verticalCenter
-                text: card.categoryLabel
-                color: Theme.textSecondary
+                text: card.categoryLabel + (card.unreadCount ? "  \u2022 " + card.unreadCount : "")
+                color: card.unreadCount ? Theme.accent : Theme.textSecondary
                 font.pixelSize: card.px(Theme.fontSizeCaption)
                 font.capitalization: Font.AllUppercase
                 font.letterSpacing: 1.2
                 elide: Text.ElideRight
             }
 
+            IconButton {
+                id: markCategory
+                buttonSize: 22; glyph: "\uE8B3"
+                tooltip: "Marquer la cat\u00e9gorie comme lue"
+                enabled: card.unreadCount > 0
+                onClicked: NewsRead.markAllRead(card.items)
+            }
+            IconButton {
+                id: markArticle
+                buttonSize: 22
+                readonly property bool unread: { NewsRead.revision; return NewsRead.isUnread(card.displayedItem) }
+                glyph: unread ? "\uE73E" : "\uE8F2"
+                tooltip: unread ? "Marquer comme lu" : "Marquer comme non lu"
+                enabled: !!card.displayedItem.link
+                onClicked: NewsRead.setRead(card.displayedItem, unread)
+            }
             Rectangle {
                 id: matrixButton
                 width: matrixLabel.implicitWidth + 12
@@ -242,7 +262,7 @@ GlassCard {
 
         Text {
             visible: card.presentationItems.length === 0
-            text: "Chargement des flux…"
+            text: card.unreadOnly ? "Aucun article non lu" : "Chargement des flux…"
             color: Theme.textSecondary
             font.pixelSize: card.px(Theme.fontSizeCaption)
         }

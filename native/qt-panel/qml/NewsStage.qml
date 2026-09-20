@@ -28,6 +28,14 @@ Item {
     }
     property int newsRevision: 0
     property int storeRevision: 0
+    readonly property bool unreadOnly: { storeRevision; return Store.get("wp-news-unread-only", false) === true }
+    function selectionItems(allCategories) {
+        newsRevision
+        let items = []
+        const category = allCategories ? "" : focusedCategory || selectedCategory
+        for (const label of (category ? [category] : News.categories)) items = items.concat(News.itemsFor(label))
+        return items
+    }
     property int carouselCascadeCursor: 0
     property int carouselCascadeDelay: 5000
     property int carouselCascadeLastIndex: -1
@@ -106,13 +114,15 @@ Item {
         + (focusedRailWidth - railWidth) * focusProgress
     readonly property var selectedItems: {
         newsRevision
+        NewsRead.revision
         const result = []
         const seen = {}
         const category = focusedCategory || selectedCategory
         const labels = category !== "" ? [category] : News.categories
         for (const label of labels) {
             for (const item of News.itemsFor(label)) {
-                const key = item.link || (label + "|" + (item.title || ""))
+                if (unreadOnly && !NewsRead.isUnread(item) && String(item.link) !== selectedUrl) continue
+                const key = NewsRead.keyFor(item) || (label + "|" + (item.title || ""))
                 if (!seen[key]) {
                     seen[key] = true
                     result.push(Object.assign({}, item, { readingCategory: label }))
@@ -335,6 +345,7 @@ Item {
     Connections {
         target: Store
         function onChanged(key) {
+            if (key === "wp-news-unread-only") stage.storeRevision++
             if (key === "wp-news-notification-category") {
                 const category = String(Store.get(key, ""))
                 if (category !== "") {
@@ -424,13 +435,17 @@ Item {
 
             Text {
                 width: Math.max(32, parent.width
-                                - refreshButton.width - importButton.width - 10)
+                                - refreshButton.width - importButton.width - readControls.width - 15)
                 anchors.verticalCenter: parent.verticalCenter
                 text: "Nouvelles"
                 color: Theme.textPrimary
                 font.pixelSize: stage.uiPx(Theme.fontSizeTitle)
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
+            }
+            NewsReadControls {
+                id: readControls
+                items: stage.selectionItems()
             }
             Rectangle {
                 id: refreshButton
@@ -593,8 +608,12 @@ Item {
                             anchors.right: parent.right
                             anchors.rightMargin: 10
                             anchors.verticalCenter: parent.verticalCenter
-                            text: News.isLoading(modelData) ? "..." : News.itemsFor(modelData).length
-                            color: News.isLoading(modelData) ? Theme.accent : Theme.textSecondary
+                            text: {
+                                NewsRead.revision; stage.newsRevision
+                                const count = NewsRead.unreadCount(News.itemsFor(modelData))
+                                return count ? "\u2022 " + count : News.itemsFor(modelData).length
+                            }
+                            color: { NewsRead.revision; return NewsRead.unreadCount(News.itemsFor(modelData)) ? Theme.accent : Theme.textSecondary }
                             font.pixelSize: stage.uiPx(9)
                         }
                         MouseArea {
@@ -713,6 +732,7 @@ Item {
             }
             Text {
                 width: Math.max(0, parent.width - listCount.width - 8
+                    - (focusedReadControls.visible ? focusedReadControls.width + 8 : 0)
                     - (backToNews.visible ? backToNews.width + 8 : 0))
                 anchors.verticalCenter: parent.verticalCenter
                 text: stage.focusedCategory || (stage.selectedCategory !== "" ? stage.selectedCategory
@@ -728,6 +748,11 @@ Item {
                 text: stage.selectedItems.length + " articles"
                 color: Theme.textSecondary
                 font.pixelSize: stage.uiPx(Theme.fontSizeCaption)
+            }
+            NewsReadControls {
+                id: focusedReadControls
+                visible: stage.focusedCategory !== ""
+                items: { stage.newsRevision; return stage.selectionItems() }
             }
         }
 
@@ -748,6 +773,7 @@ Item {
                 id: articleRow
                 required property var modelData
                 required property int index
+                readonly property bool unread: { NewsRead.revision; return NewsRead.isUnread(modelData) }
                 width: ListView.view.width
                 height: Math.round(94 * stage.uiScale)
                 radius: 6
@@ -780,14 +806,14 @@ Item {
                     anchors.left: thumbnailFrame.visible ? thumbnailFrame.right : parent.left
                     anchors.leftMargin: 9
                     anchors.right: parent.right
-                    anchors.rightMargin: 9
+                    anchors.rightMargin: 30
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 4
 
                     Text {
                         width: parent.width
-                        text: articleRow.modelData.title || "Article"
-                        color: Theme.textPrimary
+                        text: (articleRow.unread ? "\u2022 " : "") + (articleRow.modelData.title || "Article")
+                        color: articleRow.unread ? Theme.textPrimary : Theme.textSecondary
                         font.pixelSize: stage.uiPx(11)
                         font.weight: Font.DemiBold
                         maximumLineCount: 2
@@ -821,6 +847,13 @@ Item {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: stage.openArticle(articleRow.modelData)
+                }
+                IconButton {
+                    anchors.right: parent.right; anchors.bottom: parent.bottom
+                    anchors.margins: 3; buttonSize: 22
+                    glyph: articleRow.unread ? "\uE73E" : "\uE8F2"
+                    tooltip: articleRow.unread ? "Marquer comme lu" : "Marquer comme non lu"
+                    onClicked: NewsRead.setRead(articleRow.modelData, articleRow.unread)
                 }
             }
 
@@ -942,7 +975,7 @@ Item {
             Text {
                 width: Math.max(60, parent.width - cardSizeControl.width
                                 - carouselRefreshButton.width
-                                - carouselImportButton.width - 24)
+                                - carouselImportButton.width - carouselReadControls.width - 32)
                 anchors.verticalCenter: parent.verticalCenter
                 text: "Nouvelles par categorie"
                 color: Theme.textPrimary
@@ -951,6 +984,10 @@ Item {
                 elide: Text.ElideRight
             }
 
+            NewsReadControls {
+                id: carouselReadControls
+                items: { stage.newsRevision; return stage.selectionItems(true) }
+            }
             // Card size: changes the card's dimensions (not the text — that is
             // the separate UI-scale control in the panel header).
             Row {

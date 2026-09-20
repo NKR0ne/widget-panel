@@ -29,6 +29,41 @@ GlassCard {
         anchors.margins: 12
         spacing: 8
 
+        Repeater {
+            model: WeatherAlerts.alerts
+            delegate: Column {
+                required property var modelData
+                property bool expanded: false
+                width: body.width
+                spacing: 4
+                Text {
+                    width: parent.width
+                    text: "\u26a0 " + modelData.title + (WeatherAlerts.stale ? " (non actualis\u00e9)" : "")
+                    color: modelData.warning ? "#fca5a5" : Theme.accent
+                    font.pixelSize: Theme.fontSizeBody
+                    wrapMode: Text.WordWrap
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: parent.parent.expanded = !parent.parent.expanded }
+                }
+                Text {
+                    visible: parent.expanded
+                    width: parent.width
+                    text: modelData.area + "\n" + modelData.text + "\nEnvironnement Canada - "
+                          + Qt.formatDateTime(new Date(modelData.issued), "dd MMM HH:mm")
+                    color: Theme.textPrimary
+                    font.pixelSize: Theme.fontSizeCaption
+                    wrapMode: Text.WordWrap
+                    textFormat: Text.PlainText
+                }
+            }
+        }
+        Text {
+            width: parent.width
+            text: WeatherAlerts.status
+            color: WeatherAlerts.stale ? "#fbbf24" : Theme.textSecondary
+            font.pixelSize: 9
+            wrapMode: Text.WordWrap
+        }
+
         Text {
             text: Weather.locationName || card.title
             color: Theme.textSecondary

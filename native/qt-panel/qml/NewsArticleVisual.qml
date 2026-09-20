@@ -1,10 +1,12 @@
 import QtQuick
+import QtPanel.Native
 
 // Shared image-led article face used by carousel flips and matrix cards.
 Item {
     id: visual
 
     property var article: ({})
+    readonly property bool unread: { NewsRead.revision; return NewsRead.isUnread(article) }
     property real textScale: 1.0
     property bool showDescription: true
     property int titleLines: 3
@@ -72,6 +74,14 @@ Item {
         }
     }
 
+    Rectangle {
+        anchors.top: parent.top; anchors.right: parent.right; anchors.margins: 12
+        width: 7; height: 7; radius: 3.5
+        color: Theme.accent
+        opacity: visual.unread ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: Motion.fastMs } }
+    }
+
     Column {
         anchors.left: parent.left
         anchors.right: parent.right
@@ -106,7 +116,7 @@ Item {
         Text {
             width: parent.width
             text: visual.article.title || "Article"
-            color: "#ffffff"
+            color: visual.unread ? "#ffffff" : "#d8dfe9"
             font.pixelSize: visual.px(15)
             font.weight: Font.DemiBold
             wrapMode: Text.WordWrap

@@ -18,6 +18,8 @@ TestCase {
         Motion.enabled = true
         News.categories = ["Quebec", "Science"]
         Reader.openCount = 0
+        NewsRead.states = ({})
+        NewsRead.revision++
         stage = createTemporaryObject(stageComponent, testCase)
         verify(stage)
         waitForRendering(stage)
@@ -38,6 +40,20 @@ TestCase {
         verify(!pane().visible)
         const articles = findChild(stage, "newsReadingArticles")
         compare(Math.round(articles.x + articles.width), stage.width)
+    }
+    function test_unreadFilterAndReadControls() {
+        const item = News.itemsFor("Quebec")[0]
+        NewsRead.setRead(item, false)
+        Store.set("wp-news-unread-only", true)
+        compare(stage.selectedItems.length, 1)
+        stage.openArticle(stage.selectedItems[0])
+        NewsRead.setRead(item, true)
+        compare(stage.selectedItems.length, 1) // Do not remove the actively read item.
+        stage.closeArticle()
+        tryCompare(stage, "focusedCategory", "", 1000)
+        compare(stage.selectedItems.length, 0)
+        Store.set("wp-news-unread-only", false)
+        compare(stage.selectedItems.length, 40)
     }
     function test_clickFocusAndCloseRestoresOverview() {
         list().contentY = 300
@@ -121,7 +137,7 @@ TestCase {
         focusArticle()
         News.categories = ["Quebec"]
         tryCompare(stage, "focusProgress", 0, 1000)
-        compare(stage.focusedCategory, "")
+        tryCompare(stage, "focusedCategory", "", 1000)
         verify(!pane().visible)
     }
     function test_visualStates() {
