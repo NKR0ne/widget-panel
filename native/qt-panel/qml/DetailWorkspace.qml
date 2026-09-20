@@ -140,7 +140,8 @@ Item {
                 sourceComponent: Ui.detailKind === "stocks" ? stocksDetail
                     : Ui.detailKind === "camera" ? cameraDetail
                     : Ui.detailKind === "station" ? stationDetail
-                    : Ui.detailKind === "traffic" ? trafficDetail : emptyDetail
+                    : Ui.detailKind === "traffic" ? trafficDetail
+                    : Ui.detailKind === "weather" ? weatherDetail : emptyDetail
             }
         }
     }
@@ -164,6 +165,10 @@ Item {
     Component {
         id: trafficDetail
         TrafficWidget { width: parent ? parent.width : 0; detailMode: true }
+    }
+    Component {
+        id: weatherDetail
+        WeatherWidget { width: parent ? parent.width : 0 }
     }
     Component {
         id: emptyDetail

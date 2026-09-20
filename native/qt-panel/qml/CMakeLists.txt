@@ -1,4 +1,4 @@
-set_source_files_properties(Theme.qml Motion.qml Ui.qml ModeSettings.qml
+set_source_files_properties(Theme.qml Motion.qml Ui.qml ModeSettings.qml Notifications.qml
     PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
 qt_add_qml_module(qtpanel_ui
@@ -8,6 +8,10 @@ qt_add_qml_module(qtpanel_ui
     QML_FILES
         Main.qml
         PanelSurface.qml
+        Notifications.qml
+        NotificationStrip.qml
+        NotificationHistory.qml
+        NotificationRules.js
         PanelColumns.qml
         WidgetHost.qml
         GlassCard.qml

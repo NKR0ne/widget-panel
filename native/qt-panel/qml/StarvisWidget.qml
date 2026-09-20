@@ -110,7 +110,7 @@ GlassCard {
         anchors.margins: 12
         spacing: 8
 
-        Row {
+        Flow {
             width: parent.width
             spacing: 6
 
@@ -124,7 +124,6 @@ GlassCard {
             Rectangle {
                 width: 6; height: 6; radius: 3
                 color: Starvis.configured ? "#62e6ff" : "#f87171"
-                anchors.verticalCenter: parent.verticalCenter
                 SequentialAnimation on opacity {
                     loops: Animation.Infinite
                     running: Starvis.busy
@@ -132,18 +131,11 @@ GlassCard {
                     NumberAnimation { to: 1.0; duration: 500 }
                 }
             }
-            Item {
-                width: Math.max(0, parent.width - x - webBtn.width
-                    - agentBtn.width - reasoningBtn.width - briefingBtn.width
-                    - stopBtn.width - 24)
-                height: 1
-            }
             Rectangle {
                 id: webBtn
                 width: webLabel.implicitWidth + 14
                 height: 20
                 radius: 5
-                anchors.verticalCenter: parent.verticalCenter
                 color: card.allowInternet ? Theme.activeFill
                     : webMouse.containsMouse ? Theme.hover : Theme.cardFill
                 border.color: card.allowInternet ? Theme.accent : Theme.cardStroke
@@ -170,7 +162,6 @@ GlassCard {
                 width: agentLabel.implicitWidth + 16
                 height: 20
                 radius: 5
-                anchors.verticalCenter: parent.verticalCenter
                 color: card.agentMode ? Qt.rgba(0.38, 0.9, 1, 0.28)
                      : agentMouse.containsMouse ? Qt.rgba(0.38, 0.9, 1, 0.16) : Theme.cardFill
                 border.color: card.agentMode ? "#62e6ff" : Theme.cardStroke
@@ -194,7 +185,6 @@ GlassCard {
                 width: reasoningLabel.implicitWidth + 14
                 height: 20
                 radius: 5
-                anchors.verticalCenter: parent.verticalCenter
                 color: Starvis.reasoningEnabled ? Theme.activeFill
                     : reasoningMouse.containsMouse ? Theme.hover : Theme.cardFill
                 border.color: Starvis.reasoningEnabled ? Theme.accent : Theme.cardStroke
@@ -223,7 +213,6 @@ GlassCard {
                 color: briefingMouse.containsMouse ? Qt.rgba(0.38, 0.9, 1, 0.2)
                                                    : Qt.rgba(0.38, 0.9, 1, 0.1)
                 border.color: Qt.rgba(0.38, 0.9, 1, 0.3)
-                anchors.verticalCenter: parent.verticalCenter
 
                 Text {
                     id: briefingLabel
@@ -251,7 +240,6 @@ GlassCard {
                 width: visible ? 20 : 0
                 height: 20
                 radius: 5
-                anchors.verticalCenter: parent.verticalCenter
                 color: stopMouse.containsMouse ? Qt.rgba(0.97, 0.45, 0.45, 0.25)
                                                : Qt.rgba(0.97, 0.45, 0.45, 0.12)
                 border.color: Qt.rgba(0.97, 0.45, 0.45, 0.5)
@@ -281,6 +269,47 @@ GlassCard {
             color: Theme.textSecondary
             font.pixelSize: Theme.fontSizeCaption
             wrapMode: Text.WordWrap
+        }
+
+        Row {
+            width: parent.width
+            spacing: 8
+            IconButton {
+                glyph: "\uE8A5"
+                enabled: !Starvis.busy && !Notifications.briefingBusy && Notifications.pendingNews.length > 0
+                tooltip: "R\u00e9sumer les nouvelles depuis le dernier briefing"
+                onClicked: {
+                    transcript.append({role: "user", text: "Briefing des nouvelles"})
+                    Notifications.newsBriefing()
+                }
+            }
+            Text {
+                width: Math.max(0, parent.width - 78)
+                anchors.verticalCenter: parent.verticalCenter
+                text: Notifications.briefingBusy ? "Briefing des nouvelles en cours..."
+                    : "Nouvelles : " + Notifications.pendingNews.length + " articles"
+                color: Theme.textSecondary
+                font.pixelSize: Theme.fontSizeCaption
+                elide: Text.ElideRight
+            }
+            IconButton {
+                glyph: "\uE767"
+                enabled: Notifications.lastNewsBriefing !== ""
+                tooltip: "\u00c9couter le dernier briefing des nouvelles"
+                onClicked: Starvis.speak(Notifications.lastNewsBriefing)
+            }
+        }
+
+        Text {
+            width: parent.width
+            visible: transcript.count === 0 && Notifications.lastNewsBriefing !== ""
+            text: Notifications.lastNewsBriefing
+            color: Theme.textPrimary
+            font.pixelSize: Theme.fontSizeCaption
+            wrapMode: Text.WordWrap
+            textFormat: Text.PlainText
+            maximumLineCount: 8
+            elide: Text.ElideRight
         }
 
         // Transcript

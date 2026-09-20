@@ -69,6 +69,10 @@ foreach(qml_file NewsStage.qml ArticleReaderPane.qml MediaWidget.qml MediaLibrar
                    "${NEWS_QML_TEST_DIR}/${qml_file}" COPYONLY)
 endforeach()
 configure_file(qml/tst_NewsReading.qml "${NEWS_QML_TEST_DIR}/tst_NewsReading.qml" COPYONLY)
+configure_file("${CMAKE_SOURCE_DIR}/qml/NotificationRules.js" "${NEWS_QML_TEST_DIR}/NotificationRules.js" COPYONLY)
+configure_file(qml/tst_NotificationRules.qml "${NEWS_QML_TEST_DIR}/tst_NotificationRules.qml" COPYONLY)
+configure_file("${CMAKE_SOURCE_DIR}/qml/Notifications.qml" "${NEWS_QML_TEST_DIR}/Notifications.qml" COPYONLY)
+configure_file(qml/tst_Notifications.qml "${NEWS_QML_TEST_DIR}/tst_Notifications.qml" COPYONLY)
 configure_file(qml/tst_MediaWidget.qml "${NEWS_QML_TEST_DIR}/tst_MediaWidget.qml" COPYONLY)
 configure_file(qml/tst_FmRadioWidget.qml "${NEWS_QML_TEST_DIR}/tst_FmRadioWidget.qml" COPYONLY)
 add_test(NAME news-reading-qml COMMAND powershell -NoProfile -ExecutionPolicy Bypass

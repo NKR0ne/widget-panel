@@ -29,7 +29,7 @@ TestCase {
         tryCompare(stage, "focusProgress", 1, 1000)
     }
     function test_initialOverviewAndRefresh() {
-        compare(stage.selectedItems.length, 40)
+          compare(stage.selectedItems.length, 40)
         compare(stage.selectedUrl, "")
         verify(!pane().visible)
         News.refresh()
@@ -56,7 +56,8 @@ TestCase {
         verify(Reader.article.url !== undefined)
         tryCompare(stage, "focusProgress", 0, 1000)
         compare(stage.selectedCategory, "")
-        compare(stage.selectedItems.length, 40)
+        tryCompare(stage, "focusedCategory", "", 1000)
+        tryVerify(function() { return stage.selectedItems.length === 40 })
         verify(!pane().visible)
         tryVerify(function() { return Math.abs(list().contentY - list().originY - previousScroll) < 1 })
     }

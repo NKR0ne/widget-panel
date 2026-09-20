@@ -84,6 +84,7 @@ public:
     Q_INVOKABLE void chat(const QString& message, const QVariantList& history,
                           bool allowInternet = false, bool allowAgent = false);
     Q_INVOKABLE void briefing();
+    Q_INVOKABLE void newsBriefing(const QString& prompt);
     Q_INVOKABLE void cancelChat();
     Q_INVOKABLE void analyzeImageFile(const QString& source, const QString& prompt);
     Q_INVOKABLE QString captureDesktop() const;

@@ -1039,6 +1039,7 @@ void SentryService::recordEvent(const QString& cameraId, const QImage& frame,
         else
             spoken = QStringLiteral("%1 : %2").arg(cameraLabel(cameraId), description);
         m_starvis->speakAlert(spoken);
+        emit voiceAnnouncementRequested(spoken, severity);
         logActivity(cameraId, QStringLiteral("alert"),
                     QStringLiteral("Annonce vocale demandée : ") + spoken);
     }

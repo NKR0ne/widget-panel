@@ -335,6 +335,14 @@ Item {
     Connections {
         target: Store
         function onChanged(key) {
+            if (key === "wp-news-notification-category") {
+                const category = String(Store.get(key, ""))
+                if (category !== "") {
+                    stage.selectCategory(category)
+                    Store.set(key, "")
+                }
+                return
+            }
             if (key === "wp-base-columns" || key === "wp-news-columns"
                     || key.indexOf("wp-news-columns-") === 0
                     || key === "wp-news-view-mode" || key === "wp-news-ui-scale"
@@ -359,6 +367,11 @@ Item {
 
     Component.onDestruction: Reader.close()
     Component.onCompleted: {
+        const notificationCategory = String(Store.get("wp-news-notification-category", ""))
+        if (notificationCategory !== "") {
+            stage.selectCategory(notificationCategory)
+            Store.set("wp-news-notification-category", "")
+        }
         if (viewMode === "carousel")
             restartCarouselCascade()
         else if (viewMode === "pressreader" && !PressReader.open)

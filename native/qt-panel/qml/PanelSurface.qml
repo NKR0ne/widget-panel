@@ -21,6 +21,24 @@ Item {
     // and the column arrangement (PanelColumns).
     property string panelMode: StartupMode === "live" ? "news" : StartupMode
     property string modeSwitchError: ""
+    Connections {
+        target: Notifications
+        function onActivate(source, target) {
+            if (source === "news") {
+                surface.openNewsSubMode("reader")
+                Store.set("wp-news-notification-category", target)
+            } else if (source === "performance") {
+                if (surface.panelMode !== "monitor") surface.switchMode("monitor")
+                Ui.openDetail("station", target.toUpperCase(), {kind: target})
+            } else if (source === "camera") {
+                if (surface.panelMode !== "starvis") surface.switchMode("starvis")
+            } else if (source === "weather") {
+                Ui.openDetail("weather", "M\u00e9t\u00e9o", {})
+            } else if (source === "markets" && target) {
+                Panel.openIsland("https://www.tradingview.com/chart/?symbol=" + encodeURIComponent(target))
+            }
+        }
+    }
     property int storeRevision: 0
     readonly property string newsSubMode: {
         storeRevision
@@ -295,12 +313,28 @@ Item {
             anchors.margins: Theme.gap
             spacing: Theme.gap
 
-            RowLayout {
+            Item {
                 id: headerBar
                 Layout.fillWidth: true
-                spacing: 8
+                Layout.preferredHeight: 28
                 clip: true
 
+                Flickable {
+                    id: headerNavigation
+                    anchors.left: parent.left
+                    height: parent.height
+                    width: Math.min(navigationRow.implicitWidth,
+                                    Math.max(0, headerBar.width - toolbarControls.width - 56))
+                    contentWidth: navigationRow.implicitWidth
+                    contentHeight: height
+                    flickableDirection: Flickable.HorizontalFlick
+                    boundsBehavior: Flickable.StopAtBounds
+                    clip: true
+                    RowLayout {
+                        id: navigationRow
+                        width: implicitWidth
+                        height: parent.height
+                        spacing: 8
                 Text {
                     text: "Widget Panel"
                     color: Theme.textPrimary
@@ -633,7 +667,20 @@ Item {
                     }
                 }
 
-                Item { Layout.fillWidth: true }
+                    }
+                }
+                NotificationStrip {
+                    anchors.left: headerNavigation.right
+                    anchors.right: toolbarControls.left
+                    anchors.leftMargin: 8
+                    anchors.rightMargin: 8
+                    height: parent.height
+                }
+                Row {
+                    id: toolbarControls
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 8
                 IconButton {
                     buttonSize: 24
                     glyph: "\uE7E8"
@@ -693,6 +740,7 @@ Item {
                     onClicked: Panel.hidePanel(false)
                     tooltip: "Masquer le panneau"
                 }
+                }
             }
 
             PanelColumns {
@@ -719,6 +767,8 @@ Item {
             blending: true
         }
     }
+
+    NotificationHistory {}
 
     DetailWorkspace {
         anchors.fill: parent

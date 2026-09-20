@@ -165,6 +165,7 @@ Item {
     // while the Performance graphics themselves remain unloaded off-screen.
     readonly property bool workstationConfigured: {
         storeRev
+        if (Notifications.performanceEnabled) return true
         for (const id of workstationIds) {
             if (monitorActiveIdSet[id] === true || isActive(id))
                 return true

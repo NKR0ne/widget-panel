@@ -113,6 +113,7 @@ signals:
     void peopleChanged();
     // severity: "alert" | "notice" | "info"; QML fans this into Ui.notify.
     void alertRaised(const QString& text, const QString& severity);
+    void voiceAnnouncementRequested(const QString& text, const QString& severity);
     void badgeCountChanged(int pendingAlerts);
 
 private:

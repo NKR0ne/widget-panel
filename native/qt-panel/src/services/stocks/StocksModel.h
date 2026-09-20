@@ -71,6 +71,7 @@ signals:
     void earningsChanged();
     void iposChanged();
     void heatmapRowsChanged();
+    void quoteUpdated(const QString& name, const QString& symbol, double percent, qint64 quoteTime);
     void watchlistsRefreshChanged();
 
 private:

@@ -763,6 +763,8 @@ void StocksModel::fetchRow(int listIndex, int rowIndex)
             if (v.isDouble())
                 entry.closes.append(v.toDouble());
         entry.hasData = true;
+        emit quoteUpdated(entry.display, entry.tvSymbol, entry.pct,
+                          meta.value(QLatin1String("regularMarketTime")).toVariant().toLongLong());
         emit dataChanged(index(row), index(row));
         if (listIndex == 0)
             emit heatmapRowsChanged();
@@ -826,6 +828,8 @@ void StocksModel::fetchFinnhubRow(int listIndex, int rowIndex)
             entry.closes.append(price);
         }
         entry.hasData = true;
+        emit quoteUpdated(entry.display, entry.tvSymbol, entry.pct,
+                          obj.value(QLatin1String("t")).toVariant().toLongLong());
         emit dataChanged(index(row), index(row));
         if (listIndex == 0)
             emit heatmapRowsChanged();

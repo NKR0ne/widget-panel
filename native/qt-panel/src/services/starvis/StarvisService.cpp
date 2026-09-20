@@ -1683,6 +1683,21 @@ void StarvisService::briefing()
     }
 }
 
+void StarvisService::newsBriefing(const QString& prompt)
+{
+    if (m_busy)
+        return;
+    if (provider() == QLatin1String("local")) {
+        if (!localModelsEnabled()) {
+            emit chatFailed(QStringLiteral("Les modeles locaux sont desactives."));
+            return;
+        }
+        postLocal(prompt, {}, false, true);
+    } else {
+        chat(prompt, {}, false, false);
+    }
+}
+
 void StarvisService::cancelChat()
 {
     if (m_activeBackendOperation)

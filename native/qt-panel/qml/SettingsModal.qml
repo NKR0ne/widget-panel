@@ -29,6 +29,7 @@ Item {
         { id: "general", label: "Général" },
         { id: "appearance", label: "Apparence" },
         { id: "starvis", label: "Starvis" },
+        { id: "notifications", label: "Notifications" },
         { id: "news", label: "Nouvelles" },
         { id: "cameras", label: "Caméras" },
         { id: "markets", label: "Marchés" },
@@ -548,6 +549,67 @@ Item {
                 spacing: 14
 
             // \u2500\u2500 Page: Apparence \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+            Column {
+            visible: modal.currentPage === "notifications"
+            width: parent.width
+            spacing: 14
+            Repeater {
+                model: [
+                    {key: "enabled", label: "Notifications Starvis"},
+                    {key: "news", label: "Nouveaux articles"},
+                    {key: "performance", label: "Charge CPU, GPU et m\u00e9moire"},
+                    {key: "weather", label: "Changements m\u00e9t\u00e9o"},
+                    {key: "markets", label: "Variations des march\u00e9s"},
+                    {key: "camera", label: "Annonces vocales des cam\u00e9ras"}
+                ]
+                delegate: SettingsToggle {
+                    required property var modelData
+                    width: parent.width
+                    label: modelData.label
+                    checked: Notifications.option(modelData.key, true)
+                    onToggled: function(value) { Notifications.setOption(modelData.key, value) }
+                }
+            }
+            SettingsSlider {
+                width: parent.width; label: "Seuil de charge (%)"; from: 70; to: 100
+                value: Notifications.option("threshold", 95)
+                onMoved: function(value) { Notifications.setOption("threshold", Math.round(value)) }
+            }
+            SettingsSlider {
+                width: parent.width; label: "Dur\u00e9e de charge (secondes)"; from: 10; to: 120
+                value: Notifications.option("duration", 30)
+                onMoved: function(value) { Notifications.setOption("duration", Math.round(value)) }
+            }
+            SettingsSlider {
+                width: parent.width; label: "Variation des march\u00e9s (%)"; from: 1; to: 10
+                value: Notifications.option("marketThreshold", 3)
+                onMoved: function(value) { Notifications.setOption("marketThreshold", Math.round(value)) }
+            }
+            SettingsSlider {
+                width: parent.width; label: "Rotation (secondes)"; from: 5; to: 30
+                value: Notifications.option("rotation", 10)
+                onMoved: function(value) { Notifications.setOption("rotation", Math.round(value)) }
+            }
+            SettingsToggle {
+                width: parent.width; label: "Heures calmes : 22 h - 7 h"
+                checked: Notifications.option("quiet", false)
+                onToggled: function(value) { Notifications.setOption("quiet", value) }
+            }
+            Text {
+                text: "Cat\u00e9gories suivies"
+                color: Theme.textPrimary; font.pixelSize: Theme.fontSizeCaption
+            }
+            Repeater {
+                model: News.categories
+                delegate: SettingsToggle {
+                    required property var modelData
+                    width: parent.width; label: String(modelData)
+                    checked: Notifications.option("category:" + modelData, true)
+                    onToggled: function(value) { Notifications.setOption("category:" + modelData, value) }
+                }
+            }
+            }
+
             Column {
             visible: modal.currentPage === "appearance"
             width: parent.width

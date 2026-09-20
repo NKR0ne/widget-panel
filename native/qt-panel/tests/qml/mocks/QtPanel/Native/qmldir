@@ -5,3 +5,9 @@ singleton Radio 1.0 Radio.qml
 singleton News 1.0 News.qml
 singleton Reader 1.0 Reader.qml
 singleton PressReader 1.0 PressReader.qml
+singleton Starvis 1.0 Starvis.qml
+singleton Sentry 1.0 Sentry.qml
+singleton Workstation 1.0 Workstation.qml
+singleton Weather 1.0 Weather.qml
+singleton Stocks 1.0 Stocks.qml
+singleton Panel 1.0 Panel.qml
