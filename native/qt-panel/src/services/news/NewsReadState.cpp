@@ -85,14 +85,18 @@ void NewsReadState::markAllRead(const QVariantList& items)
     }
     if (dirty) save();
 }
-void NewsReadState::readerCompleted(const QVariantMap& article, bool busy)
+bool NewsReadState::canMarkDisplayedRead(const QVariantMap& article) const
 {
-    if (busy || article.value("seedFallback").toBool()
+    if (article.value("seedFallback").toBool()
         || article.value("sourceLabel").toString() == "feed summary"
         || !article.value("error").toString().isEmpty()
         || !article.value("challenge").toString().isEmpty()
         || article.value("paywall").toBool()
-        || article.value("paragraphs").toList().isEmpty()) return;
-    if (m_items.contains(keyFor(article))) setRead(article);
+        || article.value("paragraphs").toList().isEmpty()) return false;
+    return m_items.contains(keyFor(article));
+}
+void NewsReadState::readerCompleted(const QVariantMap& article, bool busy)
+{
+    if (!busy && canMarkDisplayedRead(article)) setRead(article);
 }
 }

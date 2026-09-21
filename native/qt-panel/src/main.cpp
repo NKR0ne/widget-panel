@@ -433,8 +433,6 @@ int main(int argc, char* argv[])
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "MarketInsights", &marketInsights);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "News", &news);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "NewsRead", &newsRead);
-    QObject::connect(&reader, &ReaderService::articleChanged, &newsRead,
-                     [&reader, &newsRead] { newsRead.readerCompleted(reader.article(), reader.busy()); });
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "WinMedia", &windowsMedia);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "Radio", &radio);
     qmlRegisterSingletonInstance("QtPanel.Native", 1, 0, "MsGraph", &msGraph);

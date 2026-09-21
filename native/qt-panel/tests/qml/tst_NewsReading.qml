@@ -18,6 +18,7 @@ TestCase {
         Motion.enabled = true
         News.categories = ["Quebec", "Science"]
         Reader.openCount = 0
+        Panel.panelVisible = true
         NewsRead.states = ({})
         NewsRead.revision++
         stage = createTemporaryObject(stageComponent, testCase)
@@ -105,6 +106,41 @@ TestCase {
         verify(!NewsRead.isUnread(science))
         verify(!badge.visible)
         verify(!findChild(stage, "newsAllCountBadge").visible)
+    }
+    function test_readRequiresFiveSecondsOfContinuousDisplay() {
+        Motion.enabled = false
+        const first = News.itemsFor("Quebec")[0]
+        const second = News.itemsFor("Quebec")[1]
+        NewsRead.setRead(first, false)
+        NewsRead.setRead(second, false)
+        stage.openArticle(first)
+        const timer = findChild(stage, "newsReadDwellTimer")
+        compare(timer.interval, 5000)
+        verify(timer.running)
+        wait(4600)
+        verify(NewsRead.isUnread(first))
+        stage.openArticle(second)
+        wait(600)
+        verify(NewsRead.isUnread(first))
+        verify(NewsRead.isUnread(second))
+        Panel.panelVisible = false
+        verify(!timer.running)
+        Panel.panelVisible = true
+        verify(timer.running)
+        Reader.busy = true
+        verify(!timer.running)
+        Reader.busy = false
+        Reader.article = Object.assign({}, Reader.article, {seedFallback: true})
+        verify(!timer.running)
+        Reader.article = Object.assign({}, Reader.article, {seedFallback: false})
+        verify(timer.running)
+        tryVerify(function() { return !NewsRead.isUnread(second) }, 5600)
+        verify(NewsRead.isUnread(first))
+        NewsRead.setRead(first, false)
+        stage.openArticle(first)
+        verify(timer.running)
+        stage.closeArticle()
+        verify(!timer.running)
     }
     function test_clickFocusAndCloseRestoresOverview() {
         list().contentY = 300

@@ -18,7 +18,8 @@ public:
     Q_INVOKABLE int unreadCount(const QVariantList& items) const;
     Q_INVOKABLE void markAllRead(const QVariantList& items);
     void observe(const QString& category, const QVariantList& items);
-    void readerCompleted(const QVariantMap& article, bool busy);
+    Q_INVOKABLE bool canMarkDisplayedRead(const QVariantMap& article) const;
+    Q_INVOKABLE void readerCompleted(const QVariantMap& article, bool busy);
 signals:
     void changed();
 private:

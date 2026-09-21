@@ -35,6 +35,28 @@ Item {
 
     property string selectedCategory: ""
     property string selectedUrl: ""
+    readonly property string readDwellKey: {
+        NewsRead.revision
+        if (!visible || !Panel.panelVisible || viewMode !== "reader" || !categoryFocused
+                || focusProgress < 1 || Reader.busy || !selectedUrl
+                || !NewsRead.canMarkDisplayedRead(Reader.article) || !NewsRead.isUnread(Reader.article)) return ""
+        const key = NewsRead.keyFor(Reader.article)
+        return key === NewsRead.keyFor({url: selectedUrl}) ? key : ""
+    }
+    onReadDwellKeyChanged: {
+        if (!readDwellTimer) return
+        if (readDwellKey) readDwellTimer.restart()
+        else readDwellTimer.stop()
+    }
+    Timer {
+        id: readDwellTimer
+        objectName: "newsReadDwellTimer"
+        interval: 5000
+        repeat: false
+        onTriggered: {
+            if (stage.readDwellKey) NewsRead.readerCompleted(Reader.article, Reader.busy)
+        }
+    }
     property string focusedCategory: ""
     property bool categoryFocused: false
     property real overviewScrollY: 0

@@ -10,7 +10,9 @@ Empty/error placeholder feeds never establish that baseline.
 
 Cards, matrix thumbnails and Reading show unread indicators. The filter is shared and persisted.
 Controls mark a single story, category or current selection read; a single story can be marked unread again.
-Opening a successful full reader result marks read. Loading, errors, paywalls and summary-only fallback do not.
+Five continuous seconds of a successfully loaded article visible in the Reading pane marks it read.
+Switching articles, closing/hiding the pane or panel, changing modes, or reloading resets that dwell timer.
+Loading, errors, paywalls and summary-only fallback do not count toward the timer.
 Rotation and image hydration never mark read. The actively opened story stays in the filtered rail until closed.
 
 ## Official Canadian weather alerts
