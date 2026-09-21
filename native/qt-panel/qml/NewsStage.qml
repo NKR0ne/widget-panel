@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Controls as Controls
 import QtQuick.Dialogs
 import QtPanel.Native
 
@@ -771,6 +772,22 @@ Item {
                 objectName: "newsListCountBadge"
                 anchors.verticalCenter: parent.verticalCenter
                 count: stage.selectedItems.length
+                activeFocusOnTab: true
+                Accessible.role: Accessible.Button
+                Accessible.name: "Marquer tous les articles affich\u00e9s comme lus"
+                Accessible.onPressAction: NewsRead.markAllRead(stage.selectedItems)
+                Keys.onReturnPressed: NewsRead.markAllRead(stage.selectedItems)
+                Keys.onSpacePressed: NewsRead.markAllRead(stage.selectedItems)
+                MouseArea {
+                    id: markVisibleReadMouse
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: NewsRead.markAllRead(stage.selectedItems)
+                }
+                Controls.ToolTip.visible: markVisibleReadMouse.containsMouse
+                Controls.ToolTip.text: "Marquer tous les articles affich\u00e9s comme lus"
+                Controls.ToolTip.delay: 500
             }
             NewsReadControls {
                 id: focusedReadControls
@@ -804,7 +821,7 @@ Item {
                 color: rowMouse.containsMouse ? Theme.hover
                      : unread ? Theme.cardFill : "transparent"
                 border.color: stage.selectedUrl === String(modelData.link || "")
-                              ? Theme.accent : unread ? Theme.cardStroke : "transparent"
+                              ? Theme.accent : unread ? Theme.cardStroke : Qt.rgba(1, 1, 1, 0.10)
                 Behavior on color { ColorAnimation { duration: Motion.fastMs } }
 
                 Rectangle {

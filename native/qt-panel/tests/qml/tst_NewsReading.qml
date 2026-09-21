@@ -69,6 +69,7 @@ TestCase {
         verify(unreadRow && readRow)
         tryCompare(unreadRow, "color", Theme.cardFill)
         compare(readRow.color, Qt.rgba(0, 0, 0, 0))
+        verify(readRow.border.color.a > 0)
         waitForRendering(stage)
         grabImage(testCase).save("news-read-contrast.png")
         NewsRead.setRead(item, true)
@@ -76,6 +77,20 @@ TestCase {
         verify(!badge.highlighted)
         const listBadge = findChild(stage, "newsListCountBadge")
         compare(listBadge.width, listBadge.height)
+    }
+    function test_topRightBadgeMarksVisibleSelectionRead() {
+        const quebec = News.itemsFor("Quebec")[0]
+        const science = News.itemsFor("Science")[0]
+        NewsRead.setRead(quebec, false)
+        NewsRead.setRead(science, false)
+        stage.selectCategory("Quebec")
+        const badge = findChild(stage, "newsListCountBadge")
+        mouseClick(badge, badge.width / 2, badge.height / 2)
+        verify(!NewsRead.isUnread(quebec))
+        verify(NewsRead.isUnread(science))
+        stage.selectCategory("")
+        mouseClick(badge, badge.width / 2, badge.height / 2)
+        verify(!NewsRead.isUnread(science))
     }
     function test_clickFocusAndCloseRestoresOverview() {
         list().contentY = 300
