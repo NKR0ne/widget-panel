@@ -77,6 +77,10 @@ TestCase {
         verify(!badge.highlighted)
         const listBadge = findChild(stage, "newsListCountBadge")
         compare(listBadge.width, listBadge.height)
+        compare(listBadge.count, 0)
+        verify(!listBadge.visible)
+        verify(!badge.visible)
+        verify(!findChild(stage, "newsCategoryCountBadge0").visible)
     }
     function test_topRightBadgeMarksVisibleSelectionRead() {
         const quebec = News.itemsFor("Quebec")[0]
@@ -85,12 +89,22 @@ TestCase {
         NewsRead.setRead(science, false)
         stage.selectCategory("Quebec")
         const badge = findChild(stage, "newsListCountBadge")
+        compare(badge.count, 1)
+        verify(badge.visible)
+        waitForRendering(stage)
         mouseClick(badge, badge.width / 2, badge.height / 2)
         verify(!NewsRead.isUnread(quebec))
         verify(NewsRead.isUnread(science))
+        verify(!badge.visible)
+        compare(findChild(stage, "newsAllCountBadge").count, 1)
         stage.selectCategory("")
+        compare(badge.count, 1)
+        verify(badge.visible)
+        waitForRendering(stage)
         mouseClick(badge, badge.width / 2, badge.height / 2)
         verify(!NewsRead.isUnread(science))
+        verify(!badge.visible)
+        verify(!findChild(stage, "newsAllCountBadge").visible)
     }
     function test_clickFocusAndCloseRestoresOverview() {
         list().contentY = 300

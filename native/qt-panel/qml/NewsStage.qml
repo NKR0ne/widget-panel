@@ -11,6 +11,7 @@ Item {
     component CountBadge: Rectangle {
         property int count: 0
         property bool highlighted: false
+        visible: count > 0
         width: stage.uiPx(28)
         height: width
         radius: width / 2
@@ -559,7 +560,7 @@ Item {
                         anchors.rightMargin: 10
                         anchors.verticalCenter: parent.verticalCenter
                         readonly property int unreadCount: { NewsRead.revision; stage.newsRevision; return NewsRead.unreadCount(stage.selectionItems(true)) }
-                        count: unreadCount || stage.selectionItems(true).length
+                        count: unreadCount
                         highlighted: unreadCount > 0
                     }
                     MouseArea {
@@ -631,13 +632,13 @@ Item {
                         }
                         CountBadge {
                             id: itemCount
+                            objectName: "newsCategoryCountBadge" + categoryRow.index
                             anchors.right: parent.right
                             anchors.rightMargin: 10
                             anchors.verticalCenter: parent.verticalCenter
                             count: {
                                 NewsRead.revision; stage.newsRevision
-                                const count = NewsRead.unreadCount(News.itemsFor(modelData))
-                                return count || News.itemsFor(modelData).length
+                                return NewsRead.unreadCount(News.itemsFor(modelData))
                             }
                             highlighted: { NewsRead.revision; stage.newsRevision; return NewsRead.unreadCount(News.itemsFor(modelData)) > 0 }
                         }
@@ -756,7 +757,7 @@ Item {
                 onClicked: stage.closeArticle()
             }
             Text {
-                width: Math.max(0, parent.width - listCount.width - 8
+                width: Math.max(0, parent.width - (listCount.visible ? listCount.width + 8 : 0)
                     - (focusedReadControls.visible ? focusedReadControls.width + 8 : 0)
                     - (backToNews.visible ? backToNews.width + 8 : 0))
                 anchors.verticalCenter: parent.verticalCenter
@@ -771,8 +772,10 @@ Item {
                 id: listCount
                 objectName: "newsListCountBadge"
                 anchors.verticalCenter: parent.verticalCenter
-                count: stage.selectedItems.length
-                activeFocusOnTab: true
+                count: { NewsRead.revision; return NewsRead.unreadCount(stage.selectedItems) }
+                highlighted: count > 0
+                activeFocusOnTab: visible
+                enabled: visible
                 Accessible.role: Accessible.Button
                 Accessible.name: "Marquer tous les articles affich\u00e9s comme lus"
                 Accessible.onPressAction: NewsRead.markAllRead(stage.selectedItems)
