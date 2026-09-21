@@ -7,6 +7,30 @@ Item {
     id: stage
     clip: true
 
+    component CountBadge: Rectangle {
+        property int count: 0
+        property bool highlighted: false
+        width: stage.uiPx(28)
+        height: width
+        radius: width / 2
+        color: highlighted ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.22)
+                           : Qt.rgba(1, 1, 1, 0.07)
+        border.color: highlighted ? Theme.accent : Theme.cardStroke
+        Accessible.name: count + (highlighted ? " articles non lus" : " articles")
+        Text {
+            anchors.fill: parent
+            anchors.margins: 3
+            text: parent.count
+            color: parent.highlighted ? Theme.accent : Theme.textSecondary
+            font.pixelSize: stage.uiPx(10)
+            font.weight: Font.DemiBold
+            fontSizeMode: Text.Fit
+            minimumPixelSize: 7
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+        }
+    }
+
     property string selectedCategory: ""
     property string selectedUrl: ""
     property string focusedCategory: ""
@@ -527,14 +551,15 @@ Item {
                         font.pixelSize: stage.uiPx(10)
                         elide: Text.ElideRight
                     }
-                    Text {
+                    CountBadge {
                         id: allCount
+                        objectName: "newsAllCountBadge"
                         anchors.right: parent.right
                         anchors.rightMargin: 10
                         anchors.verticalCenter: parent.verticalCenter
-                        text: stage.selectedCategory === "" ? stage.selectedItems.length : News.categories.length
-                        color: Theme.textSecondary
-                        font.pixelSize: stage.uiPx(9)
+                        readonly property int unreadCount: { NewsRead.revision; stage.newsRevision; return NewsRead.unreadCount(stage.selectionItems(true)) }
+                        count: unreadCount || stage.selectionItems(true).length
+                        highlighted: unreadCount > 0
                     }
                     MouseArea {
                         id: allMouse
@@ -603,18 +628,17 @@ Item {
                             font.pixelSize: stage.uiPx(10)
                             elide: Text.ElideRight
                         }
-                        Text {
+                        CountBadge {
                             id: itemCount
                             anchors.right: parent.right
                             anchors.rightMargin: 10
                             anchors.verticalCenter: parent.verticalCenter
-                            text: {
+                            count: {
                                 NewsRead.revision; stage.newsRevision
                                 const count = NewsRead.unreadCount(News.itemsFor(modelData))
-                                return count ? "\u2022 " + count : News.itemsFor(modelData).length
+                                return count || News.itemsFor(modelData).length
                             }
-                            color: { NewsRead.revision; return NewsRead.unreadCount(News.itemsFor(modelData)) ? Theme.accent : Theme.textSecondary }
-                            font.pixelSize: stage.uiPx(9)
+                            highlighted: { NewsRead.revision; stage.newsRevision; return NewsRead.unreadCount(News.itemsFor(modelData)) > 0 }
                         }
                         MouseArea {
                             id: categoryMouse
@@ -716,7 +740,7 @@ Item {
         Row {
             id: listHeader
             width: parent.width
-            height: 30
+            height: Math.max(30, listCount.height + 4)
             spacing: 8
 
             IconButton {
@@ -742,12 +766,11 @@ Item {
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
             }
-            Text {
+            CountBadge {
                 id: listCount
+                objectName: "newsListCountBadge"
                 anchors.verticalCenter: parent.verticalCenter
-                text: stage.selectedItems.length + " articles"
-                color: Theme.textSecondary
-                font.pixelSize: stage.uiPx(Theme.fontSizeCaption)
+                count: stage.selectedItems.length
             }
             NewsReadControls {
                 id: focusedReadControls
@@ -771,16 +794,28 @@ Item {
 
             delegate: Rectangle {
                 id: articleRow
+                objectName: "newsReadingRow" + index
                 required property var modelData
                 required property int index
                 readonly property bool unread: { NewsRead.revision; return NewsRead.isUnread(modelData) }
                 width: ListView.view.width
                 height: Math.round(94 * stage.uiScale)
                 radius: 6
-                color: stage.selectedUrl === String(modelData.link || "") ? Theme.activeFill
-                     : rowMouse.containsMouse ? Theme.hover : Theme.cardFill
+                color: rowMouse.containsMouse ? Theme.hover
+                     : unread ? Theme.cardFill : "transparent"
                 border.color: stage.selectedUrl === String(modelData.link || "")
-                              ? Theme.accent : Theme.cardStroke
+                              ? Theme.accent : unread ? Theme.cardStroke : "transparent"
+                Behavior on color { ColorAnimation { duration: Motion.fastMs } }
+
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.top: parent.top
+                    anchors.bottom: parent.bottom
+                    anchors.topMargin: 10; anchors.bottomMargin: 10
+                    width: 3; radius: 1.5
+                    color: Theme.accent
+                    visible: articleRow.unread
+                }
 
                 Rectangle {
                     id: thumbnailFrame
@@ -793,6 +828,8 @@ Item {
                     radius: 5
                     color: Qt.rgba(1, 1, 1, 0.04)
                     clip: true
+                    opacity: articleRow.unread ? 1 : 0.5
+                    Behavior on opacity { NumberAnimation { duration: Motion.fastMs } }
 
                     Image {
                         anchors.fill: parent
@@ -815,7 +852,7 @@ Item {
                         text: (articleRow.unread ? "\u2022 " : "") + (articleRow.modelData.title || "Article")
                         color: articleRow.unread ? Theme.textPrimary : Theme.textSecondary
                         font.pixelSize: stage.uiPx(11)
-                        font.weight: Font.DemiBold
+                        font.weight: articleRow.unread ? Font.DemiBold : Font.Normal
                         maximumLineCount: 2
                         elide: Text.ElideRight
                         wrapMode: Text.WordWrap
@@ -825,6 +862,7 @@ Item {
                         text: articleRow.modelData.description || ""
                         visible: text !== ""
                         color: Theme.textSecondary
+                        opacity: articleRow.unread ? 1 : 0.72
                         font.pixelSize: stage.uiPx(9)
                         maximumLineCount: 2
                         elide: Text.ElideRight

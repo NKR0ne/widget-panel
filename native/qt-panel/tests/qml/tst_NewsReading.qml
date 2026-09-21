@@ -55,6 +55,28 @@ TestCase {
         Store.set("wp-news-unread-only", false)
         compare(stage.selectedItems.length, 40)
     }
+    function test_countBadgesAndReadContrast() {
+        mouseMove(stage, stage.width - 2, stage.height - 2)
+        const item = stage.selectedItems[0]
+        NewsRead.setRead(item, false)
+        const badge = findChild(stage, "newsAllCountBadge")
+        compare(badge.width, badge.height)
+        compare(badge.radius, badge.width / 2)
+        compare(badge.count, 1)
+        verify(badge.highlighted)
+        const unreadRow = findChild(stage, "newsReadingRow0")
+        const readRow = findChild(stage, "newsReadingRow1")
+        verify(unreadRow && readRow)
+        tryCompare(unreadRow, "color", Theme.cardFill)
+        compare(readRow.color, Qt.rgba(0, 0, 0, 0))
+        waitForRendering(stage)
+        grabImage(testCase).save("news-read-contrast.png")
+        NewsRead.setRead(item, true)
+        tryCompare(unreadRow, "color", Qt.rgba(0, 0, 0, 0))
+        verify(!badge.highlighted)
+        const listBadge = findChild(stage, "newsListCountBadge")
+        compare(listBadge.width, listBadge.height)
+    }
     function test_clickFocusAndCloseRestoresOverview() {
         list().contentY = 300
         const previousScroll = list().contentY - list().originY
