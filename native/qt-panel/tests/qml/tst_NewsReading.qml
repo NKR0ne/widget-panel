@@ -58,56 +58,22 @@ TestCase {
         Store.set("wp-news-unread-only", false)
         compare(stage.selectedItems.length, 20)
     }
-    function test_countBadgesAndReadContrast() {
+    function test_passiveReadContrastWithoutCountersOrButtons() {
         mouseMove(stage, stage.width - 2, stage.height - 2)
         const item = stage.selectedItems[0]
         NewsRead.setRead(item, false)
-        const badge = findChild(stage, "newsCategoryCountBadge0")
-        compare(badge.width, badge.height)
-        compare(badge.radius, badge.width / 2)
-        compare(badge.count, 1)
-        verify(badge.highlighted)
+        verify(!findChild(stage, "newsCategoryCountBadge0"))
+        verify(!findChild(stage, "newsListCountBadge"))
+        verify(!findChild(stage, "newsReadingFilter").showMarkAll)
         const unreadRow = findChild(stage, "newsReadingRow0")
         const readRow = findChild(stage, "newsReadingRow1")
-        verify(unreadRow && readRow)
         tryCompare(unreadRow, "color", Theme.cardFill)
         compare(readRow.color, Qt.rgba(0, 0, 0, 0))
         verify(readRow.border.color.a > 0)
-        waitForRendering(stage)
-        grabImage(testCase).save("news-read-contrast.png")
         NewsRead.setRead(item, true)
         tryCompare(unreadRow, "color", Qt.rgba(0, 0, 0, 0))
-        verify(!badge.highlighted)
-        const listBadge = findChild(stage, "newsListCountBadge")
-        compare(listBadge.width, listBadge.height)
-        compare(listBadge.count, 0)
-        verify(!listBadge.visible)
-        verify(!badge.visible)
-        verify(!findChild(stage, "newsCategoryCountBadge0").visible)
-    }
-    function test_topRightBadgeMarksVisibleSelectionRead() {
-        const quebec = News.itemsFor("Quebec")[0]
-        const science = News.itemsFor("Science")[0]
-        NewsRead.setRead(quebec, false)
-        NewsRead.setRead(science, false)
-        stage.selectCategory("Quebec")
-        const badge = findChild(stage, "newsListCountBadge")
-        compare(badge.count, 1)
-        verify(badge.visible)
         waitForRendering(stage)
-        mouseClick(badge, badge.width / 2, badge.height / 2)
-        verify(!NewsRead.isUnread(quebec))
-        verify(NewsRead.isUnread(science))
-        verify(!badge.visible)
-        compare(findChild(stage, "newsCategoryCountBadge1").count, 1)
-        stage.selectCategory("Science")
-        compare(badge.count, 1)
-        verify(badge.visible)
-        waitForRendering(stage)
-        mouseClick(badge, badge.width / 2, badge.height / 2)
-        verify(!NewsRead.isUnread(science))
-        verify(!badge.visible)
-        verify(!findChild(stage, "newsCategoryCountBadge1").visible)
+        grabImage(testCase).save("news-passive-reading.png")
     }
     function test_readRequiresFiveSecondsOfContinuousDisplay() {
         Motion.enabled = false

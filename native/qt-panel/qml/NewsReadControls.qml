@@ -7,6 +7,7 @@ Row {
     property var items: []
     property int revision: 0
     property bool labeledFilter: false
+    property bool showMarkAll: true
     readonly property bool unreadOnly: { revision; return Store.get("wp-news-unread-only", false) === true }
     spacing: 3
     Connections {
@@ -51,6 +52,7 @@ Row {
     }
     IconButton {
         buttonSize: 24; glyph: "\uE73E"
+        visible: controls.showMarkAll
         tooltip: "Marquer cette s\u00e9lection comme lue"
         onClicked: NewsRead.markAllRead(controls.items)
     }

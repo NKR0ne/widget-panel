@@ -8,30 +8,6 @@ Item {
     id: stage
     clip: true
 
-    component CountBadge: Rectangle {
-        property int count: 0
-        property bool highlighted: false
-        visible: count > 0
-        width: stage.uiPx(28)
-        height: width
-        radius: width / 2
-        color: highlighted ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.22)
-                           : Qt.rgba(1, 1, 1, 0.07)
-        border.color: highlighted ? Theme.accent : Theme.cardStroke
-        Accessible.name: count + (highlighted ? " articles non lus" : " articles")
-        Text {
-            anchors.fill: parent
-            anchors.margins: 3
-            text: parent.count
-            color: parent.highlighted ? Theme.accent : Theme.textSecondary
-            font.pixelSize: stage.uiPx(10)
-            font.weight: Font.DemiBold
-            fontSizeMode: Text.Fit
-            minimumPixelSize: 7
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-        }
-    }
 
     property string selectedCategory: ""
     property string selectedUrl: ""
@@ -496,6 +472,8 @@ Item {
             }
             NewsReadControls {
                 id: readControls
+                objectName: "newsReadingFilter"
+                showMarkAll: false
                 items: stage.selectionItems()
             }
             Rectangle {
@@ -626,25 +604,13 @@ Item {
                         Text {
                             anchors.left: parent.left
                             anchors.leftMargin: 10
-                            anchors.right: itemCount.left
+                            anchors.right: parent.right
                             anchors.rightMargin: 8
                             anchors.verticalCenter: parent.verticalCenter
                             text: modelData
                             color: Theme.textPrimary
                             font.pixelSize: stage.uiPx(10)
                             elide: Text.ElideRight
-                        }
-                        CountBadge {
-                            id: itemCount
-                            objectName: "newsCategoryCountBadge" + categoryRow.index
-                            anchors.right: parent.right
-                            anchors.rightMargin: 10
-                            anchors.verticalCenter: parent.verticalCenter
-                            count: {
-                                NewsRead.revision; stage.newsRevision
-                                return NewsRead.unreadCount(News.itemsFor(modelData))
-                            }
-                            highlighted: { NewsRead.revision; stage.newsRevision; return NewsRead.unreadCount(News.itemsFor(modelData)) > 0 }
                         }
                         MouseArea {
                             id: categoryMouse
@@ -755,7 +721,7 @@ Item {
         Row {
             id: listHeader
             width: parent.width
-            height: Math.max(30, listCount.height + 4)
+            height: 30
             spacing: 8
 
             IconButton {
@@ -770,9 +736,7 @@ Item {
                 onClicked: stage.closeArticle()
             }
             Text {
-                width: Math.max(0, parent.width - (listCount.visible ? listCount.width + 8 : 0)
-                    - (focusedReadControls.visible ? focusedReadControls.width + 8 : 0)
-                    - (backToNews.visible ? backToNews.width + 8 : 0))
+                width: Math.max(0, parent.width - (backToNews.visible ? backToNews.width + 8 : 0))
                 anchors.verticalCenter: parent.verticalCenter
                 text: stage.focusedCategory || (stage.selectedCategory !== "" ? stage.selectedCategory
                     : "Toutes les nouvelles")
@@ -780,35 +744,6 @@ Item {
                 font.pixelSize: stage.uiPx(Theme.fontSizeTitle)
                 font.weight: Font.DemiBold
                 elide: Text.ElideRight
-            }
-            CountBadge {
-                id: listCount
-                objectName: "newsListCountBadge"
-                anchors.verticalCenter: parent.verticalCenter
-                count: { NewsRead.revision; return NewsRead.unreadCount(stage.selectedItems) }
-                highlighted: count > 0
-                activeFocusOnTab: visible
-                enabled: visible
-                Accessible.role: Accessible.Button
-                Accessible.name: "Marquer tous les articles affich\u00e9s comme lus"
-                Accessible.onPressAction: NewsRead.markAllRead(stage.selectedItems)
-                Keys.onReturnPressed: NewsRead.markAllRead(stage.selectedItems)
-                Keys.onSpacePressed: NewsRead.markAllRead(stage.selectedItems)
-                MouseArea {
-                    id: markVisibleReadMouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: NewsRead.markAllRead(stage.selectedItems)
-                }
-                Controls.ToolTip.visible: markVisibleReadMouse.containsMouse
-                Controls.ToolTip.text: "Marquer tous les articles affich\u00e9s comme lus"
-                Controls.ToolTip.delay: 500
-            }
-            NewsReadControls {
-                id: focusedReadControls
-                visible: stage.focusedCategory !== ""
-                items: { stage.newsRevision; return stage.selectionItems() }
             }
         }
 
@@ -876,7 +811,7 @@ Item {
                     anchors.left: thumbnailFrame.visible ? thumbnailFrame.right : parent.left
                     anchors.leftMargin: 9
                     anchors.right: parent.right
-                    anchors.rightMargin: 30
+                    anchors.rightMargin: 9
                     anchors.verticalCenter: parent.verticalCenter
                     spacing: 4
 
@@ -918,13 +853,6 @@ Item {
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
                     onClicked: stage.openArticle(articleRow.modelData)
-                }
-                IconButton {
-                    anchors.right: parent.right; anchors.bottom: parent.bottom
-                    anchors.margins: 3; buttonSize: 22
-                    glyph: articleRow.unread ? "\uE73E" : "\uE8F2"
-                    tooltip: articleRow.unread ? "Marquer comme lu" : "Marquer comme non lu"
-                    onClicked: NewsRead.setRead(articleRow.modelData, articleRow.unread)
                 }
             }
 
