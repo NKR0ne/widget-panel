@@ -15,5 +15,10 @@ QtObject {
     function isLoading(label) { return false }
     function refresh() { categoryUpdated("Quebec") }
     function importOpml(file) {}
-    function moveCategory(from, to) {}
+    function moveCategory(from, to) {
+        const next = categories.slice()
+        next.splice(to, 0, next.splice(from, 1)[0])
+        categories = next
+        Store.set("test-category-order", JSON.stringify(next))
+    }
 }

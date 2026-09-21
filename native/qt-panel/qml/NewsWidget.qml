@@ -87,13 +87,14 @@ GlassCard {
     }
 
     function syncCarouselFace() {
-        if (carouselCount < 1) {
+        const count = presentationItems.length
+        if (count < 1) {
             displayedItem = ({})
             incomingItem = ({})
             return
         }
-        carouselIndex = Math.max(0, Math.min(carouselIndex, carouselCount - 1))
-        displayedItem = presentationItems[carouselIndex]
+        carouselIndex = Math.max(0, Math.min(carouselIndex, count - 1))
+        displayedItem = presentationItems[carouselIndex] || ({})
         incomingItem = displayedItem
     }
 
@@ -157,9 +158,10 @@ GlassCard {
     }
     readonly property bool carouselPresentation: forceCarouselPresentation || carouselEnabled
     onPresentationItemsChanged: {
-        carouselIndex = Math.min(carouselIndex, Math.max(0, carouselCount - 1))
-        if (!flipRunning)
-            syncCarouselFace()
+        // Filtering/read changes can remove the incoming face during a flip.
+        if (flipRunning) carouselFlip.stop()
+        flipProgress = 0
+        syncCarouselFace()
     }
     onItemsChanged: Qt.callLater(function() {
         if (!flipRunning)

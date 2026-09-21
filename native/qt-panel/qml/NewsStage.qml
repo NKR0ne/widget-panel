@@ -182,7 +182,8 @@ Item {
 
     function selectCategory(label) {
         resetReading()
-        selectedCategory = label || ""
+        selectedCategory = News.categories.indexOf(label) >= 0 ? label : (News.categories[0] || "")
+        Store.set("wp-news-reading-category", selectedCategory)
         articleList.positionViewAtBeginning()
     }
 
@@ -378,9 +379,8 @@ Item {
         target: News
         function onCategoriesChanged() {
             stage.newsRevision++
-            if (stage.selectedCategory !== ""
-                    && News.categories.indexOf(stage.selectedCategory) < 0)
-                stage.selectCategory("")
+            if (News.categories.indexOf(stage.selectedCategory) < 0)
+                stage.selectCategory(String(Store.get("wp-news-reading-category", "")))
             if (stage.focusedCategory !== ""
                     && News.categories.indexOf(stage.focusedCategory) < 0)
                 stage.closeArticle()
@@ -426,6 +426,7 @@ Item {
 
     Component.onDestruction: Reader.close()
     Component.onCompleted: {
+        selectCategory(String(Store.get("wp-news-reading-category", "")))
         const notificationCategory = String(Store.get("wp-news-notification-category", ""))
         if (notificationCategory !== "") {
             stage.selectCategory(notificationCategory)
@@ -556,44 +557,6 @@ Item {
                 width: parent.width
                 spacing: 5
 
-                Rectangle {
-                    width: parent.width
-                    height: Math.round(36 * stage.uiScale)
-                    radius: 6
-                    color: stage.selectedCategory === "" ? Theme.activeFill
-                         : allMouse.containsMouse ? Theme.hover : "transparent"
-                    border.color: stage.selectedCategory === "" ? Theme.accent : "transparent"
-
-                    Text {
-                        anchors.left: parent.left
-                        anchors.leftMargin: 10
-                        anchors.right: allCount.left
-                        anchors.rightMargin: 8
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: "Toutes les categories"
-                        color: Theme.textPrimary
-                        font.pixelSize: stage.uiPx(10)
-                        elide: Text.ElideRight
-                    }
-                    CountBadge {
-                        id: allCount
-                        objectName: "newsAllCountBadge"
-                        anchors.right: parent.right
-                        anchors.rightMargin: 10
-                        anchors.verticalCenter: parent.verticalCenter
-                        readonly property int unreadCount: { NewsRead.revision; stage.newsRevision; return NewsRead.unreadCount(stage.selectionItems(true)) }
-                        count: unreadCount
-                        highlighted: unreadCount > 0
-                    }
-                    MouseArea {
-                        id: allMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: stage.selectCategory("")
-                    }
-                }
-
                 Repeater {
                     id: categoryRepeater
                     model: {
@@ -602,6 +565,7 @@ Item {
                     }
                     delegate: Rectangle {
                         id: categoryRow
+                        objectName: "newsCategoryRow" + index
                         required property string modelData
                         required property int index
                         width: categoryColumn.width
@@ -637,7 +601,7 @@ Item {
                                 const steps = Math.round(categoryDrag.activeTranslation.y / rowHeight)
                                 if (steps !== 0)
                                     News.moveCategory(categoryRow.index,
-                                                      categoryRow.index + steps)
+                                                      Math.max(0, Math.min(News.categories.length - 1, categoryRow.index + steps)))
                             }
                         }
 
@@ -655,7 +619,7 @@ Item {
                         CountBadge {
                             id: itemCount
                             objectName: "newsCategoryCountBadge" + categoryRow.index
-                            anchors.right: parent.right
+                            anchors.right: categoryOrder.left
                             anchors.rightMargin: 10
                             anchors.verticalCenter: parent.verticalCenter
                             count: {
@@ -671,6 +635,26 @@ Item {
                             cursorShape: Qt.PointingHandCursor
                             // A drag consumed the gesture — don't also select.
                             onClicked: if (!stage.draggingCategory) stage.selectCategory(modelData)
+                        }
+                        Row {
+                            id: categoryOrder
+                            anchors.right: parent.right
+                            anchors.rightMargin: 4
+                            anchors.verticalCenter: parent.verticalCenter
+                            IconButton {
+                                objectName: "newsCategoryUp" + categoryRow.index
+                                buttonSize: 22; glyph: "\uE70E"
+                                tooltip: "Monter la cat\u00e9gorie"
+                                enabled: categoryRow.index > 0
+                                onClicked: News.moveCategory(categoryRow.index, categoryRow.index - 1)
+                            }
+                            IconButton {
+                                objectName: "newsCategoryDown" + categoryRow.index
+                                buttonSize: 22; glyph: "\uE70D"
+                                tooltip: "Descendre la cat\u00e9gorie"
+                                enabled: categoryRow.index < News.categories.length - 1
+                                onClicked: News.moveCategory(categoryRow.index, categoryRow.index + 1)
+                            }
                         }
                     }
                 }
@@ -1066,6 +1050,7 @@ Item {
 
             NewsReadControls {
                 id: carouselReadControls
+                labeledFilter: true
                 items: { stage.newsRevision; return stage.selectionItems(true) }
             }
             // Card size: changes the card's dimensions (not the text — that is
@@ -1204,6 +1189,8 @@ Item {
                     id: carouselCategoryRepeater
                     model: stage.newsRevision, News.categories
                     delegate: NewsWidget {
+                        objectName: "newsCarouselCategory" + index
+                        required property int index
                         required property string modelData
                         width: categoryGrid.cardWidth
                         height: implicitHeight

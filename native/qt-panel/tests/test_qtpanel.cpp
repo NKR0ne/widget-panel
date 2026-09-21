@@ -50,6 +50,31 @@ class TestQtPanel : public QObject {
     Q_OBJECT
 
 private slots:
+    void newsCategoryOrderAndFilterSurviveRestart()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath("settings.json");
+        {
+            SettingsStore settings(path);
+            settings.set("wp-config", QStringLiteral(R"({"categories":[{"label":"Quebec"},{"label":"Hidden"},{"label":"Science"}],"activeIds":["cat:Quebec","cat:Science"]})"));
+            NewsService news(&settings, nullptr);
+            news.moveCategory(1, 0);
+            QCOMPARE(news.categories(), QVariantList({"Science", "Quebec"}));
+            QCOMPARE(news.allCategories(), QVariantList({"Science", "Quebec", "Hidden"}));
+            news.moveCategory(-1, 0);
+            news.moveCategory(0, 9);
+            QCOMPARE(news.categories(), QVariantList({"Science", "Quebec"}));
+            settings.set("wp-news-unread-only", true);
+            settings.set("wp-news-reading-category", "Science");
+            settings.flush();
+        }
+        SettingsStore restored(path);
+        NewsService news(&restored, nullptr);
+        QCOMPARE(news.categories(), QVariantList({"Science", "Quebec"}));
+        QVERIFY(restored.get("wp-news-unread-only").toBool());
+        QCOMPARE(restored.get("wp-news-reading-category").toString(), QString("Science"));
+    }
+
     void newsReadSharedIdentityAndRestart()
     {
         QTemporaryDir dir;

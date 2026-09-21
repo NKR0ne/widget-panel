@@ -28,11 +28,13 @@ TestCase {
     function list() { return findChild(stage, "newsReadingList") }
     function pane() { return findChild(stage, "newsReadingPane") }
     function focusArticle() {
-        stage.openArticle(stage.selectedItems[23])
+        stage.openArticle(News.itemsFor("Science")[3], "Science")
         tryCompare(stage, "focusProgress", 1, 1000)
     }
     function test_initialOverviewAndRefresh() {
-          compare(stage.selectedItems.length, 40)
+        compare(stage.selectedItems.length, 20)
+        compare(stage.selectedCategory, "Quebec")
+        verify(!findChild(stage, "newsAllCountBadge"))
         compare(stage.selectedUrl, "")
         verify(!pane().visible)
         News.refresh()
@@ -54,13 +56,13 @@ TestCase {
         tryCompare(stage, "focusedCategory", "", 1000)
         compare(stage.selectedItems.length, 0)
         Store.set("wp-news-unread-only", false)
-        compare(stage.selectedItems.length, 40)
+        compare(stage.selectedItems.length, 20)
     }
     function test_countBadgesAndReadContrast() {
         mouseMove(stage, stage.width - 2, stage.height - 2)
         const item = stage.selectedItems[0]
         NewsRead.setRead(item, false)
-        const badge = findChild(stage, "newsAllCountBadge")
+        const badge = findChild(stage, "newsCategoryCountBadge0")
         compare(badge.width, badge.height)
         compare(badge.radius, badge.width / 2)
         compare(badge.count, 1)
@@ -97,15 +99,15 @@ TestCase {
         verify(!NewsRead.isUnread(quebec))
         verify(NewsRead.isUnread(science))
         verify(!badge.visible)
-        compare(findChild(stage, "newsAllCountBadge").count, 1)
-        stage.selectCategory("")
+        compare(findChild(stage, "newsCategoryCountBadge1").count, 1)
+        stage.selectCategory("Science")
         compare(badge.count, 1)
         verify(badge.visible)
         waitForRendering(stage)
         mouseClick(badge, badge.width / 2, badge.height / 2)
         verify(!NewsRead.isUnread(science))
         verify(!badge.visible)
-        verify(!findChild(stage, "newsAllCountBadge").visible)
+        verify(!findChild(stage, "newsCategoryCountBadge1").visible)
     }
     function test_readRequiresFiveSecondsOfContinuousDisplay() {
         Motion.enabled = false
@@ -158,23 +160,23 @@ TestCase {
         verify(!stage.categoryFocused)
         verify(Reader.article.url !== undefined)
         tryCompare(stage, "focusProgress", 0, 1000)
-        compare(stage.selectedCategory, "")
+        compare(stage.selectedCategory, "Quebec")
         tryCompare(stage, "focusedCategory", "", 1000)
-        tryVerify(function() { return stage.selectedItems.length === 40 })
+        tryVerify(function() { return stage.selectedItems.length === 20 })
         verify(!pane().visible)
         tryVerify(function() { return Math.abs(list().contentY - list().originY - previousScroll) < 1 })
     }
-    function test_allCategoriesResolveClickedCategory() {
+    function test_explicitCategoryResolvesClickedArticle() {
         focusArticle()
         compare(stage.focusedCategory, "Science")
-        compare(stage.selectedCategory, "")
+        compare(stage.selectedCategory, "Quebec")
         verify(stage.selectedItems.every(function(item) { return item.readingCategory === "Science" }))
         News.refresh()
         compare(Reader.openCount, 1)
         compare(stage.focusedCategory, "Science")
     }
     function test_transitionAndRapidReopen() {
-        stage.openArticle(stage.selectedItems[23])
+        stage.openArticle(News.itemsFor("Science")[3], "Science")
         wait(100)
         verify(stage.focusProgress > 0 && stage.focusProgress < 1)
         stage.closeArticle()
@@ -195,6 +197,20 @@ TestCase {
         compare(stage.focusProgress, 0)
         compare(stage.selectedCategory, "Science")
         verify(!pane().visible)
+    }
+    function test_sharedCategoryOrderAndSelectionPersistence() {
+        stage.selectCategory("Science")
+        compare(Store.get("wp-news-reading-category", ""), "Science")
+        const up = findChild(stage, "newsCategoryUp1")
+        mouseClick(up, up.width / 2, up.height / 2)
+        compare(News.categories[0], "Science")
+        compare(stage.selectedCategory, "Science")
+        stage.setViewMode("carousel")
+        compare(findChild(stage, "newsCarouselCategory0").categoryLabel, "Science")
+        stage.setViewMode("reader")
+        const recreated = createTemporaryObject(stageComponent, testCase)
+        compare(recreated.selectedCategory, "Science")
+        compare(findChild(recreated, "newsCategoryRow0").modelData, "Science")
     }
     function test_splitPersistenceAndModeReset() {
         stage.previewReaderSplit(0.25, 0.4)
@@ -229,7 +245,7 @@ TestCase {
     }
     function test_visualStates() {
         grabImage(testCase).save("news-overview.png")
-        stage.openArticle(stage.selectedItems[23])
+        stage.openArticle(stage.selectedItems[3])
         wait(100)
         grabImage(testCase).save("news-transition.png")
         tryCompare(stage, "focusProgress", 1, 1000)

@@ -417,17 +417,11 @@ void NewsService::moveCategory(int from, int to)
                     QString::fromUtf8(QJsonDocument(QJsonObject::fromVariantMap(config))
                                           .toJson(QJsonDocument::Compact)));
 
-    // loadCategories() rebuilds the list from the store and would drop the
-    // articles already fetched, so carry them across the reorder.
-    QHash<QString, QVariantList> fetched;
-    for (const Category& category : m_categories)
-        fetched.insert(category.label, category.items);
-    loadCategories();
-    for (Category& category : m_categories) {
-        const auto it = fetched.constFind(category.label);
-        if (it != fetched.constEnd())
-            category.items = *it;
-    }
+    // Keep in-flight feed state and articles intact while changing presentation order.
+    m_categories.move(from, to);
+    m_categoryLabels.move(from, to);
+    m_allCategoryLabels.move(m_allCategoryLabels.indexOf(movedLabel),
+                             m_allCategoryLabels.indexOf(targetLabel));
     emit categoriesChanged();
     qInfo() << "[news] moved category" << movedLabel << "to position" << to;
 }
@@ -494,14 +488,15 @@ void NewsService::refreshCategory(int index)
     for (const Feed& feed : category.feeds) {
         const QString feedUrl = feed.url;
         m_http->getText(QUrl(feedUrl), this,
-                        [this, index, feedUrl](const QString& text, const QString& error) {
-            if (index >= m_categories.size())
+                        [this, label = category.label, feedUrl](const QString& text, const QString& error) {
+            const int currentIndex = m_categoryLabels.indexOf(label);
+            if (currentIndex < 0)
                 return;
-            Category& cat = m_categories[index];
+            Category& cat = m_categories[currentIndex];
             if (error.isEmpty())
                 cat.feedResults.append(parseFeedXml(text, feedUrl));
             if (--cat.pendingFeeds <= 0)
-                finishCategory(index);
+                finishCategory(currentIndex);
         }, QLatin1String(kRssAccept));
     }
 }

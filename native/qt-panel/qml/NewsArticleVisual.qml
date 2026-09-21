@@ -36,17 +36,19 @@ Item {
         asynchronous: true
         cache: true
         visible: (visual.article.image || "") !== ""
-        opacity: status === Image.Ready ? visual.imageOpacity : 0
+        opacity: status === Image.Ready ? visual.imageOpacity * (visual.unread ? 1 : 0.5) : 0
         Behavior on opacity {
             NumberAnimation { duration: Motion.normalMs; easing.type: Easing.OutCubic }
         }
     }
 
     Rectangle {
+        objectName: "newsArticleReadTone"
         anchors.fill: parent
-        color: (visual.article.image || "") !== ""
+        color: !visual.unread ? Theme.panelSolid : (visual.article.image || "") !== ""
                ? Qt.rgba(0.018, 0.025, 0.045, 0.18)
                : Qt.rgba(0.055, 0.075, 0.12, 1)
+        opacity: visual.unread ? 1 : 0.65
     }
 
     Rectangle {
@@ -72,6 +74,16 @@ Item {
             GradientStop { position: 0.7; color: Theme.keyline }
             GradientStop { position: 1.0; color: "transparent" }
         }
+    }
+
+    Rectangle {
+        objectName: "newsArticleUnreadStripe"
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        width: 3
+        color: Theme.accent
+        visible: visual.unread
     }
 
     Rectangle {
@@ -115,10 +127,10 @@ Item {
 
         Text {
             width: parent.width
-            text: visual.article.title || "Article"
-            color: visual.unread ? "#ffffff" : "#d8dfe9"
+            text: (visual.unread ? "\u2022 " : "") + (visual.article.title || "Article")
+            color: visual.unread ? Theme.textPrimary : Theme.textSecondary
             font.pixelSize: visual.px(15)
-            font.weight: Font.DemiBold
+            font.weight: visual.unread ? Font.DemiBold : Font.Normal
             wrapMode: Text.WordWrap
             maximumLineCount: visual.titleLines
             elide: Text.ElideRight
@@ -131,6 +143,7 @@ Item {
             width: parent.width
             text: visual.compactText(visual.article.description, "")
             color: Qt.rgba(0.94, 0.96, 1.0, 0.76)
+            opacity: visual.unread ? 1 : 0.72
             font.pixelSize: visual.px(10)
             wrapMode: Text.WordWrap
             maximumLineCount: visual.descriptionLines

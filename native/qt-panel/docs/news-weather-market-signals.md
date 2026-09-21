@@ -9,6 +9,10 @@ The first successful snapshot for each category establishes a read baseline. Lat
 Empty/error placeholder feeds never establish that baseline.
 
 Cards, matrix thumbnails and Reading show unread indicators. The filter is shared and persisted.
+Carousel exposes a labeled Non lus switch; read faces are subdued, unread faces retain an accent stripe and brighter headline.
+Reading has no aggregate category. Its last selected category persists in `wp-news-reading-category`.
+Category rows support dragging and up/down controls. Both views use the same stored `wp-config.categories` order.
+Reordering preserves fetched articles and pending feed state; feed callbacks resolve by category label, not old position.
 Controls mark a single story, category or current selection read; a single story can be marked unread again.
 Five continuous seconds of a successfully loaded article visible in the Reading pane marks it read.
 Switching articles, closing/hiding the pane or panel, changing modes, or reloading resets that dwell timer.
