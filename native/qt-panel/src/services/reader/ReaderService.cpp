@@ -507,9 +507,20 @@ bool detectPaywall(const QString& html)
         QStringLiteral("subscribe to continue|subscription required|already a subscriber|sign in to continue|register to continue|create an account to continue|to continue reading|this article is reserved|premium content|paywall|metered paywall|become a subscriber|subscriber-only"),
         QRegularExpression::CaseInsensitiveOption);
     static const QRegularExpression classRe(
-        QStringLiteral("class\\s*=\\s*[\"'][^\"']*(paywall|subscriber|subscription|premium-content|regwall)[^\"']*[\"']"),
+        QStringLiteral("class\\s*=\\s*[\"']([^\"']*)[\"']"),
         QRegularExpression::CaseInsensitiveOption);
-    return textRe.match(sample).hasMatch() || classRe.match(html).hasMatch();
+    static const QRegularExpression gateClassRe(
+        QStringLiteral("^(?:paywall|regwall|premium-content|subscriber-only|subscription[-_](?:wall|gate|overlay))[\\w-]*$"),
+        QRegularExpression::CaseInsensitiveOption);
+    if (textRe.match(sample).hasMatch()) return true;
+    // Newsletter/signup classes are not access gates. Match complete class tokens.
+    auto classes = classRe.globalMatch(html);
+    while (classes.hasNext()) {
+        const auto tokens = classes.next().captured(1).split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+        for (const auto& token : tokens)
+            if (gateClassRe.match(token).hasMatch()) return true;
+    }
+    return false;
 }
 
 QString detectBotChallenge(const QString& html)

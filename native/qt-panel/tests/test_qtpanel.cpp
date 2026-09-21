@@ -92,6 +92,30 @@ private slots:
         state.readerCompleted(article, false); QVERIFY(!state.isUnread(article));
     }
 
+    void newsletterSignupDoesNotBlockReadDwell()
+    {
+        QTemporaryDir dir;
+        SettingsStore settings(dir.filePath("settings.json"));
+        NewsReadState state(&settings);
+        const QString url = "https://example.test/article";
+        const QString body = QString("<article><h1>News</h1><p>%1</p><p>%1</p></article>")
+            .arg(QString("A complete public article with freely readable reporting. ").repeated(12));
+        const QString newsletter = "<aside class=\"contentCardWithNewsletterFallback__newsletterSubscriptionBox\">Newsletter signup</aside>";
+        auto article = ReaderService::extractArticleHtml(body + newsletter, url);
+        article["url"] = url;
+        state.setRead(article, false);
+        QVERIFY(!article.value("paywall").toBool());
+        QVERIFY(state.canMarkDisplayedRead(article));
+        state.readerCompleted(article, false);
+        QVERIFY(!state.isUnread(article));
+        for (const QString& gate : {QString("paywall"), QString("subscription-wall"), QString("subscriber-only")}) {
+            auto blocked = ReaderService::extractArticleHtml(body + "<aside class=\"" + gate + "\">Restricted</aside>", url);
+            blocked["url"] = url;
+            QVERIFY(blocked.value("paywall").toBool());
+            QVERIFY(!state.canMarkDisplayedRead(blocked));
+        }
+    }
+
     void officialWeatherGeometryAndCancellation()
     {
         const auto geometry = QJsonDocument::fromJson(R"({"type":"Polygon","coordinates":[[[0,0],[10,0],[10,10],[0,10],[0,0]],[[4,4],[6,4],[6,6],[4,6],[4,4]]]})").object().toVariantMap();
