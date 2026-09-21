@@ -91,6 +91,8 @@ Item {
     property bool pressReaderWasOpen: false
     // True while a rail row is being dragged, so the drop doesn't also select.
     property bool draggingCategory: false
+    property int categoryDropIndex: -1
+    property int categoryDragIndex: -1
 
     // Content-pane rect, published so PanelColumns can seat the single shared
     // PressReader web view in this workspace (no second WebEngineView).
@@ -581,8 +583,8 @@ Item {
                         border.color: categoryDrag.active ? Theme.accent
                              : stage.selectedCategory === modelData ? Theme.accent : "transparent"
 
-                        // Press-and-hold anywhere on the row to reorder; a short
-                        // press falls through to the select click below.
+                        // Drag anywhere on the row; keep the drop position before
+                        // the handler resets its translation on release.
                         transform: Translate { y: categoryDrag.active ? categoryDrag.activeTranslation.y : 0 }
 
                         DragHandler {
@@ -591,17 +593,33 @@ Item {
                             yAxis.enabled: true
                             xAxis.enabled: false
                             dragThreshold: 6
+                            property real dropTranslation: 0
+                            onActiveTranslationChanged: {
+                                if (!active) return
+                                dropTranslation = activeTranslation.y
+                                const step = categoryRow.height + categoryColumn.spacing
+                                stage.categoryDropIndex = Math.max(0, Math.min(News.categories.length - 1,
+                                    categoryRow.index + Math.round(dropTranslation / step)))
+                            }
                             onActiveChanged: {
                                 if (categoryDrag.active) {
+                                    dropTranslation = 0
                                     stage.draggingCategory = true
+                                    stage.categoryDragIndex = categoryRow.index
+                                    stage.categoryDropIndex = categoryRow.index
                                     return
                                 }
-                                stage.draggingCategory = false
                                 const rowHeight = Math.max(1, categoryRow.height + categoryColumn.spacing)
-                                const steps = Math.round(categoryDrag.activeTranslation.y / rowHeight)
-                                if (steps !== 0)
-                                    News.moveCategory(categoryRow.index,
-                                                      Math.max(0, Math.min(News.categories.length - 1, categoryRow.index + steps)))
+                                const from = categoryRow.index
+                                const to = Math.max(0, Math.min(News.categories.length - 1,
+                                    from + Math.round(dropTranslation / rowHeight)))
+                                stage.categoryDropIndex = -1
+                                Qt.callLater(function() {
+                                    stage.draggingCategory = false
+                                    stage.categoryDragIndex = -1
+                                    // Moving rebuilds delegates and destroys this handler's context.
+                                    if (from !== to) News.moveCategory(from, to)
+                                })
                             }
                         }
 
@@ -619,7 +637,7 @@ Item {
                         CountBadge {
                             id: itemCount
                             objectName: "newsCategoryCountBadge" + categoryRow.index
-                            anchors.right: categoryOrder.left
+                            anchors.right: parent.right
                             anchors.rightMargin: 10
                             anchors.verticalCenter: parent.verticalCenter
                             count: {
@@ -632,29 +650,18 @@ Item {
                             id: categoryMouse
                             anchors.fill: parent
                             hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
+                            cursorShape: stage.draggingCategory ? Qt.ClosedHandCursor : Qt.OpenHandCursor
                             // A drag consumed the gesture — don't also select.
                             onClicked: if (!stage.draggingCategory) stage.selectCategory(modelData)
                         }
-                        Row {
-                            id: categoryOrder
+                        Rectangle {
+                            anchors.left: parent.left
                             anchors.right: parent.right
-                            anchors.rightMargin: 4
-                            anchors.verticalCenter: parent.verticalCenter
-                            IconButton {
-                                objectName: "newsCategoryUp" + categoryRow.index
-                                buttonSize: 22; glyph: "\uE70E"
-                                tooltip: "Monter la cat\u00e9gorie"
-                                enabled: categoryRow.index > 0
-                                onClicked: News.moveCategory(categoryRow.index, categoryRow.index - 1)
-                            }
-                            IconButton {
-                                objectName: "newsCategoryDown" + categoryRow.index
-                                buttonSize: 22; glyph: "\uE70D"
-                                tooltip: "Descendre la cat\u00e9gorie"
-                                enabled: categoryRow.index < News.categories.length - 1
-                                onClicked: News.moveCategory(categoryRow.index, categoryRow.index + 1)
-                            }
+                            y: stage.categoryDropIndex > stage.categoryDragIndex ? parent.height - height : 0
+                            height: 2
+                            color: Theme.accent
+                            visible: stage.draggingCategory && stage.categoryDropIndex === categoryRow.index
+                                     && !categoryDrag.active
                         }
                     }
                 }
