@@ -71,6 +71,37 @@ QtObject {
         entries = entries.map(function(e) { return Object.assign({}, e, {read: true}) })
         persist()
     }
+    property int newsReadRevision: NewsRead.revision
+    onNewsReadRevisionChanged: Qt.callLater(hub.reconcileNews)
+
+    function syncNewsCategory(label, newArrival) {
+        if (News.categories.indexOf(label) >= 0 && News.isLoading(label)) return
+        const count = News.categories.indexOf(label) >= 0
+            ? NewsRead.unreadCount(News.itemsFor(label)) : 0
+        const text = label + " : " + count + (count === 1 ? " article non lu" : " articles non lus")
+        const previous = entries.filter(function(e) { return e.source === "news" && e.target === label })
+        if (newArrival && count > 0 && enabled && option("news", true) && option("category:" + label, true)) {
+            entries = entries.filter(function(e) { return e.source !== "news" || e.target !== label })
+            push("news", "news:" + label, text, label, false, 86400000, count)
+        } else if (previous.length) {
+            let kept = false
+            entries = entries.filter(function(e) {
+                if (e.source !== "news" || e.target !== label) return true
+                if (!count || kept) return false
+                kept = true
+                return true
+            }).map(function(e) {
+                return e.source === "news" && e.target === label
+                    ? Object.assign({}, e, {count: count, text: text}) : e
+            })
+            persist()
+        }
+    }
+    function reconcileNews() {
+        const labels = entries.filter(function(e) { return e.source === "news" }).map(function(e) { return e.target })
+        for (const label of labels.filter(function(v, i, a) { return a.indexOf(v) === i }))
+            syncNewsCategory(label, false)
+    }
     function collectNews(label) {
         if (News.isLoading(label)) return
         const items = News.itemsFor(label).filter(function(item) { return Rules.articleKey(item) !== "" })
@@ -92,19 +123,9 @@ QtObject {
             }
             pendingNews = nextPending.slice(-500)
             Store.set("wp-news-briefing-pending", JSON.stringify(pendingNews))
-            if (!baseline && enabled && option("news", true) && option("category:" + label, true)) {
-                let count = fresh.length
-                entries = entries.filter(function(e) {
-                    if (e.source === "news" && e.target === label && !e.read && e.expires > Date.now()) {
-                        count += Number(e.count) || 0
-                        return false
-                    }
-                    return true
-                })
-                push("news", "news:" + label + ":" + Date.now(),
-                     label + " : " + count + " nouveaux articles", label, false, 86400000, count)
-            }
         }
+        // NewsRead observes the same feed signal; reconcile after both listeners finish.
+        Qt.callLater(function() { hub.syncNewsCategory(label, !baseline && fresh.length > 0) })
         Store.set("wp-notifications-news-seen", JSON.stringify(seen))
     }
     function newsBriefing() {
@@ -142,6 +163,7 @@ QtObject {
     property Connections newsEvents: Connections {
         target: News
         function onCategoryUpdated(label) { hub.collectNews(label) }
+        function onCategoriesChanged() { Qt.callLater(hub.reconcileNews) }
     }
     property Connections cameraEvents: Connections {
         target: Sentry
@@ -237,5 +259,6 @@ QtObject {
         lastNewsBriefing = last.text || ""
         lastBriefingAt = last.time || 0
         for (const label of News.categories) collectNews(label)
+        Qt.callLater(hub.reconcileNews)
     }
 }

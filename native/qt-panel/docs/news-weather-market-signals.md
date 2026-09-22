@@ -15,6 +15,9 @@ Category rows support drag-and-drop with a drop indicator. Both views use the sa
 Reordering preserves fetched articles and pending feed state; feed callbacks resolve by category label, not old position.
 Carousel controls mark a single story or category read; a single story can be marked unread again.
 Reading is passive: no numbered badges or manual read-state buttons, only read/unread styling and the optional unread filter.
+News notifications count only currently available unread articles, not cumulative arrivals.
+Read-state changes and category refreshes reconcile persisted counts; zero removes the notification.
+The independent incremental-briefing backlog is unchanged.
 Five continuous seconds of a successfully loaded article visible in the Reading pane marks it read.
 Switching articles, closing/hiding the pane or panel, changing modes, or reloading resets that dwell timer.
 Loading, errors, paywalls and summary-only fallback do not count toward the timer.

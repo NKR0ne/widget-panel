@@ -2,8 +2,10 @@ pragma Singleton
 import QtQuick
 QtObject {
     property var categories: ["Quebec", "Science"]
+    property var testItems: ({})
     signal categoryUpdated(string label)
     function itemsFor(label) {
+        if (testItems[label] !== undefined) return testItems[label]
         const items = []
         for (let i = 0; i < 20; ++i)
             items.push({ title: label + " - Article " + (i + 1),

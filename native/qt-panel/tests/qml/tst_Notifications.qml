@@ -5,6 +5,10 @@ import QtPanel.Native
 TestCase {
     name: "Notifications"
     function init() {
+        News.testItems = ({})
+        News.categories = ["Quebec", "Science"]
+        NewsRead.states = ({})
+        NewsRead.revision++
         Notifications.entries = []
         Notifications.seen = ({})
         Notifications.pendingNews = []
@@ -13,6 +17,7 @@ TestCase {
         Starvis.busy = false
         Store.values = ({})
     }
+    function cleanup() { News.testItems = ({}) }
     function test_baselineAndRepeatedFeedUpdates() {
         Notifications.collectNews("Quebec")
         compare(Notifications.entries.length, 0)
@@ -21,9 +26,32 @@ TestCase {
         compare(Notifications.pendingNews.length, 20)
         compare(Notifications.entries.length, 0)
         Notifications.seen = {Quebec: ["https://example.test/Quebec/0"]}
+        for (const item of News.itemsFor("Quebec").slice(1)) NewsRead.setRead(item, false)
         Notifications.collectNews("Quebec")
-        compare(Notifications.entries.length, 1)
+        tryVerify(function() { return Notifications.entries.length === 1 })
         compare(Notifications.entries[0].count, 19)
+    }
+    function test_newsCountTracksAvailableUnreadNotArrivalHistory() {
+        const items = News.itemsFor("Quebec").slice(0, 7)
+        News.testItems = {Quebec: items}
+        for (const item of items) NewsRead.setRead(item, false)
+        Notifications.entries = [{source:"news", target:"Quebec", key:"legacy", count:80,
+            text:"Quebec : 80 nouveaux articles", read:false, expires:Date.now()+86400000}]
+        Notifications.reconcileNews()
+        compare(Notifications.entries[0].count, 7)
+        verify(Notifications.entries[0].text.indexOf("7 articles non lus") >= 0)
+        NewsRead.setRead(items[0], true)
+        tryVerify(function() { return Notifications.entries[0].count === 6 })
+        News.testItems = {Quebec: items.slice(2)}
+        Notifications.collectNews("Quebec")
+        tryVerify(function() { return Notifications.entries[0].count === 5 })
+        const stored = JSON.parse(Store.get("wp-notifications-history", "[]"))
+        compare(stored[0].count, 5)
+        Notifications.entries = stored
+        Notifications.reconcileNews()
+        compare(Notifications.entries[0].count, 5)
+        for (const item of items) NewsRead.setRead(item, true)
+        tryVerify(function() { return Notifications.entries.length === 0 })
     }
     function test_failedBriefingRetainsPendingAndSuccessConsumesOnlyBatch() {
         Notifications.pendingNews = [{key:"a", title:"Article A", category:"Science", description:"Extrait"}]
