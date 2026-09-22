@@ -211,8 +211,8 @@ GlassCard {
             Repeater {
                 model: [
                     { glyph: "\uE892", label: "Station pr\u00e9c\u00e9dente" },
-                    { glyph: Radio.playing ? "\uE769" : "\uE768",
-                      label: Radio.playing ? "Pause" : "Lecture" },
+                    { glyph: Radio.playing || Radio.buffering ? "\uE769" : "\uE768",
+                      label: Radio.playing || Radio.buffering ? "Pause" : "Lecture" },
                     { glyph: "\uE893", label: "Station suivante" },
                 ]
                 delegate: Rectangle {

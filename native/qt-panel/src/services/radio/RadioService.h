@@ -2,6 +2,7 @@
 
 #include <QJsonArray>
 #include <QObject>
+#include <QTimer>
 #include <QVariantList>
 #include <QVariantMap>
 
@@ -97,6 +98,7 @@ private:
     HttpClient* m_http = nullptr;
     QMediaPlayer* m_player = nullptr;
     QAudioOutput* m_audioOutput = nullptr;
+    QTimer m_playbackWatchdog;
     bool m_playRequested = false;
     bool m_waitingForAudio = false;
     QVariantList m_libraryStations;

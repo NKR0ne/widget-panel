@@ -1,4 +1,7 @@
 #include <QtTest>
+#include <QMediaPlayer>
+#include <QAudioBufferOutput>
+#include <QAudioBuffer>
 
 #include "core/HttpClient.h"
 #include "core/AudioOutputRecovery.h"
@@ -50,6 +53,54 @@ class TestQtPanel : public QObject {
     Q_OBJECT
 
 private slots:
+    void radioLiveStreamSmoke()
+    {
+        const QString url = qEnvironmentVariable("QTPANEL_TEST_RADIO_URL");
+        if (url.isEmpty()) QSKIP("Opt-in live stream test");
+        QTemporaryDir dir;
+        SettingsStore settings(dir.filePath("settings.json"));
+        settings.set("wp-radio-current", QString::fromUtf8(QJsonDocument(QJsonObject{
+            {"id", "probe"}, {"name", "Radio probe"}, {"url", url}}).toJson()));
+        HttpClient http;
+        RadioService radio(&settings, &http);
+        radio.setVolume(0);
+        auto* player = radio.findChild<QMediaPlayer*>();
+        QVERIFY(player);
+        QAudioBufferOutput output;
+        player->setAudioBufferOutput(&output);
+        int buffers = 0;
+        connect(&output, &QAudioBufferOutput::audioBufferReceived, this,
+                [&buffers](const QAudioBuffer& buffer) { if (buffer.isValid()) ++buffers; });
+        radio.play();
+        QTRY_VERIFY_WITH_TIMEOUT(buffers > 0 || !radio.error().isEmpty(), 15000);
+        qInfo() << "Radio probe:" << buffers << "buffers," << radio.error()
+                << player->mediaStatus() << player->playbackState();
+        QVERIFY2(buffers > 0, qPrintable(radio.error()));
+        radio.pause();
+        QVERIFY(player->source().isEmpty());
+        buffers = 0;
+        radio.play();
+        QTRY_VERIFY_WITH_TIMEOUT(buffers > 0, 15000);
+        radio.stop();
+        QVERIFY(player->source().isEmpty());
+    }
+
+    void radioStalledPlaybackHasBoundedFailure()
+    {
+        QTemporaryDir dir;
+        SettingsStore settings(dir.filePath("settings.json"));
+        HttpClient http;
+        RadioService radio(&settings, &http);
+        auto* watchdog = radio.findChild<QTimer*>("radioPlaybackWatchdog");
+        QVERIFY(watchdog);
+        QCOMPARE(watchdog->interval(), 20000);
+        QVERIFY(QMetaObject::invokeMethod(watchdog, "timeout", Qt::DirectConnection));
+        QVERIFY(!radio.error().isEmpty());
+        QVERIFY(!radio.playing());
+        QVERIFY(!radio.buffering());
+        QVERIFY(!watchdog->isActive());
+    }
+
     void newsCategoryOrderAndFilterSurviveRestart()
     {
         QTemporaryDir dir;

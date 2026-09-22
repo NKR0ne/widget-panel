@@ -86,6 +86,20 @@ RadioService::RadioService(SettingsStore* settings, HttpClient* http, QObject* p
         m_settings->getDouble(QStringLiteral("wp-radio-volume"), 0.72), 0.0, 1.0));
     m_player->setAudioOutput(m_audioOutput);
 
+    m_playbackWatchdog.setObjectName(QStringLiteral("radioPlaybackWatchdog"));
+    m_playbackWatchdog.setParent(this);
+    m_playbackWatchdog.setSingleShot(true);
+    m_playbackWatchdog.setInterval(20000);
+    connect(m_player, &QMediaPlayer::positionChanged, this, [this] {
+        if (m_playRequested) m_playbackWatchdog.start();
+    });
+    connect(&m_playbackWatchdog, &QTimer::timeout, this, [this] {
+        stop();
+        m_error = QStringLiteral("Le flux ne r\u00e9pond plus. Relancez la lecture.");
+        qWarning() << "[radio] playback timed out:" << stationName();
+        emit stateChanged();
+    });
+
     auto* devices = new QMediaDevices(this);
     auto* audioRecovery = new QTimer(this);
     audioRecovery->setSingleShot(true);
@@ -112,6 +126,8 @@ RadioService::RadioService(SettingsStore* settings, HttpClient* http, QObject* p
         m_error = errorString.isEmpty()
             ? QStringLiteral("Flux indisponible") : errorString;
         m_buffering = false;
+        m_playbackWatchdog.stop();
+        m_playRequested = false;
         qWarning() << "[radio] playback failed:" << m_error;
         emit stateChanged();
     });
@@ -403,7 +419,7 @@ void RadioService::selectStation(const QString& stationId)
         const QVariantMap station = value.toMap();
         if (station.value(QStringLiteral("id")).toString() != stationId)
             continue;
-        const bool shouldPlay = playing();
+        const bool shouldPlay = m_playRequested;
         if (currentStationId() != stationId) {
             m_player->stop();
             m_player->setSource(QUrl());
@@ -451,7 +467,7 @@ void RadioService::toggleFavorite(const QString& stationId)
 
 void RadioService::toggle()
 {
-    playing() ? pause() : play();
+    m_playRequested ? pause() : play();
 }
 
 void RadioService::play()
@@ -471,27 +487,44 @@ void RadioService::play()
         return;
     }
     m_waitingForAudio = false;
-    const bool retrying = !m_error.isEmpty();
     m_error.clear();
-    if (retrying)
-        m_player->setSource(QUrl());
-    if (m_player->source() != streamUrl)
-        m_player->setSource(streamUrl);
+    // A live stream must reconnect after pause/sleep, not resume an obsolete
+    // network buffer or a sink belonging to a disconnected Windows endpoint.
+    m_player->stop();
+    m_player->setSource(QUrl());
+    auto output = QMediaDevices::defaultAudioOutput();
+    if (output.isNull()) output = QMediaDevices::audioOutputs().first();
+    auto* previousOutput = m_audioOutput;
+    m_audioOutput = new QAudioOutput(output, this);
+    m_audioOutput->setVolume(previousOutput->volume());
+    m_audioOutput->setMuted(previousOutput->isMuted());
+    m_player->setAudioOutput(m_audioOutput);
+    previousOutput->deleteLater();
+    m_buffering = true;
+    qInfo() << "[radio] connecting:" << stationName() << "output:" << output.description();
+    m_player->setSource(streamUrl);
     m_player->play();
+    m_playbackWatchdog.start();
     emit stateChanged();
 }
 
 void RadioService::pause()
 {
     m_playRequested = false;
-    m_player->pause();
+    m_playbackWatchdog.stop();
+    m_player->stop();
+    m_player->setSource(QUrl());
+    m_buffering = false;
     emit stateChanged();
 }
 
 void RadioService::stop()
 {
     m_playRequested = false;
+    m_playbackWatchdog.stop();
     m_player->stop();
+    m_player->setSource(QUrl());
+    m_buffering = false;
     emit stateChanged();
 }
 
@@ -499,6 +532,7 @@ void RadioService::recoverAudioOutput()
 {
     const auto outputs = QMediaDevices::audioOutputs();
     if (outputs.isEmpty()) {
+        m_playbackWatchdog.stop();
         m_waitingForAudio = true;
         m_player->pause();
         if (m_playRequested)
@@ -549,12 +583,9 @@ void RadioService::next()
     const QVariantList& stations = m_favoritesMode ? m_favorites : m_stations;
     if (stations.isEmpty())
         return;
-    const bool shouldPlay = playing();
     const int nextIndex = (currentIndex() + 1 + stations.size()) % stations.size();
     selectStation(stations.at(nextIndex).toMap()
         .value(QStringLiteral("id")).toString());
-    if (shouldPlay && !playing())
-        play();
 }
 
 void RadioService::previous()
@@ -562,15 +593,12 @@ void RadioService::previous()
     const QVariantList& stations = m_favoritesMode ? m_favorites : m_stations;
     if (stations.isEmpty())
         return;
-    const bool shouldPlay = playing();
     int index = currentIndex();
     if (index < 0)
         index = 0;
     const int previousIndex = (index - 1 + stations.size()) % stations.size();
     selectStation(stations.at(previousIndex).toMap()
         .value(QStringLiteral("id")).toString());
-    if (shouldPlay && !playing())
-        play();
 }
 
 void RadioService::updateMetadata()
